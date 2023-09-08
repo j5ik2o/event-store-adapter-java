@@ -2,11 +2,12 @@ package com.github.j5ik2o.event_store_adatpter_java.internal;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.j5ik2o.event_store_adatpter_java.*;
-import java.time.Duration;
+import java.time.*;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import javax.annotation.Nonnull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.core.SdkBytes;
@@ -32,7 +33,7 @@ public class EventStoreForDynamoDB<
 
   private KeyResolver<AID> keyResolver;
 
-  private EventSerializer<E> eventSerializer;
+  private EventSerializer<AID, E> eventSerializer;
 
   private SnapshotSerializer<AID, A> snapshotSerializer;
 
@@ -68,6 +69,11 @@ public class EventStoreForDynamoDB<
     this.deleteTtl = null;
     this.keyResolver = new DefaultKeyResolver<>();
     var objectMapper = new ObjectMapper();
+    objectMapper.findAndRegisterModules();
+    //    var javaTimeModule = new JavaTimeModule();
+    //    javaTimeModule.addDeserializer(LocalDateTime.class, new
+    // LocalDateTimeDeserializer(DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss")));
+    //    objectMapper.registerModule(javaTimeModule);
     this.eventSerializer = new JsonEventSerializer<>(objectMapper);
     this.snapshotSerializer = new JsonSnapshotSerializer<>(objectMapper);
   }
@@ -111,7 +117,8 @@ public class EventStoreForDynamoDB<
     return self;
   }
 
-  public EventStoreForDynamoDB<AID, A, E> withEventSerializer(EventSerializer<E> eventSerializer) {
+  public EventStoreForDynamoDB<AID, A, E> withEventSerializer(
+      EventSerializer<AID, E> eventSerializer) {
     EventStoreForDynamoDB<AID, A, E> self =
         new EventStoreForDynamoDB<>(
             dynamoDbAsyncClient,
@@ -138,13 +145,15 @@ public class EventStoreForDynamoDB<
     return self;
   }
 
+  @Nonnull
   @Override
-  public CompletableFuture<Optional<AggregateWithSeqNrWithVersion<A>>> getLatestSnapshotById(
+  public CompletableFuture<Optional<AggregateWithVersion<AID, A>>> getLatestSnapshotById(
       Class<A> clazz, AID aggregateId) {
+    LOGGER.debug("getLatestSnapshotById({}, {}): start", clazz, aggregateId);
     if (aggregateId == null) {
       throw new IllegalArgumentException("aggregateId is null");
     }
-    var result =
+    var queryResult =
         dynamoDbAsyncClient.query(
             QueryRequest.builder()
                 .tableName(snapshotTableName)
@@ -160,28 +169,38 @@ public class EventStoreForDynamoDB<
                         ":seq_nr", AttributeValue.builder().n("0").build()))
                 .limit(1)
                 .build());
-    return result.thenApply(
-        response -> {
-          var items = response.items();
-          if (items.size() != 1) {
-            throw new RuntimeException("Unexpected result size");
-          }
-          var item = items.get(0);
-          var bytes = item.get("payload").b().asByteArray();
-          var aggregate = snapshotSerializer.deserialize(bytes, clazz);
-          var version = Long.parseLong(item.get("version").n());
-          var seqNr = aggregate.getSeqNr();
-          return Optional.of(new AggregateWithSeqNrWithVersion<>(aggregate, seqNr, version));
-        });
+    var result =
+        queryResult.thenApply(
+            response -> {
+              var items = response.items();
+              LOGGER.debug("items = {}", items);
+              Optional<AggregateWithVersion<AID, A>> applyResult;
+              if (items.isEmpty()) {
+                applyResult = Optional.empty();
+              } else {
+                var item = items.get(0);
+                var bytes = item.get("payload").b().asByteArray();
+                var aggregate = snapshotSerializer.deserialize(bytes, clazz);
+                var version = Long.parseLong(item.get("version").n());
+                var seqNr = aggregate.getSeqNr();
+                LOGGER.debug("seqNr = {}", seqNr);
+                applyResult = Optional.of(new AggregateWithVersion<>(aggregate, version));
+              }
+              return applyResult;
+            });
+    LOGGER.debug("getLatestSnapshotById({}, {}): finished", clazz, aggregateId);
+    return result;
   }
 
+  @Nonnull
   @Override
   public CompletableFuture<List<E>> getEventsByIdSinceSeqNr(
       Class<E> clazz, AID aggregateId, long seqNr) {
+    LOGGER.debug("getEventsByIdSinceSeqNr({}, {}, {}): start", clazz, aggregateId, seqNr);
     if (aggregateId == null) {
       throw new IllegalArgumentException("aggregateId is null");
     }
-    var result =
+    var queryResult =
         dynamoDbAsyncClient.query(
             QueryRequest.builder()
                 .tableName(journalTableName)
@@ -193,67 +212,89 @@ public class EventStoreForDynamoDB<
                         "#seq_nr", "seq_nr"))
                 .expressionAttributeValues(
                     Map.of(
-                        ":aid", AttributeValue.builder().s(aggregateId.toString()).build(),
+                        ":aid", AttributeValue.builder().s(aggregateId.asString()).build(),
                         ":seq_nr", AttributeValue.builder().n(String.valueOf(seqNr)).build()))
                 .build());
-    return result.thenApply(
-        response -> {
-          var items = response.items();
-          var events = new java.util.ArrayList<E>();
-          for (var item : items) {
-            var bytes = item.get("payload").b().asByteArray();
-            var event = eventSerializer.deserialize(bytes, null);
-            events.add(event);
-          }
-          return events;
-        });
+    var result =
+        queryResult.thenApply(
+            response -> {
+              var items = response.items();
+              LOGGER.debug("items = {}", items);
+              List<E> events = new java.util.ArrayList<>();
+              for (var item : items) {
+                var bytes = item.get("payload").b().asByteArray();
+                var event = eventSerializer.deserialize(bytes, clazz);
+                events.add(event);
+              }
+              return events;
+            });
+    LOGGER.debug("getEventsByIdSinceSeqNr({}, {}, {}): finished", clazz, aggregateId, seqNr);
+    return result;
   }
 
+  @Nonnull
   @Override
-  public CompletableFuture<Void> storeEvent(E event, long snapshotVersion) {
+  public CompletableFuture<Void> persistEvent(E event, long snapshotVersion) {
+    LOGGER.debug("persistEvent({}, {}): start", event, snapshotVersion);
     if (event == null) {
       throw new IllegalArgumentException("event is null");
     }
     if (event.isCreated()) {
       throw new IllegalArgumentException("event is created");
     }
-    return updateEventAndSnapshotOpt(event, snapshotVersion, null).thenRun(() -> {});
+    var result = updateEventAndSnapshotOpt(event, snapshotVersion, null).thenRun(() -> {});
+    LOGGER.debug("persistEvent({}, {}): finished", event, snapshotVersion);
+    return result;
   }
 
+  @Nonnull
   @Override
-  public CompletableFuture<Void> storeEventAndSnapshot(E event, long version, A aggregate) {
+  public CompletableFuture<Void> persistEventAndSnapshot(E event, A aggregate) {
+    LOGGER.debug("persistEventAndSnapshot({}, {}): start", event, aggregate);
     if (event == null) {
       throw new IllegalArgumentException("event is null");
     }
+    CompletableFuture<Void> result;
     if (event.isCreated()) {
-      return createEventAndSnapshot(event, aggregate).thenRun(() -> {});
+      result = createEventAndSnapshot(event, aggregate).thenRun(() -> {});
     } else {
-      return updateEventAndSnapshotOpt(event, version, aggregate).thenRun(() -> {});
+      result =
+          updateEventAndSnapshotOpt(event, aggregate.getVersion(), aggregate).thenRun(() -> {});
     }
+    LOGGER.debug("persistEventAndSnapshot({}, {}): finished", event, aggregate);
+    return result;
   }
 
   private CompletableFuture<TransactWriteItemsResponse> createEventAndSnapshot(
       E event, A aggregate) {
+    LOGGER.debug("createEventAndSnapshot({}, {}): start", event, aggregate);
     List<TransactWriteItem> transactItems = new java.util.ArrayList<>();
     transactItems.add(putSnapshot(event, 0, aggregate));
     transactItems.add(putJournal(event));
     if (keepSnapshotCount != null) {
       transactItems.add(putSnapshot(event, aggregate.getSeqNr(), aggregate));
     }
-    return dynamoDbAsyncClient.transactWriteItems(
-        TransactWriteItemsRequest.builder().transactItems(transactItems).build());
+    var result =
+        dynamoDbAsyncClient.transactWriteItems(
+            TransactWriteItemsRequest.builder().transactItems(transactItems).build());
+    LOGGER.debug("createEventAndSnapshot({}, {}): finished", event, aggregate);
+    return result;
   }
 
   private CompletableFuture<TransactWriteItemsResponse> updateEventAndSnapshotOpt(
       E event, long version, A aggregate) {
+    LOGGER.debug("updateEventAndSnapshotOpt({}, {}, {}): start", event, version, aggregate);
     List<TransactWriteItem> transactItems = new java.util.ArrayList<>();
     transactItems.add(updateSnapshot(event, 0, version, aggregate));
     transactItems.add(putJournal(event));
     if (keepSnapshotCount != null && aggregate != null) {
       transactItems.add(putSnapshot(event, aggregate.getSeqNr(), aggregate));
     }
-    return dynamoDbAsyncClient.transactWriteItems(
-        TransactWriteItemsRequest.builder().transactItems(transactItems).build());
+    var result =
+        dynamoDbAsyncClient.transactWriteItems(
+            TransactWriteItemsRequest.builder().transactItems(transactItems).build());
+    LOGGER.debug("updateEventAndSnapshotOpt({}, {}, {}): finished", event, version, aggregate);
+    return result;
   }
 
   private String resolvePartitionKey(AID aggregateId, long shardCount) {
@@ -265,15 +306,16 @@ public class EventStoreForDynamoDB<
   }
 
   private TransactWriteItem putSnapshot(E event, long seqNr, A aggregate) {
+    LOGGER.debug("putSnapshot({}, {}, {}): start", event, seqNr, aggregate);
     var pkey = resolvePartitionKey(event.getAggregateId(), shardCount);
     var skey = resolveSortKey(event.getAggregateId(), seqNr);
     var payload = snapshotSerializer.serialize(aggregate);
     LOGGER.debug(">--- put snapshot ---");
     LOGGER.debug("pkey = {}", pkey);
     LOGGER.debug("skey = {}", skey);
-    LOGGER.debug("aid = {}", event.getAggregateId().toString());
+    LOGGER.debug("aid = {}", event.getAggregateId().asString());
     LOGGER.debug("seq_nr = {}", seqNr);
-    LOGGER.debug("payload = {}", payload);
+    LOGGER.debug("payload = {}", new String(payload));
     LOGGER.debug("<--- put snapshot ---");
     var put =
         Put.builder()
@@ -287,9 +329,11 @@ public class EventStoreForDynamoDB<
                     "payload",
                     AttributeValue.builder().b(SdkBytes.fromByteArray(payload)).build(),
                     "aid",
-                    AttributeValue.builder().s(event.getAggregateId().toString()).build(),
+                    AttributeValue.builder().s(event.getAggregateId().asString()).build(),
                     "seq_nr",
                     AttributeValue.builder().n(String.valueOf(seqNr)).build(),
+                    "version",
+                    AttributeValue.builder().n("1").build(),
                     "ttl",
                     AttributeValue.builder().n("0").build(),
                     "last_updated_at",
@@ -298,16 +342,90 @@ public class EventStoreForDynamoDB<
                         .build()))
             .conditionExpression("attribute_not_exists(pkey) AND attribute_not_exists(skey)")
             .build();
-    return TransactWriteItem.builder().put(put).build();
+    var result = TransactWriteItem.builder().put(put).build();
+    LOGGER.debug("putSnapshot({}, {}, {}): finished", event, seqNr, aggregate);
+    return result;
+  }
+
+  private TransactWriteItem updateSnapshot(E event, long seqNr, long version, A aggregate) {
+    LOGGER.debug("updateSnapshot({}, {}, {}): start", event, seqNr, aggregate);
+    var pkey = resolvePartitionKey(event.getAggregateId(), shardCount);
+    var skey = resolveSortKey(event.getAggregateId(), seqNr);
+    LOGGER.debug(">--- update snapshot ---");
+    LOGGER.debug("pkey = {}", pkey);
+    LOGGER.debug("skey = {}", skey);
+    LOGGER.debug("aid = {}", event.getAggregateId().asString());
+    LOGGER.debug("seq_nr = {}", seqNr);
+    LOGGER.debug("<--- update snapshot ---");
+
+    var expressionAttributeNames =
+        new java.util.HashMap<>(
+            Map.of("#version", "version", "#last_updated_at", "last_updated_at"));
+    var expressionAttributeValues =
+        new java.util.HashMap<>(
+            Map.of(
+                ":before_version",
+                AttributeValue.builder().n(String.valueOf(version)).build(),
+                ":after_version",
+                AttributeValue.builder().n(String.valueOf(version + 1)).build(),
+                ":last_updated_at",
+                AttributeValue.builder()
+                    .n(String.valueOf(event.getOccurredAt().toEpochMilli()))
+                    .build()));
+    var update =
+        Update.builder()
+            .tableName(snapshotTableName)
+            .updateExpression("SET #version=:after_version, #last_updated_at=:last_updated_at")
+            .key(
+                Map.of(
+                    "pkey",
+                    AttributeValue.builder().s(pkey).build(),
+                    "skey",
+                    AttributeValue.builder().s(skey).build()))
+            .expressionAttributeNames(expressionAttributeNames)
+            .expressionAttributeValues(expressionAttributeValues)
+            .conditionExpression("#version = :before_version");
+    if (aggregate != null) {
+      var payload = snapshotSerializer.serialize(aggregate);
+      LOGGER.debug("payload = {}", payload);
+      var expressionAttributeNames2 = Map.of("#seq_nr", ":seq_nr", "#payload", "payload");
+      expressionAttributeNames.putAll(expressionAttributeNames2);
+      var expressionAttributeValues2 =
+          Map.of(
+              ":seq_nr",
+              AttributeValue.builder().n(String.valueOf(seqNr)).build(),
+              ":payload",
+              AttributeValue.builder().b(SdkBytes.fromByteArray(payload)).build());
+      expressionAttributeValues.putAll(expressionAttributeValues2);
+      update =
+          update
+              .updateExpression(
+                  "SET #payload=:payload, #seq_nr=:seq_nr, #version=:after_version, #last_updated_at=:last_updated_at")
+              .expressionAttributeNames(expressionAttributeNames)
+              .expressionAttributeValues(expressionAttributeValues);
+    }
+    var result = TransactWriteItem.builder().update(update.build()).build();
+    LOGGER.debug("updateSnapshot({}, {}, {}): finished", event, seqNr, aggregate);
+    return result;
   }
 
   private TransactWriteItem putJournal(E event) {
+    LOGGER.debug("putJournal({}): start", event);
     var pkey = resolvePartitionKey(event.getAggregateId(), shardCount);
     var skey = resolveSortKey(event.getAggregateId(), event.getSeqNr());
-    var aid = event.getAggregateId().toString();
+    var aid = event.getAggregateId().asString();
     var seqNr = event.getSeqNr();
     var payload = eventSerializer.serialize(event);
     var occurredAt = String.valueOf(event.getOccurredAt().toEpochMilli());
+
+    LOGGER.debug(">--- put journal ---");
+    LOGGER.debug("pkey = {}", pkey);
+    LOGGER.debug("skey = {}", skey);
+    LOGGER.debug("aid = {}", event.getAggregateId().asString());
+    LOGGER.debug("seq_nr = {}", seqNr);
+    LOGGER.debug("payload = {}", new String(payload));
+    LOGGER.debug("<--- put journal ---");
+
     var put =
         Put.builder()
             .tableName(journalTableName)
@@ -326,58 +444,8 @@ public class EventStoreForDynamoDB<
                     "occurred_at",
                     AttributeValue.builder().n(occurredAt).build()))
             .build();
-    return TransactWriteItem.builder().put(put).build();
-  }
-
-  private TransactWriteItem updateSnapshot(E event, long seqNr, long version, A aggregate) {
-    var pkey = resolvePartitionKey(event.getAggregateId(), shardCount);
-    var skey = resolveSortKey(event.getAggregateId(), seqNr);
-    LOGGER.debug(">--- update snapshot ---");
-    LOGGER.debug("pkey = {}", pkey);
-    LOGGER.debug("skey = {}", skey);
-    LOGGER.debug("aid = {}", event.getAggregateId().toString());
-    LOGGER.debug("seq_nr = {}", seqNr);
-
-    LOGGER.debug("<--- put snapshot ---");
-    var update =
-        Update.builder()
-            .tableName(snapshotTableName)
-            .updateExpression("SET #version=:after_version, #last_updated_at=:last_updated_at")
-            .key(
-                Map.of(
-                    "pkey",
-                    AttributeValue.builder().s(pkey).build(),
-                    "skey",
-                    AttributeValue.builder().s(skey).build()))
-            .expressionAttributeNames(
-                Map.of("#version", "version", "#last_updated_at", "last_updated_at"))
-            .expressionAttributeValues(
-                Map.of(
-                    ":before_version",
-                    AttributeValue.builder().n(String.valueOf(version)).build(),
-                    ":after_version",
-                    AttributeValue.builder().n(String.valueOf(version + 1)).build(),
-                    ":last_updated_at",
-                    AttributeValue.builder()
-                        .n(String.valueOf(event.getOccurredAt().toEpochMilli()))
-                        .build()))
-            .conditionExpression("#version = :before_version")
-            .build();
-    if (aggregate != null) {
-      var payload = snapshotSerializer.serialize(aggregate);
-      LOGGER.debug("payload = {}", payload);
-      update =
-          update.toBuilder()
-              .updateExpression(update.updateExpression() + ", #payload=:payload, #seq_nr=:seq_nr")
-              .expressionAttributeNames(Map.of("#seq_nr", ":seq_nr", "#payload", "payload"))
-              .expressionAttributeValues(
-                  Map.of(
-                      ":seq_nr",
-                      AttributeValue.builder().n(String.valueOf(seqNr)).build(),
-                      ":payload",
-                      AttributeValue.builder().b(SdkBytes.fromByteArray(payload)).build()))
-              .build();
-    }
-    return TransactWriteItem.builder().update(update).build();
+    var result = TransactWriteItem.builder().put(put).build();
+    LOGGER.debug("putJournal({}): finished", event);
+    return result;
   }
 }

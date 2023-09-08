@@ -1,0 +1,9 @@
+{
+  "[java]": {
+    "spotlessGradle.format.enable": true,
+    "editor.codeActionsOnSave": {
+      "source.fixAll.spotlessGradle": true
+    }
+  },
+  "java.configuration.updateBuildConfiguration": "automatic"
+}

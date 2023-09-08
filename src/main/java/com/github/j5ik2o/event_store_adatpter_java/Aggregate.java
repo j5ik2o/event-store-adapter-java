@@ -4,4 +4,6 @@ public interface Aggregate<AID extends AggregateId> {
   AID getId();
 
   long getSeqNr();
+
+  long getVersion();
 }
