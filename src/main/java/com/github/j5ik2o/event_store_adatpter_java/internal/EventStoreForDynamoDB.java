@@ -2,17 +2,16 @@ package com.github.j5ik2o.event_store_adatpter_java.internal;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.j5ik2o.event_store_adatpter_java.*;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import software.amazon.awssdk.core.SdkBytes;
-import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
-import software.amazon.awssdk.services.dynamodb.model.*;
-
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.core.SdkBytes;
+import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
+import software.amazon.awssdk.services.dynamodb.model.*;
 
 public class EventStoreForDynamoDB<
         AID extends AggregateId, A extends Aggregate<AID>, E extends Event<AID>>
@@ -27,9 +26,9 @@ public class EventStoreForDynamoDB<
   private final String snapshotAidIndexName;
   private final long shardCount;
 
-    private Long keepSnapshotCount;
+  private Long keepSnapshotCount;
 
-    private Duration deleteTtl;
+  private Duration deleteTtl;
 
   private KeyResolver<AID> keyResolver;
 
@@ -65,8 +64,8 @@ public class EventStoreForDynamoDB<
     this.journalAidIndexName = journalAidIndexName;
     this.snapshotAidIndexName = snapshotAidIndexName;
     this.shardCount = shardCount;
-      this.keepSnapshotCount = null;
-      this.deleteTtl = null;
+    this.keepSnapshotCount = null;
+    this.deleteTtl = null;
     this.keyResolver = new DefaultKeyResolver<>();
     var objectMapper = new ObjectMapper();
     this.eventSerializer = new JsonEventSerializer<>(objectMapper);
@@ -82,7 +81,7 @@ public class EventStoreForDynamoDB<
             journalAidIndexName,
             snapshotAidIndexName,
             shardCount);
-      self.keepSnapshotCount = keepSnapshotCount;
+    self.keepSnapshotCount = keepSnapshotCount;
     return self;
   }
 
@@ -95,7 +94,7 @@ public class EventStoreForDynamoDB<
             journalAidIndexName,
             snapshotAidIndexName,
             shardCount);
-      self.deleteTtl = deleteTtl;
+    self.deleteTtl = deleteTtl;
     return self;
   }
 
@@ -238,7 +237,7 @@ public class EventStoreForDynamoDB<
     List<TransactWriteItem> transactItems = new java.util.ArrayList<>();
     transactItems.add(putSnapshot(event, 0, aggregate));
     transactItems.add(putJournal(event));
-      if (keepSnapshotCount != null) {
+    if (keepSnapshotCount != null) {
       transactItems.add(putSnapshot(event, aggregate.getSeqNr(), aggregate));
     }
     return dynamoDbAsyncClient.transactWriteItems(
@@ -250,7 +249,7 @@ public class EventStoreForDynamoDB<
     List<TransactWriteItem> transactItems = new java.util.ArrayList<>();
     transactItems.add(updateSnapshot(event, 0, version, aggregate));
     transactItems.add(putJournal(event));
-      if (keepSnapshotCount != null && aggregate != null) {
+    if (keepSnapshotCount != null && aggregate != null) {
       transactItems.add(putSnapshot(event, aggregate.getSeqNr(), aggregate));
     }
     return dynamoDbAsyncClient.transactWriteItems(
@@ -338,7 +337,7 @@ public class EventStoreForDynamoDB<
     LOGGER.debug("skey = {}", skey);
     LOGGER.debug("aid = {}", event.getAggregateId().toString());
     LOGGER.debug("seq_nr = {}", seqNr);
-    // LOGGER.debug("payload = {}", payload);
+
     LOGGER.debug("<--- put snapshot ---");
     var update =
         Update.builder()
@@ -366,6 +365,7 @@ public class EventStoreForDynamoDB<
             .build();
     if (aggregate != null) {
       var payload = snapshotSerializer.serialize(aggregate);
+      LOGGER.debug("payload = {}", payload);
       update =
           update.toBuilder()
               .updateExpression(update.updateExpression() + ", #payload=:payload, #seq_nr=:seq_nr")
