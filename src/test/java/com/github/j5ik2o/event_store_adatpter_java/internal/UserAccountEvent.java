@@ -4,7 +4,6 @@ import com.fasterxml.jackson.annotation.*;
 import com.github.j5ik2o.event_store_adatpter_java.Event;
 import java.time.Instant;
 import javax.annotation.Nonnull;
-import org.jetbrains.annotations.NotNull;
 
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "type")
 @JsonSubTypes({
@@ -17,7 +16,7 @@ public sealed interface UserAccountEvent extends Event<UserAccountId>
   @Nonnull
   UserAccountId getAggregateId();
 
-  long getSeqNr();
+  long getSequenceNumber();
 
   @JsonTypeName("created")
   @JsonIgnoreProperties(
@@ -65,7 +64,7 @@ public sealed interface UserAccountEvent extends Event<UserAccountId>
     }
 
     @Override
-    public long getSeqNr() {
+    public long getSequenceNumber() {
       return seqNr;
     }
 
@@ -111,28 +110,29 @@ public sealed interface UserAccountEvent extends Event<UserAccountId>
       return false;
     }
 
-    @NotNull
+    @Nonnull
     @Override
     public String getId() {
       return id;
     }
 
-    @NotNull
+    @Nonnull
     @Override
     public UserAccountId getAggregateId() {
       return aggregateId;
     }
 
-    @NotNull
+    @Nonnull
     public String getName() {
       return name;
     }
 
     @Override
-    public long getSeqNr() {
+    public long getSequenceNumber() {
       return seqNr;
     }
 
+    @Nonnull
     @Override
     public Instant getOccurredAt() {
       return occurredAt;

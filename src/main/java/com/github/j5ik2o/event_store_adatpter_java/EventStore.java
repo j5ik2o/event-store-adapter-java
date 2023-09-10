@@ -12,7 +12,7 @@ public interface EventStore<
       Class<A> clazz, AID aggregateId);
 
   @Nonnull
-  CompletableFuture<List<E>> getEventsByIdSinceSeqNr(
+  CompletableFuture<List<E>> getEventsByIdSinceSequenceNumber(
       Class<E> clazz, AID aggregateId, long sequenceNumber);
 
   @Nonnull

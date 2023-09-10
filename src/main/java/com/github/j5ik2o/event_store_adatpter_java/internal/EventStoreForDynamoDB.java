@@ -194,9 +194,10 @@ public class EventStoreForDynamoDB<
 
   @Nonnull
   @Override
-  public CompletableFuture<List<E>> getEventsByIdSinceSeqNr(
+  public CompletableFuture<List<E>> getEventsByIdSinceSequenceNumber(
       Class<E> clazz, AID aggregateId, long sequenceNumber) {
-    LOGGER.debug("getEventsByIdSinceSeqNr({}, {}, {}): start", clazz, aggregateId, sequenceNumber);
+    LOGGER.debug(
+        "getEventsByIdSinceSequenceNumber({}, {}, {}): start", clazz, aggregateId, sequenceNumber);
     if (aggregateId == null) {
       throw new IllegalArgumentException("aggregateId is null");
     }
@@ -230,7 +231,10 @@ public class EventStoreForDynamoDB<
               return events;
             });
     LOGGER.debug(
-        "getEventsByIdSinceSeqNr({}, {}, {}): finished", clazz, aggregateId, sequenceNumber);
+        "getEventsByIdSinceSequenceNumber({}, {}, {}): finished",
+        clazz,
+        aggregateId,
+        sequenceNumber);
     return result;
   }
 
@@ -414,9 +418,9 @@ public class EventStoreForDynamoDB<
   private TransactWriteItem putJournal(E event) {
     LOGGER.debug("putJournal({}): start", event);
     var pkey = resolvePartitionKey(event.getAggregateId(), shardCount);
-    var skey = resolveSortKey(event.getAggregateId(), event.getSeqNr());
+    var skey = resolveSortKey(event.getAggregateId(), event.getSequenceNumber());
     var aid = event.getAggregateId().asString();
-    var seqNr = event.getSeqNr();
+    var seqNr = event.getSequenceNumber();
     var payload = eventSerializer.serialize(event);
     var occurredAt = String.valueOf(event.getOccurredAt().toEpochMilli());
 

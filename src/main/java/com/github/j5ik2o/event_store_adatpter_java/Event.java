@@ -10,7 +10,7 @@ public interface Event<AID extends AggregateId> {
   @Nonnull
   AID getAggregateId();
 
-  long getSeqNr();
+  long getSequenceNumber();
 
   @Nonnull
   Instant getOccurredAt();

@@ -30,7 +30,7 @@ public class UserAccountRepository {
                 return CompletableFuture.completedFuture(Optional.empty());
               } else {
                 return eventStore
-                    .getEventsByIdSinceSeqNr(
+                    .getEventsByIdSinceSequenceNumber(
                         UserAccountEvent.class, id, result.get().aggregate().getSequenceNumber())
                     .thenApply(
                         events ->
