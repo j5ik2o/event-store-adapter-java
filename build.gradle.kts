@@ -4,6 +4,7 @@ plugins {
     id("com.diffplug.spotless") version "6.7.2"
     id("java")
     id("maven-publish")
+    signing
 }
 
 group = "com.github.j5ik2o"
@@ -74,6 +75,18 @@ tasks {
         from(javadoc)
         archiveClassifier.set("javadoc")
     }
+
+    withType<Sign> {
+        onlyIf { project.extra["isReleaseVersion"] as Boolean }
+    }
+
+    withType<Wrapper> {
+        gradleVersion = "8.0"
+    }
+
+    withType<JavaCompile> {
+        options.compilerArgs.add("-Xlint:deprecation")
+    }
 }
 
 
@@ -90,4 +103,61 @@ publishing {
             }
         }
     }
+}
+
+publishing {
+    publications {
+        create<MavenPublication>("mavenJava") {
+            from(components["java"])
+            artifact(tasks["sourcesJar"])
+            artifact(tasks["javadocJar"])
+            setVersion(project.version)
+            pom {
+                name.set(project.name)
+                description.set("Event Store Adapter for Java")
+                url.set("https://github.com/j5ik2o/event-store-adapter-java")
+                licenses {
+                    license {
+                        name.set("The Apache License, Version 2.0")
+                        url.set("http://www.apache.org/licenses/LICENSE-2.0.txt")
+                    }
+                }
+                developers {
+                    developer {
+                        id.set("j5ik2o")
+                        name.set("Junichi Kato")
+                        email.set("j5ik2o@gmail.com")
+                    }
+                }
+                scm {
+                    connection.set("scm:git:git@github.com:j5ik2o/event-store-adapter-java.git")
+                    developerConnection.set("scm:git:git@github.com:j5ik2o/event-store-adapter-java.git")
+                    url.set("https://github.com/j5ik2o/event-store-adapter-java")
+                }
+            }
+            repositories {
+                // To locally check out the poms
+                maven {
+                    val releasesRepoUrl = uri("$buildDir/repos/releases")
+                    val snapshotsRepoUrl = uri("$buildDir/repos/snapshots")
+                    name = "BuildDir"
+                    url = if (project.extra["isReleaseVersion"] as Boolean) releasesRepoUrl else snapshotsRepoUrl
+                }
+                maven {
+                    val releasesRepoUrl = uri("https://oss.sonatype.org/service/local/staging/deploy/maven2/")
+                    val snapshotsRepoUrl = uri("https://oss.sonatype.org/content/repositories/snapshots/")
+                    name = "SonatypeOSS"
+                    url = if (project.extra["isReleaseVersion"] as Boolean) releasesRepoUrl else snapshotsRepoUrl
+                    credentials {
+                        username = System.getenv("SONATYPE_USERNAME")
+                        password = System.getenv("SONATYPE_PASSWORD")
+                    }
+                }
+            }
+        }
+    }
+}
+
+signing {
+    sign(publishing.publications["mavenJava"])
 }
