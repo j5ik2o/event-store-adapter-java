@@ -17,7 +17,7 @@ dependencies {
     implementation("com.fasterxml.jackson.core:jackson-databind:2.14.2")
     implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.14.2")
     implementation("org.slf4j:slf4j-api:1.7.32")
-    testImplementation("ch.qos.logback:logback-classic:1.3.1")
+    testImplementation("ch.qos.logback:logback-classic:1.4.11")
     testImplementation("org.testcontainers:testcontainers:1.19.0")
     testImplementation("org.testcontainers:junit-jupiter:1.19.0")
     testImplementation("org.testcontainers:localstack:1.19.0")
