@@ -11,7 +11,7 @@ repositories {
 }
 
 dependencies {
-    testImplementation(platform("org.junit:junit-bom:5.9.1"))
+    testImplementation(platform("org.junit:junit-bom:5.10.0"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     implementation("software.amazon.awssdk:dynamodb:2.20.140")
     implementation("com.fasterxml.jackson.core:jackson-databind:2.14.2")
