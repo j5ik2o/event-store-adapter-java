@@ -11,7 +11,8 @@ public class DefaultKeyResolver<AID extends AggregateId> implements KeyResolver<
   }
 
   @Override
-  public String resolveSortKey(AID aggregateId, long seqNr) {
-    return String.format("%s-%s-%d", aggregateId.getTypeName(), aggregateId.getValue(), seqNr);
+  public String resolveSortKey(AID aggregateId, long sequenceNumber) {
+    return String.format(
+        "%s-%s-%d", aggregateId.getTypeName(), aggregateId.getValue(), sequenceNumber);
   }
 }

@@ -96,7 +96,7 @@ public class UserAccount implements Aggregate<UserAccountId> {
   }
 
   @Override
-  public long getSeqNr() {
+  public long getSequenceNumber() {
     return seqNr;
   }
 

@@ -147,7 +147,7 @@ public class EventStoreForDynamoDB<
 
   @Nonnull
   @Override
-  public CompletableFuture<Optional<AggregateWithVersion<AID, A>>> getLatestSnapshotById(
+  public CompletableFuture<Optional<AggregateAndVersion<AID, A>>> getLatestSnapshotById(
       Class<A> clazz, AID aggregateId) {
     LOGGER.debug("getLatestSnapshotById({}, {}): start", clazz, aggregateId);
     if (aggregateId == null) {
@@ -174,7 +174,7 @@ public class EventStoreForDynamoDB<
             response -> {
               var items = response.items();
               LOGGER.debug("items = {}", items);
-              Optional<AggregateWithVersion<AID, A>> applyResult;
+              Optional<AggregateAndVersion<AID, A>> applyResult;
               if (items.isEmpty()) {
                 applyResult = Optional.empty();
               } else {
@@ -182,9 +182,9 @@ public class EventStoreForDynamoDB<
                 var bytes = item.get("payload").b().asByteArray();
                 var aggregate = snapshotSerializer.deserialize(bytes, clazz);
                 var version = Long.parseLong(item.get("version").n());
-                var seqNr = aggregate.getSeqNr();
+                var seqNr = aggregate.getSequenceNumber();
                 LOGGER.debug("seqNr = {}", seqNr);
-                applyResult = Optional.of(new AggregateWithVersion<>(aggregate, version));
+                applyResult = Optional.of(new AggregateAndVersion<>(aggregate, version));
               }
               return applyResult;
             });
@@ -195,8 +195,8 @@ public class EventStoreForDynamoDB<
   @Nonnull
   @Override
   public CompletableFuture<List<E>> getEventsByIdSinceSeqNr(
-      Class<E> clazz, AID aggregateId, long seqNr) {
-    LOGGER.debug("getEventsByIdSinceSeqNr({}, {}, {}): start", clazz, aggregateId, seqNr);
+      Class<E> clazz, AID aggregateId, long sequenceNumber) {
+    LOGGER.debug("getEventsByIdSinceSeqNr({}, {}, {}): start", clazz, aggregateId, sequenceNumber);
     if (aggregateId == null) {
       throw new IllegalArgumentException("aggregateId is null");
     }
@@ -213,7 +213,8 @@ public class EventStoreForDynamoDB<
                 .expressionAttributeValues(
                     Map.of(
                         ":aid", AttributeValue.builder().s(aggregateId.asString()).build(),
-                        ":seq_nr", AttributeValue.builder().n(String.valueOf(seqNr)).build()))
+                        ":seq_nr",
+                            AttributeValue.builder().n(String.valueOf(sequenceNumber)).build()))
                 .build());
     var result =
         queryResult.thenApply(
@@ -228,22 +229,23 @@ public class EventStoreForDynamoDB<
               }
               return events;
             });
-    LOGGER.debug("getEventsByIdSinceSeqNr({}, {}, {}): finished", clazz, aggregateId, seqNr);
+    LOGGER.debug(
+        "getEventsByIdSinceSeqNr({}, {}, {}): finished", clazz, aggregateId, sequenceNumber);
     return result;
   }
 
   @Nonnull
   @Override
-  public CompletableFuture<Void> persistEvent(E event, long snapshotVersion) {
-    LOGGER.debug("persistEvent({}, {}): start", event, snapshotVersion);
+  public CompletableFuture<Void> persistEvent(E event, long version) {
+    LOGGER.debug("persistEvent({}, {}): start", event, version);
     if (event == null) {
       throw new IllegalArgumentException("event is null");
     }
     if (event.isCreated()) {
       throw new IllegalArgumentException("event is created");
     }
-    var result = updateEventAndSnapshotOpt(event, snapshotVersion, null).thenRun(() -> {});
-    LOGGER.debug("persistEvent({}, {}): finished", event, snapshotVersion);
+    var result = updateEventAndSnapshotOpt(event, version, null).thenRun(() -> {});
+    LOGGER.debug("persistEvent({}, {}): finished", event, version);
     return result;
   }
 
@@ -272,7 +274,7 @@ public class EventStoreForDynamoDB<
     transactItems.add(putSnapshot(event, 0, aggregate));
     transactItems.add(putJournal(event));
     if (keepSnapshotCount != null) {
-      transactItems.add(putSnapshot(event, aggregate.getSeqNr(), aggregate));
+      transactItems.add(putSnapshot(event, aggregate.getSequenceNumber(), aggregate));
     }
     var result =
         dynamoDbAsyncClient.transactWriteItems(
@@ -288,7 +290,7 @@ public class EventStoreForDynamoDB<
     transactItems.add(updateSnapshot(event, 0, version, aggregate));
     transactItems.add(putJournal(event));
     if (keepSnapshotCount != null && aggregate != null) {
-      transactItems.add(putSnapshot(event, aggregate.getSeqNr(), aggregate));
+      transactItems.add(putSnapshot(event, aggregate.getSequenceNumber(), aggregate));
     }
     var result =
         dynamoDbAsyncClient.transactWriteItems(

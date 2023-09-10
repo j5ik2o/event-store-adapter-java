@@ -19,7 +19,6 @@ public sealed interface UserAccountEvent extends Event<UserAccountId>
 
   long getSeqNr();
 
-
   @JsonTypeName("created")
   @JsonIgnoreProperties(
       value = {"created"},

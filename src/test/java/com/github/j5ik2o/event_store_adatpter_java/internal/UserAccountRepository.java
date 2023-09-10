@@ -31,7 +31,7 @@ public class UserAccountRepository {
               } else {
                 return eventStore
                     .getEventsByIdSinceSeqNr(
-                        UserAccountEvent.class, id, result.get().aggregate().getSeqNr())
+                        UserAccountEvent.class, id, result.get().aggregate().getSequenceNumber())
                     .thenApply(
                         events ->
                             Optional.of(
