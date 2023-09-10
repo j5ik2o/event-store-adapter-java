@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "com.github.j5ik2o"
-version = "event-store-adapter-java"
+version = "1.0.0-SNAPSHOT"
 
 repositories {
     mavenCentral()
@@ -55,6 +55,7 @@ tasks {
     withType<Test> {
         useJUnitPlatform()
     }
+
 //    create<Copy>("javadocToDocsFolder") {
 //        from(javadoc)
 //        into("docs/javadoc")
@@ -63,16 +64,16 @@ tasks {
 //    assemble {
 //        dependsOn("javadocToDocsFolder")
 //    }
-//
-//    create<Jar>("sourcesJar") {
-//        from(sourceSets.main.get().allJava)
-//        archiveClassifier.set("sources")
-//    }
-//
-//    create<Jar>("javadocJar") {
-//        from(javadoc)
-//        archiveClassifier.set("javadoc")
-//    }
+
+    create<Jar>("sourcesJar") {
+        from(sourceSets.main.get().allJava)
+        archiveClassifier.set("sources")
+    }
+
+    create<Jar>("javadocJar") {
+        from(javadoc)
+        archiveClassifier.set("javadoc")
+    }
 }
 
 

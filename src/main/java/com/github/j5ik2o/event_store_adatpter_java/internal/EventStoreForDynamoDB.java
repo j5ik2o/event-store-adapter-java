@@ -353,7 +353,8 @@ public class EventStoreForDynamoDB<
     return result;
   }
 
-  private TransactWriteItem updateSnapshot(E event, long sequenceNumber, long version, A aggregate) {
+  private TransactWriteItem updateSnapshot(
+      E event, long sequenceNumber, long version, A aggregate) {
     LOGGER.debug("updateSnapshot({}, {}, {}): start", event, sequenceNumber, aggregate);
     var pkey = resolvePartitionKey(event.getAggregateId(), shardCount);
     var skey = resolveSortKey(event.getAggregateId(), sequenceNumber);
