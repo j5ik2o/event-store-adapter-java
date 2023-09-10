@@ -120,8 +120,8 @@ publishing {
             repositories {
                 // To locally check out the poms
                 maven {
-                    val releasesRepoUrl = uri("$buildDir/repos/releases")
-                    val snapshotsRepoUrl = uri("$buildDir/repos/snapshots")
+                    val releasesRepoUrl = uri("${layout.buildDirectory}/repos/releases")
+                    val snapshotsRepoUrl = uri("${layout.buildDirectory}/repos/snapshots")
                     name = "BuildDir"
                     url = if (project.extra["isReleaseVersion"] as Boolean) releasesRepoUrl else snapshotsRepoUrl
                 }
