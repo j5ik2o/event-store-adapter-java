@@ -182,8 +182,8 @@ public class EventStoreForDynamoDB<
                 var bytes = item.get("payload").b().asByteArray();
                 var aggregate = snapshotSerializer.deserialize(bytes, clazz);
                 var version = Long.parseLong(item.get("version").n());
-                var seqNr = aggregate.getSequenceNumber();
-                LOGGER.debug("seqNr = {}", seqNr);
+                var sequenceNumber = aggregate.getSequenceNumber();
+                LOGGER.debug("sequenceNumber = {}", sequenceNumber);
                 applyResult = Optional.of(new AggregateAndVersion<>(aggregate, version));
               }
               return applyResult;
@@ -307,20 +307,20 @@ public class EventStoreForDynamoDB<
     return keyResolver.resolvePartitionKey(aggregateId, shardCount);
   }
 
-  private String resolveSortKey(AID aggregateId, long seqNr) {
-    return keyResolver.resolveSortKey(aggregateId, seqNr);
+  private String resolveSortKey(AID aggregateId, long sequenceNumber) {
+    return keyResolver.resolveSortKey(aggregateId, sequenceNumber);
   }
 
-  private TransactWriteItem putSnapshot(E event, long seqNr, A aggregate) {
-    LOGGER.debug("putSnapshot({}, {}, {}): start", event, seqNr, aggregate);
+  private TransactWriteItem putSnapshot(E event, long sequenceNumber, A aggregate) {
+    LOGGER.debug("putSnapshot({}, {}, {}): start", event, sequenceNumber, aggregate);
     var pkey = resolvePartitionKey(event.getAggregateId(), shardCount);
-    var skey = resolveSortKey(event.getAggregateId(), seqNr);
+    var skey = resolveSortKey(event.getAggregateId(), sequenceNumber);
     var payload = snapshotSerializer.serialize(aggregate);
     LOGGER.debug(">--- put snapshot ---");
     LOGGER.debug("pkey = {}", pkey);
     LOGGER.debug("skey = {}", skey);
     LOGGER.debug("aid = {}", event.getAggregateId().asString());
-    LOGGER.debug("seq_nr = {}", seqNr);
+    LOGGER.debug("seq_nr = {}", sequenceNumber);
     LOGGER.debug("payload = {}", new String(payload));
     LOGGER.debug("<--- put snapshot ---");
     var put =
@@ -337,7 +337,7 @@ public class EventStoreForDynamoDB<
                     "aid",
                     AttributeValue.builder().s(event.getAggregateId().asString()).build(),
                     "seq_nr",
-                    AttributeValue.builder().n(String.valueOf(seqNr)).build(),
+                    AttributeValue.builder().n(String.valueOf(sequenceNumber)).build(),
                     "version",
                     AttributeValue.builder().n("1").build(),
                     "ttl",
@@ -349,19 +349,19 @@ public class EventStoreForDynamoDB<
             .conditionExpression("attribute_not_exists(pkey) AND attribute_not_exists(skey)")
             .build();
     var result = TransactWriteItem.builder().put(put).build();
-    LOGGER.debug("putSnapshot({}, {}, {}): finished", event, seqNr, aggregate);
+    LOGGER.debug("putSnapshot({}, {}, {}): finished", event, sequenceNumber, aggregate);
     return result;
   }
 
-  private TransactWriteItem updateSnapshot(E event, long seqNr, long version, A aggregate) {
-    LOGGER.debug("updateSnapshot({}, {}, {}): start", event, seqNr, aggregate);
+  private TransactWriteItem updateSnapshot(E event, long sequenceNumber, long version, A aggregate) {
+    LOGGER.debug("updateSnapshot({}, {}, {}): start", event, sequenceNumber, aggregate);
     var pkey = resolvePartitionKey(event.getAggregateId(), shardCount);
-    var skey = resolveSortKey(event.getAggregateId(), seqNr);
+    var skey = resolveSortKey(event.getAggregateId(), sequenceNumber);
     LOGGER.debug(">--- update snapshot ---");
     LOGGER.debug("pkey = {}", pkey);
     LOGGER.debug("skey = {}", skey);
     LOGGER.debug("aid = {}", event.getAggregateId().asString());
-    LOGGER.debug("seq_nr = {}", seqNr);
+    LOGGER.debug("seq_nr = {}", sequenceNumber);
     LOGGER.debug("<--- update snapshot ---");
 
     var expressionAttributeNames =
@@ -399,7 +399,7 @@ public class EventStoreForDynamoDB<
       var expressionAttributeValues2 =
           Map.of(
               ":seq_nr",
-              AttributeValue.builder().n(String.valueOf(seqNr)).build(),
+              AttributeValue.builder().n(String.valueOf(sequenceNumber)).build(),
               ":payload",
               AttributeValue.builder().b(SdkBytes.fromByteArray(payload)).build());
       expressionAttributeValues.putAll(expressionAttributeValues2);
@@ -411,7 +411,7 @@ public class EventStoreForDynamoDB<
               .expressionAttributeValues(expressionAttributeValues);
     }
     var result = TransactWriteItem.builder().update(update.build()).build();
-    LOGGER.debug("updateSnapshot({}, {}, {}): finished", event, seqNr, aggregate);
+    LOGGER.debug("updateSnapshot({}, {}, {}): finished", event, sequenceNumber, aggregate);
     return result;
   }
 
@@ -420,7 +420,7 @@ public class EventStoreForDynamoDB<
     var pkey = resolvePartitionKey(event.getAggregateId(), shardCount);
     var skey = resolveSortKey(event.getAggregateId(), event.getSequenceNumber());
     var aid = event.getAggregateId().asString();
-    var seqNr = event.getSequenceNumber();
+    var sequenceNumber = event.getSequenceNumber();
     var payload = eventSerializer.serialize(event);
     var occurredAt = String.valueOf(event.getOccurredAt().toEpochMilli());
 
@@ -428,7 +428,7 @@ public class EventStoreForDynamoDB<
     LOGGER.debug("pkey = {}", pkey);
     LOGGER.debug("skey = {}", skey);
     LOGGER.debug("aid = {}", event.getAggregateId().asString());
-    LOGGER.debug("seq_nr = {}", seqNr);
+    LOGGER.debug("seq_nr = {}", sequenceNumber);
     LOGGER.debug("payload = {}", new String(payload));
     LOGGER.debug("<--- put journal ---");
 
@@ -444,7 +444,7 @@ public class EventStoreForDynamoDB<
                     "aid",
                     AttributeValue.builder().s(aid).build(),
                     "seq_nr",
-                    AttributeValue.builder().n(String.valueOf(seqNr)).build(),
+                    AttributeValue.builder().n(String.valueOf(sequenceNumber)).build(),
                     "payload",
                     AttributeValue.builder().b(SdkBytes.fromByteArray(payload)).build(),
                     "occurred_at",

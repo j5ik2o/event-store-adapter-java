@@ -27,7 +27,7 @@ public sealed interface UserAccountEvent extends Event<UserAccountId>
     private final String id;
     private final UserAccountId aggregateId;
 
-    private final long seqNr;
+    private final long sequenceNumber;
 
     private final String name;
 
@@ -36,12 +36,12 @@ public sealed interface UserAccountEvent extends Event<UserAccountId>
     public Created(
         @JsonProperty("id") String id,
         @JsonProperty("aggregateId") UserAccountId aggregateId,
-        @JsonProperty("seqNr") long seqNr,
+        @JsonProperty("sequenceNumber") long sequenceNumber,
         @JsonProperty("name") String name,
         @JsonProperty("occurredAt") Instant occurredAt) {
       this.id = id;
       this.aggregateId = aggregateId;
-      this.seqNr = seqNr;
+      this.sequenceNumber = sequenceNumber;
       this.name = name;
       this.occurredAt = occurredAt;
     }
@@ -65,7 +65,7 @@ public sealed interface UserAccountEvent extends Event<UserAccountId>
 
     @Override
     public long getSequenceNumber() {
-      return seqNr;
+      return sequenceNumber;
     }
 
     @Nonnull
@@ -88,19 +88,19 @@ public sealed interface UserAccountEvent extends Event<UserAccountId>
 
     private final String id;
     private final UserAccountId aggregateId;
-    private final long seqNr;
+    private final long sequenceNumber;
     private final String name;
     private final Instant occurredAt;
 
     public Renamed(
         @JsonProperty("id") String id,
         @JsonProperty("aggregateId") UserAccountId aggregateId,
-        @JsonProperty("seqNr") long seqNr,
+        @JsonProperty("sequenceNumber") long sequenceNumber,
         @JsonProperty("name") String name,
         @JsonProperty("occurredAt") Instant occurredAt) {
       this.id = id;
       this.aggregateId = aggregateId;
-      this.seqNr = seqNr;
+      this.sequenceNumber = sequenceNumber;
       this.name = name;
       this.occurredAt = occurredAt;
     }
@@ -129,7 +129,7 @@ public sealed interface UserAccountEvent extends Event<UserAccountId>
 
     @Override
     public long getSequenceNumber() {
-      return seqNr;
+      return sequenceNumber;
     }
 
     @Nonnull

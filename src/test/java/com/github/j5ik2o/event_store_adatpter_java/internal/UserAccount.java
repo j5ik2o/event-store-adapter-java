@@ -8,7 +8,7 @@ import java.util.List;
 
 public class UserAccount implements Aggregate<UserAccountId> {
   private final UserAccountId id;
-  private long seqNr;
+  private long sequenceNumber;
   private final String name;
 
   private long version;
@@ -20,7 +20,7 @@ public class UserAccount implements Aggregate<UserAccountId> {
 
     UserAccount that = (UserAccount) o;
 
-    if (seqNr != that.seqNr) return false;
+    if (sequenceNumber != that.sequenceNumber) return false;
     if (version != that.version) return false;
     if (!id.equals(that.id)) return false;
     return name.equals(that.name);
@@ -29,7 +29,7 @@ public class UserAccount implements Aggregate<UserAccountId> {
   @Override
   public int hashCode() {
     int result = id.hashCode();
-    result = 31 * result + (int) (seqNr ^ (seqNr >>> 32));
+    result = 31 * result + (int) (sequenceNumber ^ (sequenceNumber >>> 32));
     result = 31 * result + name.hashCode();
     result = 31 * result + (int) (version ^ (version >>> 32));
     return result;
@@ -37,11 +37,11 @@ public class UserAccount implements Aggregate<UserAccountId> {
 
   private UserAccount(
       @JsonProperty("id") UserAccountId id,
-      @JsonProperty("seqNr") long seqNr,
+      @JsonProperty("sequenceNumber") long sequenceNumber,
       @JsonProperty("name") String name,
       @JsonProperty("version") long version) {
     this.id = id;
-    this.seqNr = seqNr;
+    this.sequenceNumber = sequenceNumber;
     this.name = name;
     this.version = version;
   }
@@ -66,26 +66,26 @@ public class UserAccount implements Aggregate<UserAccountId> {
   public static AggregateAndEvent<UserAccountId, UserAccount, UserAccountEvent> create(
       UserAccountId id, String name) {
     var userAccount = new UserAccount(id, 0L, name, 1L);
-    userAccount.seqNr++;
+    userAccount.sequenceNumber++;
     return new AggregateAndEvent<>(
         userAccount,
         new UserAccountEvent.Created(
             IdGenerator.generate().toString(),
             userAccount.id,
-            userAccount.seqNr,
+            userAccount.sequenceNumber,
             name,
             Instant.now()));
   }
 
   public AggregateAndEvent<UserAccountId, UserAccount, UserAccountEvent> changeName(String name) {
-    var userAccount = new UserAccount(id, seqNr, name, version);
-    userAccount.seqNr++;
+    var userAccount = new UserAccount(id, sequenceNumber, name, version);
+    userAccount.sequenceNumber++;
     return new AggregateAndEvent<>(
         userAccount,
         new UserAccountEvent.Renamed(
             IdGenerator.generate().toString(),
             userAccount.id,
-            userAccount.seqNr,
+            userAccount.sequenceNumber,
             name,
             Instant.now()));
   }
@@ -97,7 +97,7 @@ public class UserAccount implements Aggregate<UserAccountId> {
 
   @Override
   public long getSequenceNumber() {
-    return seqNr;
+    return sequenceNumber;
   }
 
   @Override
