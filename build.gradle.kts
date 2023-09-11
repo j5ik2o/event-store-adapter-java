@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "com.github.j5ik2o"
-version = "1.0.0-SNAPSHOT"
+version = "1.0.1-SNAPSHOT"
 
 repositories {
     mavenCentral()
@@ -78,7 +78,7 @@ tasks {
     }
 
     withType<Wrapper> {
-        gradleVersion = "8.0"
+        gradleVersion = "8.3"
     }
 
     withType<JavaCompile> {
