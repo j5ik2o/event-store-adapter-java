@@ -91,6 +91,9 @@ publishing {
     publications {
         create<MavenPublication>("mavenJava") {
             from(components["java"])
+            afterEvaluate {
+                artifactId = tasks.jar.get().archiveBaseName.get()
+            }
             artifact(tasks["sourcesJar"])
             artifact(tasks["javadocJar"])
 
