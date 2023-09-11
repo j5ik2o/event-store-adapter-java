@@ -22,4 +22,4 @@ jobs:
       - uses: gradle/gradle-build-action@v2
         with:
           gradle-version: 8.3
-          arguments: test
+          arguments: test --info
