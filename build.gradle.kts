@@ -93,9 +93,11 @@ publishing {
             from(components["java"])
             artifact(tasks["sourcesJar"])
             artifact(tasks["javadocJar"])
+
             setVersion(project.version)
             pom {
                 name.set(project.name)
+                packaging = "jar"
                 description.set("Event Store Adapter for Java")
                 url.set("https://github.com/j5ik2o/event-store-adapter-java")
                 licenses {
