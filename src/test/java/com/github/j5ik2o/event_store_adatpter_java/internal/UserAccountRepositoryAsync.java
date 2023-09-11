@@ -1,15 +1,16 @@
 package com.github.j5ik2o.event_store_adatpter_java.internal;
 
-import com.github.j5ik2o.event_store_adatpter_java.EventStore;
+import com.github.j5ik2o.event_store_adatpter_java.EventStoreAsync;
+
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
-public class UserAccountRepository {
+public class UserAccountRepositoryAsync {
 
-  private final EventStore<UserAccountId, UserAccount, UserAccountEvent> eventStore;
+    private final EventStoreAsync<UserAccountId, UserAccount, UserAccountEvent> eventStore;
 
-  public UserAccountRepository(
-      EventStore<UserAccountId, UserAccount, UserAccountEvent> eventStore) {
+    public UserAccountRepositoryAsync(
+            EventStoreAsync<UserAccountId, UserAccount, UserAccountEvent> eventStore) {
     this.eventStore = eventStore;
   }
 

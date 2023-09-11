@@ -1,9 +1,5 @@
 package com.github.j5ik2o.event_store_adatpter_java.internal;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.fail;
-import static org.testcontainers.containers.localstack.LocalStackContainer.Service.DYNAMODB;
-
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -12,10 +8,14 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
-@Testcontainers
-public class EventStoreForDynamoDBTest {
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.fail;
+import static org.testcontainers.containers.localstack.LocalStackContainer.Service.DYNAMODB;
 
-  private static final Logger LOGGER = LoggerFactory.getLogger(EventStoreForDynamoDBTest.class);
+@Testcontainers
+public class EventStoreAsyncForDynamoDBTest {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(EventStoreAsyncForDynamoDBTest.class);
 
   private static final String JOURNAL_TABLE_NAME = "journal";
   private static final String SNAPSHOT_TABLE_NAME = "snapshot";
@@ -37,8 +37,8 @@ public class EventStoreForDynamoDBTest {
           .join();
       client.listTables().join().tableNames().forEach(System.out::println);
 
-      EventStoreForDynamoDB<UserAccountId, UserAccount, UserAccountEvent> eventStore =
-          new EventStoreForDynamoDB<>(
+        EventStoreAsyncForDynamoDB<UserAccountId, UserAccount, UserAccountEvent> eventStore =
+                new EventStoreAsyncForDynamoDB<>(
               client,
               JOURNAL_TABLE_NAME,
               SNAPSHOT_TABLE_NAME,
@@ -70,15 +70,15 @@ public class EventStoreForDynamoDBTest {
           .join();
       client.listTables().join().tableNames().forEach(System.out::println);
 
-      EventStoreForDynamoDB<UserAccountId, UserAccount, UserAccountEvent> eventStore =
-          new EventStoreForDynamoDB<>(
+        EventStoreAsyncForDynamoDB<UserAccountId, UserAccount, UserAccountEvent> eventStore =
+                new EventStoreAsyncForDynamoDB<>(
               client,
               JOURNAL_TABLE_NAME,
               SNAPSHOT_TABLE_NAME,
               JOURNAL_AID_INDEX_NAME,
               SNAPSHOT_AID_INDEX_NAME,
               32);
-      var userAccountRepository = new UserAccountRepository(eventStore);
+        var userAccountRepository = new UserAccountRepositoryAsync(eventStore);
 
       var id = new UserAccountId(IdGenerator.generate().toString());
       var aggregateAndEvent1 = UserAccount.create(id, "test-1");

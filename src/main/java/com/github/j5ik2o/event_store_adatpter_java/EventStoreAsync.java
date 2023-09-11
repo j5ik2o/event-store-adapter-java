@@ -1,11 +1,11 @@
 package com.github.j5ik2o.event_store_adatpter_java;
 
+import javax.annotation.Nonnull;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
-import javax.annotation.Nonnull;
 
-public interface EventStore<
+public interface EventStoreAsync<
     AID extends AggregateId, A extends Aggregate<AID>, E extends Event<AID>> {
   @Nonnull
   CompletableFuture<Optional<AggregateAndVersion<AID, A>>> getLatestSnapshotById(

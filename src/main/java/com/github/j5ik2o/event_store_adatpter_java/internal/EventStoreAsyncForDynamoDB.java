@@ -2,23 +2,24 @@ package com.github.j5ik2o.event_store_adatpter_java.internal;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.j5ik2o.event_store_adatpter_java.*;
-import java.time.*;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
-import javax.annotation.Nonnull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
 import software.amazon.awssdk.services.dynamodb.model.*;
 
-public class EventStoreForDynamoDB<
-        AID extends AggregateId, A extends Aggregate<AID>, E extends Event<AID>>
-    implements EventStore<AID, A, E> {
+import javax.annotation.Nonnull;
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 
-  private static final Logger LOGGER = LoggerFactory.getLogger(EventStoreForDynamoDB.class);
+public class EventStoreAsyncForDynamoDB<
+        AID extends AggregateId, A extends Aggregate<AID>, E extends Event<AID>>
+        implements EventStoreAsync<AID, A, E> {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(EventStoreAsyncForDynamoDB.class);
 
   private final DynamoDbAsyncClient dynamoDbAsyncClient;
   private final String journalTableName;
@@ -37,7 +38,7 @@ public class EventStoreForDynamoDB<
 
   private SnapshotSerializer<AID, A> snapshotSerializer;
 
-  public EventStoreForDynamoDB(
+    public EventStoreAsyncForDynamoDB(
       DynamoDbAsyncClient dynamoDbAsyncClient,
       String journalTableName,
       String snapshotTableName,
@@ -70,17 +71,13 @@ public class EventStoreForDynamoDB<
     this.keyResolver = new DefaultKeyResolver<>();
     var objectMapper = new ObjectMapper();
     objectMapper.findAndRegisterModules();
-    //    var javaTimeModule = new JavaTimeModule();
-    //    javaTimeModule.addDeserializer(LocalDateTime.class, new
-    // LocalDateTimeDeserializer(DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss")));
-    //    objectMapper.registerModule(javaTimeModule);
     this.eventSerializer = new JsonEventSerializer<>(objectMapper);
     this.snapshotSerializer = new JsonSnapshotSerializer<>(objectMapper);
   }
 
-  public EventStoreForDynamoDB<AID, A, E> withKeepSnapshotCount(long keepSnapshotCount) {
-    EventStoreForDynamoDB<AID, A, E> self =
-        new EventStoreForDynamoDB<>(
+    public EventStoreAsyncForDynamoDB<AID, A, E> withKeepSnapshotCount(long keepSnapshotCount) {
+        EventStoreAsyncForDynamoDB<AID, A, E> self =
+                new EventStoreAsyncForDynamoDB<>(
             dynamoDbAsyncClient,
             journalTableName,
             snapshotTableName,
@@ -91,9 +88,9 @@ public class EventStoreForDynamoDB<
     return self;
   }
 
-  public EventStoreForDynamoDB<AID, A, E> withDeleteTtl(Duration deleteTtl) {
-    EventStoreForDynamoDB<AID, A, E> self =
-        new EventStoreForDynamoDB<>(
+    public EventStoreAsyncForDynamoDB<AID, A, E> withDeleteTtl(Duration deleteTtl) {
+        EventStoreAsyncForDynamoDB<AID, A, E> self =
+                new EventStoreAsyncForDynamoDB<>(
             dynamoDbAsyncClient,
             journalTableName,
             snapshotTableName,
@@ -104,9 +101,9 @@ public class EventStoreForDynamoDB<
     return self;
   }
 
-  public EventStoreForDynamoDB<AID, A, E> withKeyResolver(KeyResolver<AID> keyResolver) {
-    EventStoreForDynamoDB<AID, A, E> self =
-        new EventStoreForDynamoDB<>(
+    public EventStoreAsyncForDynamoDB<AID, A, E> withKeyResolver(KeyResolver<AID> keyResolver) {
+        EventStoreAsyncForDynamoDB<AID, A, E> self =
+                new EventStoreAsyncForDynamoDB<>(
             dynamoDbAsyncClient,
             journalTableName,
             snapshotTableName,
@@ -117,10 +114,10 @@ public class EventStoreForDynamoDB<
     return self;
   }
 
-  public EventStoreForDynamoDB<AID, A, E> withEventSerializer(
+    public EventStoreAsyncForDynamoDB<AID, A, E> withEventSerializer(
       EventSerializer<AID, E> eventSerializer) {
-    EventStoreForDynamoDB<AID, A, E> self =
-        new EventStoreForDynamoDB<>(
+        EventStoreAsyncForDynamoDB<AID, A, E> self =
+                new EventStoreAsyncForDynamoDB<>(
             dynamoDbAsyncClient,
             journalTableName,
             snapshotTableName,
@@ -131,10 +128,10 @@ public class EventStoreForDynamoDB<
     return self;
   }
 
-  public EventStoreForDynamoDB<AID, A, E> withSnapshotSerializer(
+    public EventStoreAsyncForDynamoDB<AID, A, E> withSnapshotSerializer(
       SnapshotSerializer<AID, A> snapshotSerializer) {
-    EventStoreForDynamoDB<AID, A, E> self =
-        new EventStoreForDynamoDB<>(
+        EventStoreAsyncForDynamoDB<AID, A, E> self =
+                new EventStoreAsyncForDynamoDB<>(
             dynamoDbAsyncClient,
             journalTableName,
             snapshotTableName,
