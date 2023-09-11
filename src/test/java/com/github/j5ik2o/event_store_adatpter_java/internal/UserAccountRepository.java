@@ -31,12 +31,14 @@ public class UserAccountRepository {
               } else {
                 return eventStore
                     .getEventsByIdSinceSequenceNumber(
-                        UserAccountEvent.class, id, result.get().aggregate().getSequenceNumber())
+                        UserAccountEvent.class, id, result.get().getAggregate().getSequenceNumber())
                     .thenApply(
                         events ->
                             Optional.of(
                                 UserAccount.replay(
-                                    events, result.get().aggregate(), result.get().version())));
+                                    events,
+                                    result.get().getAggregate(),
+                                    result.get().getVersion())));
               }
             });
   }

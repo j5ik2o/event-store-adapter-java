@@ -10,8 +10,7 @@ import javax.annotation.Nonnull;
   @JsonSubTypes.Type(name = "created", value = UserAccountEvent.Created.class),
   @JsonSubTypes.Type(name = "renamed", value = UserAccountEvent.Renamed.class)
 })
-public sealed interface UserAccountEvent extends Event<UserAccountId>
-    permits UserAccountEvent.Created, UserAccountEvent.Renamed {
+public interface UserAccountEvent extends Event<UserAccountId> {
 
   @Nonnull
   UserAccountId getAggregateId();

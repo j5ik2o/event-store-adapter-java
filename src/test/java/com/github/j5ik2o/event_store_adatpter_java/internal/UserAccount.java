@@ -57,7 +57,7 @@ public class UserAccount implements Aggregate<UserAccountId> {
   public UserAccount applyEvent(UserAccountEvent event) {
     if (event instanceof UserAccountEvent.Renamed) {
       var result = changeName(((UserAccountEvent.Renamed) event).getName());
-      return result.aggregate();
+      return result.getAggregate();
     } else {
       throw new IllegalArgumentException();
     }

@@ -49,12 +49,12 @@ public class EventStoreForDynamoDBTest {
       var id = new UserAccountId(IdGenerator.generate().toString());
       var aggregateAndEvent = UserAccount.create(id, "test-1");
       eventStore
-          .persistEventAndSnapshot(aggregateAndEvent.event(), aggregateAndEvent.aggregate())
+          .persistEventAndSnapshot(aggregateAndEvent.getEvent(), aggregateAndEvent.getAggregate())
           .join();
 
       var result = eventStore.getLatestSnapshotById(UserAccount.class, id).join();
       if (result.isPresent()) {
-        assertEquals(result.get().aggregate().getId(), aggregateAndEvent.aggregate().getId());
+        assertEquals(result.get().getAggregate().getId(), aggregateAndEvent.getAggregate().getId());
         LOGGER.info("result = {}", result.get());
       } else {
         fail("result is empty");
@@ -82,19 +82,19 @@ public class EventStoreForDynamoDBTest {
 
       var id = new UserAccountId(IdGenerator.generate().toString());
       var aggregateAndEvent1 = UserAccount.create(id, "test-1");
-      var aggregate1 = aggregateAndEvent1.aggregate();
+      var aggregate1 = aggregateAndEvent1.getAggregate();
 
-      userAccountRepository.store(aggregateAndEvent1.event(), aggregate1).join();
+      userAccountRepository.store(aggregateAndEvent1.getEvent(), aggregate1).join();
 
       var aggregateAndEvent2 = aggregate1.changeName("test-2");
 
       userAccountRepository
-          .store(aggregateAndEvent2.event(), aggregateAndEvent2.aggregate().getVersion())
+          .store(aggregateAndEvent2.getEvent(), aggregateAndEvent2.getAggregate().getVersion())
           .join();
 
       var result = userAccountRepository.findById(id).join();
       if (result.isPresent()) {
-        assertEquals(result.get().getId(), aggregateAndEvent2.aggregate().getId());
+        assertEquals(result.get().getId(), aggregateAndEvent2.getAggregate().getId());
         assertEquals(result.get().getName(), "test-2");
       } else {
         fail("result is empty");
