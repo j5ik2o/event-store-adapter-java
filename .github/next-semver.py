@@ -10,13 +10,13 @@ for s in sys.stdin:
     r = re.match('.*v?(\d+\.\d+\.\d+)', s)
     if r:
         cur_ver = semver.VersionInfo.parse(r.group(1))
+        next_ver = ""
         if args[1] == "snapshot":
-            next_ver = cur_ver.bump_patch()
-            next_ver = str(next_ver) + "-SNAPSHOT"
+            next_ver = str(cur_ver.bump_patch()) + "-SNAPSHOT"
         if args[1] == "major":
-            next_ver = cur_ver.bump_major()
+            next_ver = str(cur_ver.bump_major())
         elif args[1] == "minor":
-            next_ver = cur_ver.bump_minor()
+            next_ver = str(cur_ver.bump_minor())
         else:
-            next_ver = cur_ver.bump_patch()
+            next_ver = str(cur_ver.bump_patch())
         print(next_ver)
