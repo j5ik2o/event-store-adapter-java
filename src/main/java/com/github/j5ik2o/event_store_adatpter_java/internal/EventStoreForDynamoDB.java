@@ -5,26 +5,24 @@ import com.github.j5ik2o.event_store_adatpter_java.*;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
-import software.amazon.awssdk.services.dynamodb.model.*;
+import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsResponse;
 
-public final class EventStoreAsyncForDynamoDB<
+public final class EventStoreForDynamoDB<
         AID extends AggregateId, A extends Aggregate<AID>, E extends Event<AID>>
-    implements EventStoreAsync<AID, A, E> {
-
-  private static final Logger LOGGER = LoggerFactory.getLogger(EventStoreAsyncForDynamoDB.class);
+    implements EventStore<AID, A, E> {
+  private static final Logger LOGGER = LoggerFactory.getLogger(EventStoreForDynamoDB.class);
   private static final ObjectMapper objectMapper = new ObjectMapper();
 
   static {
     objectMapper.findAndRegisterModules();
   }
 
-  private final DynamoDbAsyncClient dynamoDbAsyncClient;
+  private final DynamoDbClient dynamoDbClient;
   private final String journalTableName;
   private final String snapshotTableName;
   private final String journalAidIndexName;
@@ -40,11 +38,10 @@ public final class EventStoreAsyncForDynamoDB<
   private final EventSerializer<AID, E> eventSerializer;
 
   private final SnapshotSerializer<AID, A> snapshotSerializer;
-
   private final EventStoreSupport<AID, A, E> eventStoreSupport;
 
-  public EventStoreAsyncForDynamoDB(
-      @Nonnull DynamoDbAsyncClient dynamoDbAsyncClient,
+  public EventStoreForDynamoDB(
+      @Nonnull DynamoDbClient dynamoDbClient,
       @Nonnull String journalTableName,
       @Nonnull String snapshotTableName,
       @Nonnull String journalAidIndexName,
@@ -55,12 +52,14 @@ public final class EventStoreAsyncForDynamoDB<
       @Nullable KeyResolver<AID> keyResolver,
       @Nullable EventSerializer<AID, E> eventSerializer,
       @Nullable SnapshotSerializer<AID, A> snapshotSerializer) {
-    this.dynamoDbAsyncClient = dynamoDbAsyncClient;
+    // required parameters
+    this.dynamoDbClient = dynamoDbClient;
     this.journalTableName = journalTableName;
     this.snapshotTableName = snapshotTableName;
     this.journalAidIndexName = journalAidIndexName;
     this.snapshotAidIndexName = snapshotAidIndexName;
     this.shardCount = shardCount;
+    // optional parameters
     this.keepSnapshotCount = keepSnapshotCount;
     this.deleteTtl = deleteTtl;
     this.keyResolver = keyResolver;
@@ -81,15 +80,15 @@ public final class EventStoreAsyncForDynamoDB<
             snapshotSerializer);
   }
 
-  public EventStoreAsyncForDynamoDB(
-      @Nonnull DynamoDbAsyncClient dynamoDbAsyncClient,
+  public EventStoreForDynamoDB(
+      @Nonnull DynamoDbClient dynamoDbClient,
       @Nonnull String journalTableName,
       @Nonnull String snapshotTableName,
       @Nonnull String journalAidIndexName,
       @Nonnull String snapshotAidIndexName,
       long shardCount) {
     this(
-        dynamoDbAsyncClient,
+        dynamoDbClient,
         journalTableName,
         snapshotTableName,
         journalAidIndexName,
@@ -102,9 +101,9 @@ public final class EventStoreAsyncForDynamoDB<
         new JsonSnapshotSerializer<>(objectMapper));
   }
 
-  public EventStoreAsyncForDynamoDB<AID, A, E> withKeepSnapshotCount(long keepSnapshotCount) {
-    return new EventStoreAsyncForDynamoDB<>(
-        dynamoDbAsyncClient,
+  public EventStoreForDynamoDB<AID, A, E> withKeepSnapshotCount(long keepSnapshotCount) {
+    return new EventStoreForDynamoDB<>(
+        dynamoDbClient,
         journalTableName,
         snapshotTableName,
         journalAidIndexName,
@@ -117,9 +116,9 @@ public final class EventStoreAsyncForDynamoDB<
         snapshotSerializer);
   }
 
-  public EventStoreAsyncForDynamoDB<AID, A, E> withDeleteTtl(Duration deleteTtl) {
-    return new EventStoreAsyncForDynamoDB<>(
-        dynamoDbAsyncClient,
+  public EventStoreForDynamoDB<AID, A, E> withDeleteTtl(Duration deleteTtl) {
+    return new EventStoreForDynamoDB<>(
+        dynamoDbClient,
         journalTableName,
         snapshotTableName,
         journalAidIndexName,
@@ -132,9 +131,9 @@ public final class EventStoreAsyncForDynamoDB<
         snapshotSerializer);
   }
 
-  public EventStoreAsyncForDynamoDB<AID, A, E> withKeyResolver(KeyResolver<AID> keyResolver) {
-    return new EventStoreAsyncForDynamoDB<>(
-        dynamoDbAsyncClient,
+  public EventStoreForDynamoDB<AID, A, E> withKeyResolver(KeyResolver<AID> keyResolver) {
+    return new EventStoreForDynamoDB<>(
+        dynamoDbClient,
         journalTableName,
         snapshotTableName,
         journalAidIndexName,
@@ -147,10 +146,10 @@ public final class EventStoreAsyncForDynamoDB<
         snapshotSerializer);
   }
 
-  public EventStoreAsyncForDynamoDB<AID, A, E> withEventSerializer(
+  public EventStoreForDynamoDB<AID, A, E> withEventSerializer(
       EventSerializer<AID, E> eventSerializer) {
-    return new EventStoreAsyncForDynamoDB<>(
-        dynamoDbAsyncClient,
+    return new EventStoreForDynamoDB<>(
+        dynamoDbClient,
         journalTableName,
         snapshotTableName,
         journalAidIndexName,
@@ -163,10 +162,10 @@ public final class EventStoreAsyncForDynamoDB<
         snapshotSerializer);
   }
 
-  public EventStoreAsyncForDynamoDB<AID, A, E> withSnapshotSerializer(
+  public EventStoreForDynamoDB<AID, A, E> withSnapshotSerializer(
       SnapshotSerializer<AID, A> snapshotSerializer) {
-    return new EventStoreAsyncForDynamoDB<>(
-        dynamoDbAsyncClient,
+    return new EventStoreForDynamoDB<>(
+        dynamoDbClient,
         journalTableName,
         snapshotTableName,
         journalAidIndexName,
@@ -181,30 +180,33 @@ public final class EventStoreAsyncForDynamoDB<
 
   @Nonnull
   @Override
-  public CompletableFuture<Optional<AggregateAndVersion<AID, A>>> getLatestSnapshotById(
-      @Nonnull Class<A> clazz, @Nonnull AID aggregateId) {
+  public Optional<AggregateAndVersion<AID, A>> getLatestSnapshotById(
+      Class<A> clazz, AID aggregateId) {
     LOGGER.debug("getLatestSnapshotById({}, {}): start", clazz, aggregateId);
+    if (aggregateId == null) {
+      throw new IllegalArgumentException("aggregateId is null");
+    }
     var request = eventStoreSupport.getLatestSnapshotByIdQueryRequest(aggregateId);
-    var result =
-        dynamoDbAsyncClient
-            .query(request)
-            .thenApply(response -> eventStoreSupport.convertToAggregateAndVersion(response, clazz));
+    var response = dynamoDbClient.query(request);
+    var result = eventStoreSupport.convertToAggregateAndVersion(response, clazz);
     LOGGER.debug("getLatestSnapshotById({}, {}): finished", clazz, aggregateId);
     return result;
   }
 
   @Nonnull
   @Override
-  public CompletableFuture<List<E>> getEventsByIdSinceSequenceNumber(
-      @Nonnull Class<E> clazz, @Nonnull AID aggregateId, long sequenceNumber) {
+  public List<E> getEventsByIdSinceSequenceNumber(
+      Class<E> clazz, AID aggregateId, long sequenceNumber) {
     LOGGER.debug(
         "getEventsByIdSinceSequenceNumber({}, {}, {}): start", clazz, aggregateId, sequenceNumber);
+    if (aggregateId == null) {
+      throw new IllegalArgumentException("aggregateId is null");
+    }
     var request =
         eventStoreSupport.getEventsByIdSinceSequenceNumberQueryRequest(aggregateId, sequenceNumber);
-    var result =
-        dynamoDbAsyncClient
-            .query(request)
-            .thenApply(response -> eventStoreSupport.convertToEvents(response, clazz));
+    var response = dynamoDbClient.query(request);
+
+    var result = eventStoreSupport.convertToEvents(response, clazz);
     LOGGER.debug(
         "getEventsByIdSinceSequenceNumber({}, {}, {}): finished",
         clazz,
@@ -213,50 +215,50 @@ public final class EventStoreAsyncForDynamoDB<
     return result;
   }
 
-  @Nonnull
   @Override
-  public CompletableFuture<Void> persistEvent(@Nonnull E event, long version) {
+  public void persistEvent(E event, long version) {
     LOGGER.debug("persistEvent({}, {}): start", event, version);
+    if (event == null) {
+      throw new IllegalArgumentException("event is null");
+    }
     if (event.isCreated()) {
       throw new IllegalArgumentException("event is created");
     }
-    var result = updateEventAndSnapshotOpt(event, version, null).thenRun(() -> {});
+    updateEventAndSnapshotOpt(event, version, null);
     LOGGER.debug("persistEvent({}, {}): finished", event, version);
-    return result;
   }
 
-  @Nonnull
   @Override
-  public CompletableFuture<Void> persistEventAndSnapshot(@Nonnull E event, @Nonnull A aggregate) {
+  public void persistEventAndSnapshot(E event, A aggregate) {
     LOGGER.debug("persistEventAndSnapshot({}, {}): start", event, aggregate);
-    CompletableFuture<Void> result;
-    if (event.isCreated()) {
-      result = createEventAndSnapshot(event, aggregate).thenRun(() -> {});
-    } else {
-      result =
-          updateEventAndSnapshotOpt(event, aggregate.getVersion(), aggregate).thenRun(() -> {});
+    if (event == null) {
+      throw new IllegalArgumentException("event is null");
     }
+    TransactWriteItemsResponse result;
+    if (event.isCreated()) {
+      result = createEventAndSnapshot(event, aggregate);
+    } else {
+      result = updateEventAndSnapshotOpt(event, aggregate.getVersion(), aggregate);
+    }
+    LOGGER.debug("result = {}", result);
     LOGGER.debug("persistEventAndSnapshot({}, {}): finished", event, aggregate);
-    return result;
   }
 
-  private CompletableFuture<TransactWriteItemsResponse> createEventAndSnapshot(
-      @Nonnull E event, @Nonnull A aggregate) {
+  private TransactWriteItemsResponse createEventAndSnapshot(E event, A aggregate) {
     LOGGER.debug("createEventAndSnapshot({}, {}): start", event, aggregate);
     var request =
         eventStoreSupport.createEventAndSnapshotTransactWriteItemsRequest(event, aggregate);
-    var result = dynamoDbAsyncClient.transactWriteItems(request);
+    var result = dynamoDbClient.transactWriteItems(request);
     LOGGER.debug("createEventAndSnapshot({}, {}): finished", event, aggregate);
     return result;
   }
 
-  private CompletableFuture<TransactWriteItemsResponse> updateEventAndSnapshotOpt(
-      @Nonnull E event, long version, A aggregate) {
+  private TransactWriteItemsResponse updateEventAndSnapshotOpt(E event, long version, A aggregate) {
     LOGGER.debug("updateEventAndSnapshotOpt({}, {}, {}): start", event, version, aggregate);
     var request =
         eventStoreSupport.updateEventAndSnapshotOptTransactWriteItemsRequest(
             event, version, aggregate);
-    var result = dynamoDbAsyncClient.transactWriteItems(request);
+    var result = dynamoDbClient.transactWriteItems(request);
     LOGGER.debug("updateEventAndSnapshotOpt({}, {}, {}): finished", event, version, aggregate);
     return result;
   }

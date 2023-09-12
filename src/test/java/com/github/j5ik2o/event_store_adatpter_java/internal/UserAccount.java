@@ -5,11 +5,12 @@ import com.github.j5ik2o.event_store_adatpter_java.Aggregate;
 import com.github.j5ik2o.event_store_adatpter_java.AggregateAndEvent;
 import java.time.Instant;
 import java.util.List;
+import javax.annotation.Nonnull;
 
-public class UserAccount implements Aggregate<UserAccountId> {
-  private final UserAccountId id;
+public final class UserAccount implements Aggregate<UserAccountId> {
+  @Nonnull private final UserAccountId id;
   private long sequenceNumber;
-  private final String name;
+  @Nonnull private final String name;
 
   private long version;
 
@@ -36,9 +37,9 @@ public class UserAccount implements Aggregate<UserAccountId> {
   }
 
   private UserAccount(
-      @JsonProperty("id") UserAccountId id,
+      @Nonnull @JsonProperty("id") UserAccountId id,
       @JsonProperty("sequenceNumber") long sequenceNumber,
-      @JsonProperty("name") String name,
+      @Nonnull @JsonProperty("name") String name,
       @JsonProperty("version") long version) {
     this.id = id;
     this.sequenceNumber = sequenceNumber;
@@ -46,15 +47,17 @@ public class UserAccount implements Aggregate<UserAccountId> {
     this.version = version;
   }
 
+  @Nonnull
   public static UserAccount replay(
-      List<UserAccountEvent> events, UserAccount snapshot, long version) {
+      @Nonnull List<UserAccountEvent> events, @Nonnull UserAccount snapshot, long version) {
     UserAccount userAccount =
         events.stream().reduce(snapshot, UserAccount::applyEvent, (u1, u2) -> u2);
     userAccount.version = version;
     return userAccount;
   }
 
-  public UserAccount applyEvent(UserAccountEvent event) {
+  @Nonnull
+  public UserAccount applyEvent(@Nonnull UserAccountEvent event) {
     if (event instanceof UserAccountEvent.Renamed) {
       var result = changeName(((UserAccountEvent.Renamed) event).getName());
       return result.getAggregate();
@@ -63,8 +66,9 @@ public class UserAccount implements Aggregate<UserAccountId> {
     }
   }
 
+  @Nonnull
   public static AggregateAndEvent<UserAccountId, UserAccount, UserAccountEvent> create(
-      UserAccountId id, String name) {
+      @Nonnull UserAccountId id, @Nonnull String name) {
     var userAccount = new UserAccount(id, 0L, name, 1L);
     userAccount.sequenceNumber++;
     return new AggregateAndEvent<>(
@@ -77,7 +81,9 @@ public class UserAccount implements Aggregate<UserAccountId> {
             Instant.now()));
   }
 
-  public AggregateAndEvent<UserAccountId, UserAccount, UserAccountEvent> changeName(String name) {
+  @Nonnull
+  public AggregateAndEvent<UserAccountId, UserAccount, UserAccountEvent> changeName(
+      @Nonnull String name) {
     var userAccount = new UserAccount(id, sequenceNumber, name, version);
     userAccount.sequenceNumber++;
     return new AggregateAndEvent<>(
@@ -90,6 +96,7 @@ public class UserAccount implements Aggregate<UserAccountId> {
             Instant.now()));
   }
 
+  @Nonnull
   @Override
   public UserAccountId getId() {
     return id;
@@ -105,6 +112,7 @@ public class UserAccount implements Aggregate<UserAccountId> {
     return version;
   }
 
+  @Nonnull
   public String getName() {
     return name;
   }

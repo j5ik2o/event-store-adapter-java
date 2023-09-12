@@ -13,10 +13,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 @Testcontainers
-public class EventStoreAsyncForDynamoDBTest {
+public class EventStoreForDynamoDBTest {
 
-  private static final Logger LOGGER =
-      LoggerFactory.getLogger(EventStoreAsyncForDynamoDBTest.class);
+  private static final Logger LOGGER = LoggerFactory.getLogger(EventStoreForDynamoDBTest.class);
 
   private static final String JOURNAL_TABLE_NAME = "journal";
   private static final String SNAPSHOT_TABLE_NAME = "snapshot";
@@ -32,15 +31,13 @@ public class EventStoreAsyncForDynamoDBTest {
 
   @Test
   public void test_persist_and_get() {
-    try (var client = DynamoDBAsyncUtils.createDynamoDbAsyncClient(localstack)) {
-      DynamoDBAsyncUtils.createJournalTable(client, JOURNAL_TABLE_NAME, JOURNAL_AID_INDEX_NAME)
-          .join();
-      DynamoDBAsyncUtils.createSnapshotTable(client, SNAPSHOT_TABLE_NAME, SNAPSHOT_AID_INDEX_NAME)
-          .join();
-      client.listTables().join().tableNames().forEach(System.out::println);
+    try (var client = DynamoDBUtils.createDynamoDbClient(localstack)) {
+      DynamoDBUtils.createJournalTable(client, JOURNAL_TABLE_NAME, JOURNAL_AID_INDEX_NAME);
+      DynamoDBUtils.createSnapshotTable(client, SNAPSHOT_TABLE_NAME, SNAPSHOT_AID_INDEX_NAME);
+      client.listTables().tableNames().forEach(System.out::println);
 
-      EventStoreAsyncForDynamoDB<UserAccountId, UserAccount, UserAccountEvent> eventStore =
-          new EventStoreAsyncForDynamoDB<>(
+      EventStoreForDynamoDB<UserAccountId, UserAccount, UserAccountEvent> eventStore =
+          new EventStoreForDynamoDB<>(
               client,
               JOURNAL_TABLE_NAME,
               SNAPSHOT_TABLE_NAME,
@@ -50,11 +47,10 @@ public class EventStoreAsyncForDynamoDBTest {
 
       var id = new UserAccountId(IdGenerator.generate().toString());
       var aggregateAndEvent = UserAccount.create(id, "test-1");
-      eventStore
-          .persistEventAndSnapshot(aggregateAndEvent.getEvent(), aggregateAndEvent.getAggregate())
-          .join();
+      eventStore.persistEventAndSnapshot(
+          aggregateAndEvent.getEvent(), aggregateAndEvent.getAggregate());
 
-      var result = eventStore.getLatestSnapshotById(UserAccount.class, id).join();
+      var result = eventStore.getLatestSnapshotById(UserAccount.class, id);
       if (result.isPresent()) {
         assertEquals(result.get().getAggregate().getId(), aggregateAndEvent.getAggregate().getId());
         LOGGER.info("result = {}", result.get());
@@ -66,36 +62,33 @@ public class EventStoreAsyncForDynamoDBTest {
 
   @Test
   public void test_repository_store_and_find_by_id() {
-    try (var client = DynamoDBAsyncUtils.createDynamoDbAsyncClient(localstack)) {
-      DynamoDBAsyncUtils.createJournalTable(client, JOURNAL_TABLE_NAME, JOURNAL_AID_INDEX_NAME)
-          .join();
-      DynamoDBAsyncUtils.createSnapshotTable(client, SNAPSHOT_TABLE_NAME, SNAPSHOT_AID_INDEX_NAME)
-          .join();
-      client.listTables().join().tableNames().forEach(System.out::println);
+    try (var client = DynamoDBUtils.createDynamoDbClient(localstack)) {
+      DynamoDBUtils.createJournalTable(client, JOURNAL_TABLE_NAME, JOURNAL_AID_INDEX_NAME);
+      DynamoDBUtils.createSnapshotTable(client, SNAPSHOT_TABLE_NAME, SNAPSHOT_AID_INDEX_NAME);
+      client.listTables().tableNames().forEach(System.out::println);
 
-      EventStoreAsyncForDynamoDB<UserAccountId, UserAccount, UserAccountEvent> eventStore =
-          new EventStoreAsyncForDynamoDB<>(
+      EventStoreForDynamoDB<UserAccountId, UserAccount, UserAccountEvent> eventStore =
+          new EventStoreForDynamoDB<>(
               client,
               JOURNAL_TABLE_NAME,
               SNAPSHOT_TABLE_NAME,
               JOURNAL_AID_INDEX_NAME,
               SNAPSHOT_AID_INDEX_NAME,
               32);
-      var userAccountRepository = new UserAccountRepositoryAsync(eventStore);
+      var userAccountRepository = new UserAccountRepository(eventStore);
 
       var id = new UserAccountId(IdGenerator.generate().toString());
       var aggregateAndEvent1 = UserAccount.create(id, "test-1");
       var aggregate1 = aggregateAndEvent1.getAggregate();
 
-      userAccountRepository.store(aggregateAndEvent1.getEvent(), aggregate1).join();
+      userAccountRepository.store(aggregateAndEvent1.getEvent(), aggregate1);
 
       var aggregateAndEvent2 = aggregate1.changeName("test-2");
 
-      userAccountRepository
-          .store(aggregateAndEvent2.getEvent(), aggregateAndEvent2.getAggregate().getVersion())
-          .join();
+      userAccountRepository.store(
+          aggregateAndEvent2.getEvent(), aggregateAndEvent2.getAggregate().getVersion());
 
-      var result = userAccountRepository.findById(id).join();
+      var result = userAccountRepository.findById(id);
       if (result.isPresent()) {
         assertEquals(result.get().getId(), aggregateAndEvent2.getAggregate().getId());
         assertEquals(result.get().getName(), "test-2");

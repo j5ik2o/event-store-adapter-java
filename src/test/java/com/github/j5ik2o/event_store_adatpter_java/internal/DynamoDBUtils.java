@@ -1,16 +1,15 @@
 package com.github.j5ik2o.event_store_adatpter_java.internal;
 
-import java.util.concurrent.CompletableFuture;
 import org.testcontainers.containers.localstack.LocalStackContainer;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
+import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.*;
 
 public class DynamoDBUtils {
-  public static DynamoDbAsyncClient createDynamoDbAsyncClient(LocalStackContainer localstack) {
-    return DynamoDbAsyncClient.builder()
+  public static DynamoDbClient createDynamoDbClient(LocalStackContainer localstack) {
+    return DynamoDbClient.builder()
         .endpointOverride(localstack.getEndpoint())
         .credentialsProvider(
             StaticCredentialsProvider.create(
@@ -19,8 +18,8 @@ public class DynamoDBUtils {
         .build();
   }
 
-  public static CompletableFuture<Void> createSnapshotTable(
-      DynamoDbAsyncClient client, String tableName, String indexName) {
+  public static void createSnapshotTable(
+      DynamoDbClient client, String tableName, String indexName) {
     var pt = ProvisionedThroughput.builder().readCapacityUnits(10L).writeCapacityUnits(5L).build();
     var response =
         client.createTable(
@@ -63,26 +62,17 @@ public class DynamoDBUtils {
                         .build())
                 .provisionedThroughput(pt)
                 .build());
-    return response
-        .thenCompose(
-            r -> {
-              return client.updateTimeToLive(
-                  UpdateTimeToLiveRequest.builder()
-                      .tableName(tableName)
-                      .timeToLiveSpecification(
-                          TimeToLiveSpecification.builder()
-                              .enabled(true)
-                              .attributeName("ttl")
-                              .build())
-                      .build());
-            })
-        .thenRun(() -> {});
+    client.updateTimeToLive(
+        UpdateTimeToLiveRequest.builder()
+            .tableName(tableName)
+            .timeToLiveSpecification(
+                TimeToLiveSpecification.builder().enabled(true).attributeName("ttl").build())
+            .build());
   }
 
-  public static CompletableFuture<CreateTableResponse> createJournalTable(
-      DynamoDbAsyncClient client, String tableName, String indexName) {
+  public static void createJournalTable(DynamoDbClient client, String tableName, String indexName) {
     var pt = ProvisionedThroughput.builder().readCapacityUnits(10L).writeCapacityUnits(5L).build();
-    return client.createTable(
+    client.createTable(
         CreateTableRequest.builder()
             .tableName(tableName)
             .attributeDefinitions(

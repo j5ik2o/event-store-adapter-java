@@ -23,21 +23,21 @@ public interface UserAccountEvent extends Event<UserAccountId> {
       allowGetters = true)
   final class Created implements UserAccountEvent {
 
-    private final String id;
-    private final UserAccountId aggregateId;
+    @Nonnull private final String id;
+    @Nonnull private final UserAccountId aggregateId;
 
     private final long sequenceNumber;
 
-    private final String name;
+    @Nonnull private final String name;
 
-    private final Instant occurredAt;
+    @Nonnull private final Instant occurredAt;
 
     public Created(
-        @JsonProperty("id") String id,
-        @JsonProperty("aggregateId") UserAccountId aggregateId,
+        @Nonnull @JsonProperty("id") String id,
+        @Nonnull @JsonProperty("aggregateId") UserAccountId aggregateId,
         @JsonProperty("sequenceNumber") long sequenceNumber,
-        @JsonProperty("name") String name,
-        @JsonProperty("occurredAt") Instant occurredAt) {
+        @Nonnull @JsonProperty("name") String name,
+        @Nonnull @JsonProperty("occurredAt") Instant occurredAt) {
       this.id = id;
       this.aggregateId = aggregateId;
       this.sequenceNumber = sequenceNumber;
@@ -85,18 +85,18 @@ public interface UserAccountEvent extends Event<UserAccountId> {
       allowGetters = true)
   final class Renamed implements UserAccountEvent {
 
-    private final String id;
-    private final UserAccountId aggregateId;
+    @Nonnull private final String id;
+    @Nonnull private final UserAccountId aggregateId;
     private final long sequenceNumber;
-    private final String name;
-    private final Instant occurredAt;
+    @Nonnull private final String name;
+    @Nonnull private final Instant occurredAt;
 
     public Renamed(
-        @JsonProperty("id") String id,
-        @JsonProperty("aggregateId") UserAccountId aggregateId,
+        @Nonnull @JsonProperty("id") String id,
+        @Nonnull @JsonProperty("aggregateId") UserAccountId aggregateId,
         @JsonProperty("sequenceNumber") long sequenceNumber,
-        @JsonProperty("name") String name,
-        @JsonProperty("occurredAt") Instant occurredAt) {
+        @Nonnull @JsonProperty("name") String name,
+        @Nonnull @JsonProperty("occurredAt") Instant occurredAt) {
       this.id = id;
       this.aggregateId = aggregateId;
       this.sequenceNumber = sequenceNumber;

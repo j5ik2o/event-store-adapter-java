@@ -1,28 +1,32 @@
 package com.github.j5ik2o.event_store_adatpter_java.internal;
 
 import com.github.j5ik2o.event_store_adatpter_java.EventStoreAsync;
-
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import javax.annotation.Nonnull;
 
-public class UserAccountRepositoryAsync {
+public final class UserAccountRepositoryAsync {
 
-    private final EventStoreAsync<UserAccountId, UserAccount, UserAccountEvent> eventStore;
+  @Nonnull private final EventStoreAsync<UserAccountId, UserAccount, UserAccountEvent> eventStore;
 
-    public UserAccountRepositoryAsync(
-            EventStoreAsync<UserAccountId, UserAccount, UserAccountEvent> eventStore) {
+  public UserAccountRepositoryAsync(
+      @Nonnull EventStoreAsync<UserAccountId, UserAccount, UserAccountEvent> eventStore) {
     this.eventStore = eventStore;
   }
 
-  public CompletableFuture<Void> store(UserAccountEvent event, long version) {
+  @Nonnull
+  public CompletableFuture<Void> store(@Nonnull UserAccountEvent event, long version) {
     return eventStore.persistEvent(event, version);
   }
 
-  public CompletableFuture<Void> store(UserAccountEvent event, UserAccount aggregate) {
+  @Nonnull
+  public CompletableFuture<Void> store(
+      @Nonnull UserAccountEvent event, @Nonnull UserAccount aggregate) {
     return eventStore.persistEventAndSnapshot(event, aggregate);
   }
 
-  public CompletableFuture<Optional<UserAccount>> findById(UserAccountId id) {
+  @Nonnull
+  public CompletableFuture<Optional<UserAccount>> findById(@Nonnull UserAccountId id) {
     return eventStore
         .getLatestSnapshotById(UserAccount.class, id)
         .thenCompose(
