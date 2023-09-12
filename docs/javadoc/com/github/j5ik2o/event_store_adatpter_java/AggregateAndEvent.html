@@ -131,7 +131,9 @@ loadScripts(document, 'script');</script>
 <li>
 <section class="detail" id="&lt;init&gt;(A,E)">
 <h3 id="&lt;init&gt;(com.github.j5ik2o.event_store_adatpter_java.Aggregate,com.github.j5ik2o.event_store_adatpter_java.Event)">AggregateAndEvent</h3>
-<div class="member-signature"><span class="modifiers">public</span>&nbsp;<span class="element-name">AggregateAndEvent</span><wbr><span class="parameters">(<a href="AggregateAndEvent.html" title="AggregateAndEvent内の型パラメータ">A</a>&nbsp;aggregate,
+<div class="member-signature"><span class="modifiers">public</span>&nbsp;<span class="element-name">AggregateAndEvent</span><wbr><span class="parameters">(@Nonnull
+ <a href="AggregateAndEvent.html" title="AggregateAndEvent内の型パラメータ">A</a>&nbsp;aggregate,
+ @Nonnull
  <a href="AggregateAndEvent.html" title="AggregateAndEvent内の型パラメータ">E</a>&nbsp;event)</span></div>
 </section>
 </li>
@@ -146,13 +148,15 @@ loadScripts(document, 'script');</script>
 <li>
 <section class="detail" id="getAggregate()">
 <h3>getAggregate</h3>
-<div class="member-signature"><span class="modifiers">public</span>&nbsp;<span class="return-type"><a href="AggregateAndEvent.html" title="AggregateAndEvent内の型パラメータ">A</a></span>&nbsp;<span class="element-name">getAggregate</span>()</div>
+<div class="member-signature"><span class="annotations">@Nonnull
+</span><span class="modifiers">public</span>&nbsp;<span class="return-type"><a href="AggregateAndEvent.html" title="AggregateAndEvent内の型パラメータ">A</a></span>&nbsp;<span class="element-name">getAggregate</span>()</div>
 </section>
 </li>
 <li>
 <section class="detail" id="getEvent()">
 <h3>getEvent</h3>
-<div class="member-signature"><span class="modifiers">public</span>&nbsp;<span class="return-type"><a href="AggregateAndEvent.html" title="AggregateAndEvent内の型パラメータ">E</a></span>&nbsp;<span class="element-name">getEvent</span>()</div>
+<div class="member-signature"><span class="annotations">@Nonnull
+</span><span class="modifiers">public</span>&nbsp;<span class="return-type"><a href="AggregateAndEvent.html" title="AggregateAndEvent内の型パラメータ">E</a></span>&nbsp;<span class="element-name">getEvent</span>()</div>
 </section>
 </li>
 </ul>

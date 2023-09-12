@@ -49,7 +49,12 @@ java {
     targetCompatibility = JavaVersion.VERSION_11
 }
 
+
 tasks {
+    build {
+        dependsOn(spotlessApply)
+    }
+
     withType<Test> {
         useJUnitPlatform()
     }
@@ -151,3 +156,4 @@ signing {
     useInMemoryPgpKeys(signingKey, signingPassword)
     sign(publishing.publications["mavenJava"])
 }
+

@@ -45,13 +45,13 @@ loadScripts(document, 'script');</script>
 <li>概要:&nbsp;</li>
 <li>ネスト&nbsp;|&nbsp;</li>
 <li>フィールド&nbsp;|&nbsp;</li>
-<li><a href="#constructor-summary">コンストラクタ</a>&nbsp;|&nbsp;</li>
+<li>コンストラクタ&nbsp;|&nbsp;</li>
 <li><a href="#method-summary">メソッド</a></li>
 </ul>
 <ul class="sub-nav-list">
 <li>詳細:&nbsp;</li>
 <li>フィールド&nbsp;|&nbsp;</li>
-<li><a href="#constructor-detail">コンストラクタ</a>&nbsp;|&nbsp;</li>
+<li>コンストラクタ&nbsp;|&nbsp;</li>
 <li><a href="#method-detail">メソッド</a></li>
 </ul>
 </div>
@@ -71,12 +71,7 @@ loadScripts(document, 'script');</script>
 <h1 title="クラス EventStoreForDynamoDB" class="title">クラス EventStoreForDynamoDB&lt;AID extends <a href="../AggregateId.html" title="com.github.j5ik2o.event_store_adatpter_java内のインタフェース">AggregateId</a>,<wbr>A extends <a href="../Aggregate.html" title="com.github.j5ik2o.event_store_adatpter_java内のインタフェース">Aggregate</a>&lt;AID&gt;,<wbr>E extends <a href="../Event.html" title="com.github.j5ik2o.event_store_adatpter_java内のインタフェース">Event</a>&lt;AID&gt;&gt;</h1>
 </div>
 <div class="inheritance" title="継承ツリー"><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/Object.html" title="java.lang内のクラスまたはインタフェース" class="external-link">java.lang.Object</a>
-    <div class="inheritance">com.github.j5ik2o.event_store_adatpter_java.internal.EventStoreAsyncForDynamoDB&lt;AID,
-        <wbr>
-        A,
-        <wbr>
-        E&gt;
-    </div>
+<div class="inheritance">com.github.j5ik2o.event_store_adatpter_java.internal.EventStoreForDynamoDB&lt;AID,<wbr>A,<wbr>E&gt;</div>
 </div>
 <section class="class-description" id="class-description">
 <dl class="notes">
@@ -84,73 +79,65 @@ loadScripts(document, 'script');</script>
 <dd><code><a href="../EventStore.html" title="com.github.j5ik2o.event_store_adatpter_java内のインタフェース">EventStore</a>&lt;AID,<wbr>A,<wbr>E&gt;</code></dd>
 </dl>
 <hr>
-<div class="type-signature"><span class="modifiers">public class </span><span class="element-name type-name-label">EventStoreForDynamoDB&lt;AID extends <a href="../AggregateId.html" title="com.github.j5ik2o.event_store_adatpter_java内のインタフェース">AggregateId</a>,<wbr>A extends <a href="../Aggregate.html" title="com.github.j5ik2o.event_store_adatpter_java内のインタフェース">Aggregate</a>&lt;AID&gt;,<wbr>E extends <a href="../Event.html" title="com.github.j5ik2o.event_store_adatpter_java内のインタフェース">Event</a>&lt;AID&gt;&gt;</span>
+<div class="type-signature"><span class="modifiers">public final class </span><span class="element-name type-name-label">EventStoreForDynamoDB&lt;AID extends <a href="../AggregateId.html" title="com.github.j5ik2o.event_store_adatpter_java内のインタフェース">AggregateId</a>,<wbr>A extends <a href="../Aggregate.html" title="com.github.j5ik2o.event_store_adatpter_java内のインタフェース">Aggregate</a>&lt;AID&gt;,<wbr>E extends <a href="../Event.html" title="com.github.j5ik2o.event_store_adatpter_java内のインタフェース">Event</a>&lt;AID&gt;&gt;</span>
 <span class="extends-implements">extends <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/Object.html" title="java.lang内のクラスまたはインタフェース" class="external-link">Object</a>
 implements <a href="../EventStore.html" title="com.github.j5ik2o.event_store_adatpter_java内のインタフェース">EventStore</a>&lt;AID,<wbr>A,<wbr>E&gt;</span></div>
 </section>
 <section class="summary">
 <ul class="summary-list">
-<!-- ======== CONSTRUCTOR SUMMARY ======== -->
-<li>
-<section class="constructor-summary" id="constructor-summary">
-<h2>コンストラクタの概要</h2>
-<div class="caption"><span>コンストラクタ</span></div>
-<div class="summary-table two-column-summary">
-<div class="table-header col-first">コンストラクタ</div>
-<div class="table-header col-last">説明</div>
-<div class="col-constructor-name even-row-color"><code><a href="#%3Cinit%3E(software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient,java.lang.String,java.lang.String,java.lang.String,java.lang.String,long)" class="member-name-link">EventStoreForDynamoDB</a><wbr>(software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient&nbsp;dynamoDbAsyncClient,
- <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/String.html" title="java.lang内のクラスまたはインタフェース" class="external-link">String</a>&nbsp;journalTableName,
- <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/String.html" title="java.lang内のクラスまたはインタフェース" class="external-link">String</a>&nbsp;snapshotTableName,
- <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/String.html" title="java.lang内のクラスまたはインタフェース" class="external-link">String</a>&nbsp;journalAidIndexName,
- <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/String.html" title="java.lang内のクラスまたはインタフェース" class="external-link">String</a>&nbsp;snapshotAidIndexName,
- long&nbsp;shardCount)</code></div>
-<div class="col-last even-row-color">&nbsp;</div>
-</div>
-</section>
-</li>
 <!-- ========== METHOD SUMMARY =========== -->
 <li>
 <section class="method-summary" id="method-summary">
 <h2>メソッドの概要</h2>
 <div id="method-summary-table">
-<div class="table-tabs" role="tablist" aria-orientation="horizontal"><button id="method-summary-table-tab0" role="tab" aria-selected="true" aria-controls="method-summary-table.tabpanel" tabindex="0" onkeydown="switchTab(event)" onclick="show('method-summary-table', 'method-summary-table', 3)" class="active-table-tab">すべてのメソッド</button><button id="method-summary-table-tab2" role="tab" aria-selected="false" aria-controls="method-summary-table.tabpanel" tabindex="-1" onkeydown="switchTab(event)" onclick="show('method-summary-table', 'method-summary-table-tab2', 3)" class="table-tab">インスタンス・メソッド</button><button id="method-summary-table-tab4" role="tab" aria-selected="false" aria-controls="method-summary-table.tabpanel" tabindex="-1" onkeydown="switchTab(event)" onclick="show('method-summary-table', 'method-summary-table-tab4', 3)" class="table-tab">concreteメソッド</button></div>
+<div class="table-tabs" role="tablist" aria-orientation="horizontal"><button id="method-summary-table-tab0" role="tab" aria-selected="true" aria-controls="method-summary-table.tabpanel" tabindex="0" onkeydown="switchTab(event)" onclick="show('method-summary-table', 'method-summary-table', 3)" class="active-table-tab">すべてのメソッド</button><button id="method-summary-table-tab1" role="tab" aria-selected="false" aria-controls="method-summary-table.tabpanel" tabindex="-1" onkeydown="switchTab(event)" onclick="show('method-summary-table', 'method-summary-table-tab1', 3)" class="table-tab">staticメソッド</button><button id="method-summary-table-tab2" role="tab" aria-selected="false" aria-controls="method-summary-table.tabpanel" tabindex="-1" onkeydown="switchTab(event)" onclick="show('method-summary-table', 'method-summary-table-tab2', 3)" class="table-tab">インスタンス・メソッド</button><button id="method-summary-table-tab4" role="tab" aria-selected="false" aria-controls="method-summary-table.tabpanel" tabindex="-1" onkeydown="switchTab(event)" onclick="show('method-summary-table', 'method-summary-table-tab4', 3)" class="table-tab">concreteメソッド</button></div>
 <div id="method-summary-table.tabpanel" role="tabpanel">
 <div class="summary-table three-column-summary" aria-labelledby="method-summary-table-tab0">
 <div class="table-header col-first">修飾子とタイプ</div>
 <div class="table-header col-second">メソッド</div>
 <div class="table-header col-last">説明</div>
-<div class="col-first even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/concurrent/CompletableFuture.html" title="java.util.concurrent内のクラスまたはインタフェース" class="external-link">CompletableFuture</a>&lt;<a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/List.html" title="java.util内のクラスまたはインタフェース" class="external-link">List</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&gt;&gt;</code></div>
-<div class="col-second even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#getEventsByIdSinceSequenceNumber(java.lang.Class,AID,long)" class="member-name-link">getEventsByIdSinceSequenceNumber</a><wbr>(<a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/Class.html" title="java.lang内のクラスまたはインタフェース" class="external-link">Class</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&gt;&nbsp;clazz,
+<div class="col-first even-row-color method-summary-table method-summary-table-tab1 method-summary-table-tab4"><code>static &lt;AID extends <a href="../AggregateId.html" title="com.github.j5ik2o.event_store_adatpter_java内のインタフェース">AggregateId</a>,<wbr>
+A extends <a href="../Aggregate.html" title="com.github.j5ik2o.event_store_adatpter_java内のインタフェース">Aggregate</a>&lt;AID&gt;,<wbr>
+E extends <a href="../Event.html" title="com.github.j5ik2o.event_store_adatpter_java内のインタフェース">Event</a>&lt;AID&gt;&gt;<br><a href="EventStoreForDynamoDB.html" title="com.github.j5ik2o.event_store_adatpter_java.internal内のクラス">EventStoreForDynamoDB</a>&lt;AID,<wbr>A,<wbr>E&gt;</code></div>
+<div class="col-second even-row-color method-summary-table method-summary-table-tab1 method-summary-table-tab4"><code><a href="#create(software.amazon.awssdk.services.dynamodb.DynamoDbClient,java.lang.String,java.lang.String,java.lang.String,java.lang.String,long)" class="member-name-link">create</a><wbr>(software.amazon.awssdk.services.dynamodb.DynamoDbClient&nbsp;dynamoDbClient,
+ <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/String.html" title="java.lang内のクラスまたはインタフェース" class="external-link">String</a>&nbsp;journalTableName,
+ <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/String.html" title="java.lang内のクラスまたはインタフェース" class="external-link">String</a>&nbsp;snapshotTableName,
+ <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/String.html" title="java.lang内のクラスまたはインタフェース" class="external-link">String</a>&nbsp;journalAidIndexName,
+ <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/String.html" title="java.lang内のクラスまたはインタフェース" class="external-link">String</a>&nbsp;snapshotAidIndexName,
+ long&nbsp;shardCount)</code></div>
+<div class="col-last even-row-color method-summary-table method-summary-table-tab1 method-summary-table-tab4">&nbsp;</div>
+<div class="col-first odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/List.html" title="java.util内のクラスまたはインタフェース" class="external-link">List</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&gt;</code></div>
+<div class="col-second odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#getEventsByIdSinceSequenceNumber(java.lang.Class,AID,long)" class="member-name-link">getEventsByIdSinceSequenceNumber</a><wbr>(<a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/Class.html" title="java.lang内のクラスまたはインタフェース" class="external-link">Class</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&gt;&nbsp;clazz,
  <a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>&nbsp;aggregateId,
  long&nbsp;sequenceNumber)</code></div>
-<div class="col-last even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">&nbsp;</div>
-<div class="col-first odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/concurrent/CompletableFuture.html" title="java.util.concurrent内のクラスまたはインタフェース" class="external-link">CompletableFuture</a>&lt;<a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/Optional.html" title="java.util内のクラスまたはインタフェース" class="external-link">Optional</a>&lt;<a href="../AggregateAndVersion.html" title="com.github.j5ik2o.event_store_adatpter_java内のクラス">AggregateAndVersion</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">A</a>&gt;&gt;&gt;</code></div>
-<div class="col-second odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#getLatestSnapshotById(java.lang.Class,AID)" class="member-name-link">getLatestSnapshotById</a><wbr>(<a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/Class.html" title="java.lang内のクラスまたはインタフェース" class="external-link">Class</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">A</a>&gt;&nbsp;clazz,
+<div class="col-last odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">&nbsp;</div>
+<div class="col-first even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/Optional.html" title="java.util内のクラスまたはインタフェース" class="external-link">Optional</a>&lt;<a href="../AggregateAndVersion.html" title="com.github.j5ik2o.event_store_adatpter_java内のクラス">AggregateAndVersion</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">A</a>&gt;&gt;</code></div>
+<div class="col-second even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#getLatestSnapshotById(java.lang.Class,AID)" class="member-name-link">getLatestSnapshotById</a><wbr>(<a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/Class.html" title="java.lang内のクラスまたはインタフェース" class="external-link">Class</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">A</a>&gt;&nbsp;clazz,
  <a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>&nbsp;aggregateId)</code></div>
-<div class="col-last odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">&nbsp;</div>
-<div class="col-first even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/concurrent/CompletableFuture.html" title="java.util.concurrent内のクラスまたはインタフェース" class="external-link">CompletableFuture</a>&lt;<a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/Void.html" title="java.lang内のクラスまたはインタフェース" class="external-link">Void</a>&gt;</code></div>
-<div class="col-second even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#persistEvent(E,long)" class="member-name-link">persistEvent</a><wbr>(<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&nbsp;event,
+<div class="col-last even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">&nbsp;</div>
+<div class="col-first odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code>void</code></div>
+<div class="col-second odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#persistEvent(E,long)" class="member-name-link">persistEvent</a><wbr>(<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&nbsp;event,
  long&nbsp;version)</code></div>
-<div class="col-last even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">&nbsp;</div>
-<div class="col-first odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/concurrent/CompletableFuture.html" title="java.util.concurrent内のクラスまたはインタフェース" class="external-link">CompletableFuture</a>&lt;<a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/Void.html" title="java.lang内のクラスまたはインタフェース" class="external-link">Void</a>&gt;</code></div>
-<div class="col-second odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#persistEventAndSnapshot(E,A)" class="member-name-link">persistEventAndSnapshot</a><wbr>(<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&nbsp;event,
+<div class="col-last odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">&nbsp;</div>
+<div class="col-first even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code>void</code></div>
+<div class="col-second even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#persistEventAndSnapshot(E,A)" class="member-name-link">persistEventAndSnapshot</a><wbr>(<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&nbsp;event,
  <a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">A</a>&nbsp;aggregate)</code></div>
-<div class="col-last odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">&nbsp;</div>
-<div class="col-first even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="EventStoreForDynamoDB.html" title="com.github.j5ik2o.event_store_adatpter_java.internal内のクラス">EventStoreForDynamoDB</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">A</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&gt;</code></div>
-<div class="col-second even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#withDeleteTtl(java.time.Duration)" class="member-name-link">withDeleteTtl</a><wbr>(<a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html" title="java.time内のクラスまたはインタフェース" class="external-link">Duration</a>&nbsp;deleteTtl)</code></div>
 <div class="col-last even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">&nbsp;</div>
 <div class="col-first odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="EventStoreForDynamoDB.html" title="com.github.j5ik2o.event_store_adatpter_java.internal内のクラス">EventStoreForDynamoDB</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">A</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&gt;</code></div>
-<div class="col-second odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#withEventSerializer(com.github.j5ik2o.event_store_adatpter_java.EventSerializer)" class="member-name-link">withEventSerializer</a><wbr>(<a href="../EventSerializer.html" title="com.github.j5ik2o.event_store_adatpter_java内のインタフェース">EventSerializer</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&gt;&nbsp;eventSerializer)</code></div>
+<div class="col-second odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#withDeleteTtl(java.time.Duration)" class="member-name-link">withDeleteTtl</a><wbr>(<a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html" title="java.time内のクラスまたはインタフェース" class="external-link">Duration</a>&nbsp;deleteTtl)</code></div>
 <div class="col-last odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">&nbsp;</div>
 <div class="col-first even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="EventStoreForDynamoDB.html" title="com.github.j5ik2o.event_store_adatpter_java.internal内のクラス">EventStoreForDynamoDB</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">A</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&gt;</code></div>
-<div class="col-second even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#withKeepSnapshotCount(long)" class="member-name-link">withKeepSnapshotCount</a><wbr>(long&nbsp;keepSnapshotCount)</code></div>
+<div class="col-second even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#withEventSerializer(com.github.j5ik2o.event_store_adatpter_java.EventSerializer)" class="member-name-link">withEventSerializer</a><wbr>(<a href="../EventSerializer.html" title="com.github.j5ik2o.event_store_adatpter_java内のインタフェース">EventSerializer</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&gt;&nbsp;eventSerializer)</code></div>
 <div class="col-last even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">&nbsp;</div>
 <div class="col-first odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="EventStoreForDynamoDB.html" title="com.github.j5ik2o.event_store_adatpter_java.internal内のクラス">EventStoreForDynamoDB</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">A</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&gt;</code></div>
-<div class="col-second odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#withKeyResolver(com.github.j5ik2o.event_store_adatpter_java.KeyResolver)" class="member-name-link">withKeyResolver</a><wbr>(<a href="../KeyResolver.html" title="com.github.j5ik2o.event_store_adatpter_java内のインタフェース">KeyResolver</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>&gt;&nbsp;keyResolver)</code></div>
+<div class="col-second odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#withKeepSnapshotCount(long)" class="member-name-link">withKeepSnapshotCount</a><wbr>(long&nbsp;keepSnapshotCount)</code></div>
 <div class="col-last odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">&nbsp;</div>
 <div class="col-first even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="EventStoreForDynamoDB.html" title="com.github.j5ik2o.event_store_adatpter_java.internal内のクラス">EventStoreForDynamoDB</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">A</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&gt;</code></div>
-<div class="col-second even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#withSnapshotSerializer(com.github.j5ik2o.event_store_adatpter_java.SnapshotSerializer)" class="member-name-link">withSnapshotSerializer</a><wbr>(<a href="../SnapshotSerializer.html" title="com.github.j5ik2o.event_store_adatpter_java内のインタフェース">SnapshotSerializer</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">A</a>&gt;&nbsp;snapshotSerializer)</code></div>
+<div class="col-second even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#withKeyResolver(com.github.j5ik2o.event_store_adatpter_java.KeyResolver)" class="member-name-link">withKeyResolver</a><wbr>(<a href="../KeyResolver.html" title="com.github.j5ik2o.event_store_adatpter_java内のインタフェース">KeyResolver</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>&gt;&nbsp;keyResolver)</code></div>
 <div class="col-last even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">&nbsp;</div>
+<div class="col-first odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="EventStoreForDynamoDB.html" title="com.github.j5ik2o.event_store_adatpter_java.internal内のクラス">EventStoreForDynamoDB</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">A</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&gt;</code></div>
+<div class="col-second odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#withSnapshotSerializer(com.github.j5ik2o.event_store_adatpter_java.SnapshotSerializer)" class="member-name-link">withSnapshotSerializer</a><wbr>(<a href="../SnapshotSerializer.html" title="com.github.j5ik2o.event_store_adatpter_java内のインタフェース">SnapshotSerializer</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">A</a>&gt;&nbsp;snapshotSerializer)</code></div>
+<div class="col-last odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">&nbsp;</div>
 </div>
 </div>
 </div>
@@ -163,65 +150,76 @@ implements <a href="../EventStore.html" title="com.github.j5ik2o.event_store_ada
 </section>
 <section class="details">
 <ul class="details-list">
-<!-- ========= CONSTRUCTOR DETAIL ======== -->
-<li>
-<section class="constructor-details" id="constructor-detail">
-<h2>コンストラクタの詳細</h2>
-<ul class="member-list">
-<li>
-<section class="detail" id="&lt;init&gt;(software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient,java.lang.String,java.lang.String,java.lang.String,java.lang.String,long)">
-<h3>EventStoreForDynamoDB</h3>
-<div class="member-signature"><span class="modifiers">public</span>&nbsp;<span class="element-name">EventStoreForDynamoDB</span><wbr><span class="parameters">(software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient&nbsp;dynamoDbAsyncClient,
- <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/String.html" title="java.lang内のクラスまたはインタフェース" class="external-link">String</a>&nbsp;journalTableName,
- <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/String.html" title="java.lang内のクラスまたはインタフェース" class="external-link">String</a>&nbsp;snapshotTableName,
- <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/String.html" title="java.lang内のクラスまたはインタフェース" class="external-link">String</a>&nbsp;journalAidIndexName,
- <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/String.html" title="java.lang内のクラスまたはインタフェース" class="external-link">String</a>&nbsp;snapshotAidIndexName,
- long&nbsp;shardCount)</span></div>
-</section>
-</li>
-</ul>
-</section>
-</li>
 <!-- ============ METHOD DETAIL ========== -->
 <li>
 <section class="method-details" id="method-detail">
 <h2>メソッドの詳細</h2>
 <ul class="member-list">
 <li>
+<section class="detail" id="create(software.amazon.awssdk.services.dynamodb.DynamoDbClient,java.lang.String,java.lang.String,java.lang.String,java.lang.String,long)">
+<h3>create</h3>
+<div class="member-signature"><span class="modifiers">public static</span>&nbsp;<span class="type-parameters-long">&lt;AID extends <a href="../AggregateId.html" title="com.github.j5ik2o.event_store_adatpter_java内のインタフェース">AggregateId</a>,<wbr>
+A extends <a href="../Aggregate.html" title="com.github.j5ik2o.event_store_adatpter_java内のインタフェース">Aggregate</a>&lt;AID&gt;,<wbr>
+E extends <a href="../Event.html" title="com.github.j5ik2o.event_store_adatpter_java内のインタフェース">Event</a>&lt;AID&gt;&gt;</span>
+<span class="return-type"><a href="EventStoreForDynamoDB.html" title="com.github.j5ik2o.event_store_adatpter_java.internal内のクラス">EventStoreForDynamoDB</a>&lt;AID,<wbr>A,<wbr>E&gt;</span>&nbsp;<span class="element-name">create</span><wbr><span class="parameters">(@Nonnull
+ software.amazon.awssdk.services.dynamodb.DynamoDbClient&nbsp;dynamoDbClient,
+ @Nonnull
+ <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/String.html" title="java.lang内のクラスまたはインタフェース" class="external-link">String</a>&nbsp;journalTableName,
+ @Nonnull
+ <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/String.html" title="java.lang内のクラスまたはインタフェース" class="external-link">String</a>&nbsp;snapshotTableName,
+ @Nonnull
+ <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/String.html" title="java.lang内のクラスまたはインタフェース" class="external-link">String</a>&nbsp;journalAidIndexName,
+ @Nonnull
+ <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/String.html" title="java.lang内のクラスまたはインタフェース" class="external-link">String</a>&nbsp;snapshotAidIndexName,
+ long&nbsp;shardCount)</span></div>
+</section>
+</li>
+<li>
 <section class="detail" id="withKeepSnapshotCount(long)">
 <h3>withKeepSnapshotCount</h3>
-<div class="member-signature"><span class="modifiers">public</span>&nbsp;<span class="return-type"><a href="EventStoreForDynamoDB.html" title="com.github.j5ik2o.event_store_adatpter_java.internal内のクラス">EventStoreForDynamoDB</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">A</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&gt;</span>&nbsp;<span class="element-name">withKeepSnapshotCount</span><wbr><span class="parameters">(long&nbsp;keepSnapshotCount)</span></div>
+<div class="member-signature"><span class="annotations">@Nonnull
+</span><span class="modifiers">public</span>&nbsp;<span class="return-type"><a href="EventStoreForDynamoDB.html" title="com.github.j5ik2o.event_store_adatpter_java.internal内のクラス">EventStoreForDynamoDB</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">A</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&gt;</span>&nbsp;<span class="element-name">withKeepSnapshotCount</span><wbr><span class="parameters">(long&nbsp;keepSnapshotCount)</span></div>
 </section>
 </li>
 <li>
 <section class="detail" id="withDeleteTtl(java.time.Duration)">
 <h3>withDeleteTtl</h3>
-<div class="member-signature"><span class="modifiers">public</span>&nbsp;<span class="return-type"><a href="EventStoreForDynamoDB.html" title="com.github.j5ik2o.event_store_adatpter_java.internal内のクラス">EventStoreForDynamoDB</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">A</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&gt;</span>&nbsp;<span class="element-name">withDeleteTtl</span><wbr><span class="parameters">(<a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html" title="java.time内のクラスまたはインタフェース" class="external-link">Duration</a>&nbsp;deleteTtl)</span></div>
+<div class="member-signature"><span class="annotations">@Nonnull
+</span><span class="modifiers">public</span>&nbsp;<span class="return-type"><a href="EventStoreForDynamoDB.html" title="com.github.j5ik2o.event_store_adatpter_java.internal内のクラス">EventStoreForDynamoDB</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">A</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&gt;</span>&nbsp;<span class="element-name">withDeleteTtl</span><wbr><span class="parameters">(@Nonnull
+ <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html" title="java.time内のクラスまたはインタフェース" class="external-link">Duration</a>&nbsp;deleteTtl)</span></div>
 </section>
 </li>
 <li>
 <section class="detail" id="withKeyResolver(com.github.j5ik2o.event_store_adatpter_java.KeyResolver)">
 <h3>withKeyResolver</h3>
-<div class="member-signature"><span class="modifiers">public</span>&nbsp;<span class="return-type"><a href="EventStoreForDynamoDB.html" title="com.github.j5ik2o.event_store_adatpter_java.internal内のクラス">EventStoreForDynamoDB</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">A</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&gt;</span>&nbsp;<span class="element-name">withKeyResolver</span><wbr><span class="parameters">(<a href="../KeyResolver.html" title="com.github.j5ik2o.event_store_adatpter_java内のインタフェース">KeyResolver</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>&gt;&nbsp;keyResolver)</span></div>
+<div class="member-signature"><span class="annotations">@Nonnull
+</span><span class="modifiers">public</span>&nbsp;<span class="return-type"><a href="EventStoreForDynamoDB.html" title="com.github.j5ik2o.event_store_adatpter_java.internal内のクラス">EventStoreForDynamoDB</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">A</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&gt;</span>&nbsp;<span class="element-name">withKeyResolver</span><wbr><span class="parameters">(@Nonnull
+ <a href="../KeyResolver.html" title="com.github.j5ik2o.event_store_adatpter_java内のインタフェース">KeyResolver</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>&gt;&nbsp;keyResolver)</span></div>
 </section>
 </li>
 <li>
 <section class="detail" id="withEventSerializer(com.github.j5ik2o.event_store_adatpter_java.EventSerializer)">
 <h3>withEventSerializer</h3>
-<div class="member-signature"><span class="modifiers">public</span>&nbsp;<span class="return-type"><a href="EventStoreForDynamoDB.html" title="com.github.j5ik2o.event_store_adatpter_java.internal内のクラス">EventStoreForDynamoDB</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">A</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&gt;</span>&nbsp;<span class="element-name">withEventSerializer</span><wbr><span class="parameters">(<a href="../EventSerializer.html" title="com.github.j5ik2o.event_store_adatpter_java内のインタフェース">EventSerializer</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&gt;&nbsp;eventSerializer)</span></div>
+<div class="member-signature"><span class="annotations">@Nonnull
+</span><span class="modifiers">public</span>&nbsp;<span class="return-type"><a href="EventStoreForDynamoDB.html" title="com.github.j5ik2o.event_store_adatpter_java.internal内のクラス">EventStoreForDynamoDB</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">A</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&gt;</span>&nbsp;<span class="element-name">withEventSerializer</span><wbr><span class="parameters">(@Nonnull
+ <a href="../EventSerializer.html" title="com.github.j5ik2o.event_store_adatpter_java内のインタフェース">EventSerializer</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&gt;&nbsp;eventSerializer)</span></div>
 </section>
 </li>
 <li>
 <section class="detail" id="withSnapshotSerializer(com.github.j5ik2o.event_store_adatpter_java.SnapshotSerializer)">
 <h3>withSnapshotSerializer</h3>
-<div class="member-signature"><span class="modifiers">public</span>&nbsp;<span class="return-type"><a href="EventStoreForDynamoDB.html" title="com.github.j5ik2o.event_store_adatpter_java.internal内のクラス">EventStoreForDynamoDB</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">A</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&gt;</span>&nbsp;<span class="element-name">withSnapshotSerializer</span><wbr><span class="parameters">(<a href="../SnapshotSerializer.html" title="com.github.j5ik2o.event_store_adatpter_java内のインタフェース">SnapshotSerializer</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">A</a>&gt;&nbsp;snapshotSerializer)</span></div>
+<div class="member-signature"><span class="annotations">@Nonnull
+</span><span class="modifiers">public</span>&nbsp;<span class="return-type"><a href="EventStoreForDynamoDB.html" title="com.github.j5ik2o.event_store_adatpter_java.internal内のクラス">EventStoreForDynamoDB</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">A</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&gt;</span>&nbsp;<span class="element-name">withSnapshotSerializer</span><wbr><span class="parameters">(@Nonnull
+ <a href="../SnapshotSerializer.html" title="com.github.j5ik2o.event_store_adatpter_java内のインタフェース">SnapshotSerializer</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">A</a>&gt;&nbsp;snapshotSerializer)</span></div>
 </section>
 </li>
 <li>
 <section class="detail" id="getLatestSnapshotById(java.lang.Class,AID)">
 <h3 id="getLatestSnapshotById(java.lang.Class,com.github.j5ik2o.event_store_adatpter_java.AggregateId)">getLatestSnapshotById</h3>
 <div class="member-signature"><span class="annotations">@Nonnull
-</span><span class="modifiers">public</span>&nbsp;<span class="return-type"><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/concurrent/CompletableFuture.html" title="java.util.concurrent内のクラスまたはインタフェース" class="external-link">CompletableFuture</a>&lt;<a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/Optional.html" title="java.util内のクラスまたはインタフェース" class="external-link">Optional</a>&lt;<a href="../AggregateAndVersion.html" title="com.github.j5ik2o.event_store_adatpter_java内のクラス">AggregateAndVersion</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">A</a>&gt;&gt;&gt;</span>&nbsp;<span class="element-name">getLatestSnapshotById</span><wbr><span class="parameters">(<a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/Class.html" title="java.lang内のクラスまたはインタフェース" class="external-link">Class</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">A</a>&gt;&nbsp;clazz,
+</span><span class="modifiers">public</span>&nbsp;<span class="return-type"><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/Optional.html" title="java.util内のクラスまたはインタフェース" class="external-link">Optional</a>&lt;<a href="../AggregateAndVersion.html" title="com.github.j5ik2o.event_store_adatpter_java内のクラス">AggregateAndVersion</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>,<wbr><a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">A</a>&gt;&gt;</span>&nbsp;<span class="element-name">getLatestSnapshotById</span><wbr><span class="parameters">(@Nonnull
+ <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/Class.html" title="java.lang内のクラスまたはインタフェース" class="external-link">Class</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">A</a>&gt;&nbsp;clazz,
+ @Nonnull
  <a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>&nbsp;aggregateId)</span></div>
 <dl class="notes">
 <dt>定義:</dt>
@@ -233,7 +231,9 @@ implements <a href="../EventStore.html" title="com.github.j5ik2o.event_store_ada
 <section class="detail" id="getEventsByIdSinceSequenceNumber(java.lang.Class,AID,long)">
 <h3 id="getEventsByIdSinceSequenceNumber(java.lang.Class,com.github.j5ik2o.event_store_adatpter_java.AggregateId,long)">getEventsByIdSinceSequenceNumber</h3>
 <div class="member-signature"><span class="annotations">@Nonnull
-</span><span class="modifiers">public</span>&nbsp;<span class="return-type"><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/concurrent/CompletableFuture.html" title="java.util.concurrent内のクラスまたはインタフェース" class="external-link">CompletableFuture</a>&lt;<a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/List.html" title="java.util内のクラスまたはインタフェース" class="external-link">List</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&gt;&gt;</span>&nbsp;<span class="element-name">getEventsByIdSinceSequenceNumber</span><wbr><span class="parameters">(<a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/Class.html" title="java.lang内のクラスまたはインタフェース" class="external-link">Class</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&gt;&nbsp;clazz,
+</span><span class="modifiers">public</span>&nbsp;<span class="return-type"><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/List.html" title="java.util内のクラスまたはインタフェース" class="external-link">List</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&gt;</span>&nbsp;<span class="element-name">getEventsByIdSinceSequenceNumber</span><wbr><span class="parameters">(@Nonnull
+ <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/Class.html" title="java.lang内のクラスまたはインタフェース" class="external-link">Class</a>&lt;<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&gt;&nbsp;clazz,
+ @Nonnull
  <a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">AID</a>&nbsp;aggregateId,
  long&nbsp;sequenceNumber)</span></div>
 <dl class="notes">
@@ -245,8 +245,8 @@ implements <a href="../EventStore.html" title="com.github.j5ik2o.event_store_ada
 <li>
 <section class="detail" id="persistEvent(E,long)">
 <h3 id="persistEvent(com.github.j5ik2o.event_store_adatpter_java.Event,long)">persistEvent</h3>
-<div class="member-signature"><span class="annotations">@Nonnull
-</span><span class="modifiers">public</span>&nbsp;<span class="return-type"><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/concurrent/CompletableFuture.html" title="java.util.concurrent内のクラスまたはインタフェース" class="external-link">CompletableFuture</a>&lt;<a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/Void.html" title="java.lang内のクラスまたはインタフェース" class="external-link">Void</a>&gt;</span>&nbsp;<span class="element-name">persistEvent</span><wbr><span class="parameters">(<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&nbsp;event,
+<div class="member-signature"><span class="modifiers">public</span>&nbsp;<span class="return-type">void</span>&nbsp;<span class="element-name">persistEvent</span><wbr><span class="parameters">(@Nonnull
+ <a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&nbsp;event,
  long&nbsp;version)</span></div>
 <dl class="notes">
 <dt>定義:</dt>
@@ -257,8 +257,9 @@ implements <a href="../EventStore.html" title="com.github.j5ik2o.event_store_ada
 <li>
 <section class="detail" id="persistEventAndSnapshot(E,A)">
 <h3 id="persistEventAndSnapshot(com.github.j5ik2o.event_store_adatpter_java.Event,com.github.j5ik2o.event_store_adatpter_java.Aggregate)">persistEventAndSnapshot</h3>
-<div class="member-signature"><span class="annotations">@Nonnull
-</span><span class="modifiers">public</span>&nbsp;<span class="return-type"><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/concurrent/CompletableFuture.html" title="java.util.concurrent内のクラスまたはインタフェース" class="external-link">CompletableFuture</a>&lt;<a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/Void.html" title="java.lang内のクラスまたはインタフェース" class="external-link">Void</a>&gt;</span>&nbsp;<span class="element-name">persistEventAndSnapshot</span><wbr><span class="parameters">(<a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&nbsp;event,
+<div class="member-signature"><span class="modifiers">public</span>&nbsp;<span class="return-type">void</span>&nbsp;<span class="element-name">persistEventAndSnapshot</span><wbr><span class="parameters">(@Nonnull
+ <a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">E</a>&nbsp;event,
+ @Nonnull
  <a href="EventStoreForDynamoDB.html" title="EventStoreForDynamoDB内の型パラメータ">A</a>&nbsp;aggregate)</span></div>
 <dl class="notes">
 <dt>定義:</dt>

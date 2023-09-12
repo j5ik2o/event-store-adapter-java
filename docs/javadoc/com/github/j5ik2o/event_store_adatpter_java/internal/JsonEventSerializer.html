@@ -136,7 +136,8 @@ implements <a href="../EventSerializer.html" title="com.github.j5ik2o.event_stor
 <li>
 <section class="detail" id="&lt;init&gt;(com.fasterxml.jackson.databind.ObjectMapper)">
 <h3>JsonEventSerializer</h3>
-<div class="member-signature"><span class="modifiers">public</span>&nbsp;<span class="element-name">JsonEventSerializer</span><wbr><span class="parameters">(com.fasterxml.jackson.databind.ObjectMapper&nbsp;objectMapper)</span></div>
+<div class="member-signature"><span class="modifiers">public</span>&nbsp;<span class="element-name">JsonEventSerializer</span><wbr><span class="parameters">(@Nonnull
+ com.fasterxml.jackson.databind.ObjectMapper&nbsp;objectMapper)</span></div>
 </section>
 </li>
 </ul>
@@ -150,7 +151,9 @@ implements <a href="../EventSerializer.html" title="com.github.j5ik2o.event_stor
 <li>
 <section class="detail" id="serialize(E)">
 <h3 id="serialize(com.github.j5ik2o.event_store_adatpter_java.Event)">serialize</h3>
-<div class="member-signature"><span class="modifiers">public</span>&nbsp;<span class="return-type">byte[]</span>&nbsp;<span class="element-name">serialize</span><wbr><span class="parameters">(<a href="JsonEventSerializer.html" title="JsonEventSerializer内の型パラメータ">E</a>&nbsp;event)</span>
+<div class="member-signature"><span class="annotations">@Nonnull
+</span><span class="modifiers">public</span>&nbsp;<span class="return-type">byte[]</span>&nbsp;<span class="element-name">serialize</span><wbr><span class="parameters">(@Nonnull
+ <a href="JsonEventSerializer.html" title="JsonEventSerializer内の型パラメータ">E</a>&nbsp;event)</span>
                  throws <span class="exceptions"><a href="../SerializationException.html" title="com.github.j5ik2o.event_store_adatpter_java内のクラス">SerializationException</a></span></div>
 <dl class="notes">
 <dt>定義:</dt>
@@ -163,7 +166,10 @@ implements <a href="../EventSerializer.html" title="com.github.j5ik2o.event_stor
 <li>
 <section class="detail" id="deserialize(byte[],java.lang.Class)">
 <h3>deserialize</h3>
-<div class="member-signature"><span class="modifiers">public</span>&nbsp;<span class="return-type"><a href="JsonEventSerializer.html" title="JsonEventSerializer内の型パラメータ">E</a></span>&nbsp;<span class="element-name">deserialize</span><wbr><span class="parameters">(byte[]&nbsp;bytes,
+<div class="member-signature"><span class="annotations">@Nonnull
+</span><span class="modifiers">public</span>&nbsp;<span class="return-type"><a href="JsonEventSerializer.html" title="JsonEventSerializer内の型パラメータ">E</a></span>&nbsp;<span class="element-name">deserialize</span><wbr><span class="parameters">(@Nonnull
+ byte[]&nbsp;bytes,
+ @Nonnull
  <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/Class.html" title="java.lang内のクラスまたはインタフェース" class="external-link">Class</a>&lt;<a href="JsonEventSerializer.html" title="JsonEventSerializer内の型パラメータ">E</a>&gt;&nbsp;clazz)</span>
               throws <span class="exceptions"><a href="../SerializationException.html" title="com.github.j5ik2o.event_store_adatpter_java内のクラス">SerializationException</a></span></div>
 <dl class="notes">
