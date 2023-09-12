@@ -15,28 +15,21 @@ import software.amazon.awssdk.services.dynamodb.model.*;
 final class EventStoreSupport<
     AID extends AggregateId, A extends Aggregate<AID>, E extends Event<AID>> {
   private static final Logger LOGGER = LoggerFactory.getLogger(EventStoreSupport.class);
-    @Nonnull
-  private final String journalTableName;
-    @Nonnull
-  private final String snapshotTableName;
-    @Nonnull
-  private final String journalAidIndexName;
-    @Nonnull
-  private final String snapshotAidIndexName;
+  @Nonnull private final String journalTableName;
+  @Nonnull private final String snapshotTableName;
+  @Nonnull private final String journalAidIndexName;
+  @Nonnull private final String snapshotAidIndexName;
   private final long shardCount;
 
   private final Long keepSnapshotCount;
 
   private final Duration deleteTtl;
 
-    @Nonnull
-  private final KeyResolver<AID> keyResolver;
+  @Nonnull private final KeyResolver<AID> keyResolver;
 
-  @Nonnull
-  private final EventSerializer<AID, E> eventSerializer;
+  @Nonnull private final EventSerializer<AID, E> eventSerializer;
 
-    @Nonnull
-  private final SnapshotSerializer<AID, A> snapshotSerializer;
+  @Nonnull private final SnapshotSerializer<AID, A> snapshotSerializer;
 
   EventStoreSupport(
       @Nonnull String journalTableName,
