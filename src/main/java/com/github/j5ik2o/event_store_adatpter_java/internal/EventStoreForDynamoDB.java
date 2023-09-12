@@ -40,7 +40,7 @@ public final class EventStoreForDynamoDB<
   private final SnapshotSerializer<AID, A> snapshotSerializer;
   private final EventStoreSupport<AID, A, E> eventStoreSupport;
 
-  public EventStoreForDynamoDB(
+  private EventStoreForDynamoDB(
       @Nonnull DynamoDbClient dynamoDbClient,
       @Nonnull String journalTableName,
       @Nonnull String snapshotTableName,
@@ -80,7 +80,24 @@ public final class EventStoreForDynamoDB<
             snapshotSerializer);
   }
 
-  public EventStoreForDynamoDB(
+  public static <AID extends AggregateId, A extends Aggregate<AID>, E extends Event<AID>>
+      EventStoreForDynamoDB<AID, A, E> create(
+          @Nonnull DynamoDbClient dynamoDbClient,
+          @Nonnull String journalTableName,
+          @Nonnull String snapshotTableName,
+          @Nonnull String journalAidIndexName,
+          @Nonnull String snapshotAidIndexName,
+          long shardCount) {
+    return new EventStoreForDynamoDB<>(
+        dynamoDbClient,
+        journalTableName,
+        snapshotTableName,
+        journalAidIndexName,
+        snapshotAidIndexName,
+        shardCount);
+  }
+
+  EventStoreForDynamoDB(
       @Nonnull DynamoDbClient dynamoDbClient,
       @Nonnull String journalTableName,
       @Nonnull String snapshotTableName,
@@ -101,6 +118,7 @@ public final class EventStoreForDynamoDB<
         new JsonSnapshotSerializer<>(objectMapper));
   }
 
+  @Nonnull
   public EventStoreForDynamoDB<AID, A, E> withKeepSnapshotCount(long keepSnapshotCount) {
     return new EventStoreForDynamoDB<>(
         dynamoDbClient,
@@ -116,6 +134,7 @@ public final class EventStoreForDynamoDB<
         snapshotSerializer);
   }
 
+  @Nonnull
   public EventStoreForDynamoDB<AID, A, E> withDeleteTtl(@Nonnull Duration deleteTtl) {
     return new EventStoreForDynamoDB<>(
         dynamoDbClient,
@@ -131,6 +150,7 @@ public final class EventStoreForDynamoDB<
         snapshotSerializer);
   }
 
+  @Nonnull
   public EventStoreForDynamoDB<AID, A, E> withKeyResolver(@Nonnull KeyResolver<AID> keyResolver) {
     return new EventStoreForDynamoDB<>(
         dynamoDbClient,
@@ -146,6 +166,7 @@ public final class EventStoreForDynamoDB<
         snapshotSerializer);
   }
 
+  @Nonnull
   public EventStoreForDynamoDB<AID, A, E> withEventSerializer(
       @Nonnull EventSerializer<AID, E> eventSerializer) {
     return new EventStoreForDynamoDB<>(
@@ -162,6 +183,7 @@ public final class EventStoreForDynamoDB<
         snapshotSerializer);
   }
 
+  @Nonnull
   public EventStoreForDynamoDB<AID, A, E> withSnapshotSerializer(
       @Nonnull SnapshotSerializer<AID, A> snapshotSerializer) {
     return new EventStoreForDynamoDB<>(
@@ -220,7 +242,7 @@ public final class EventStoreForDynamoDB<
   }
 
   @Override
-  public void persistEventAndSnapshot(@Nonnull  E event,  @Nonnull A aggregate) {
+  public void persistEventAndSnapshot(@Nonnull E event, @Nonnull A aggregate) {
     LOGGER.debug("persistEventAndSnapshot({}, {}): start", event, aggregate);
     TransactWriteItemsResponse result;
     if (event.isCreated()) {
@@ -232,7 +254,8 @@ public final class EventStoreForDynamoDB<
     LOGGER.debug("persistEventAndSnapshot({}, {}): finished", event, aggregate);
   }
 
-  private TransactWriteItemsResponse createEventAndSnapshot(@Nonnull  E event, @Nonnull  A aggregate) {
+  private TransactWriteItemsResponse createEventAndSnapshot(
+      @Nonnull E event, @Nonnull A aggregate) {
     LOGGER.debug("createEventAndSnapshot({}, {}): start", event, aggregate);
     var request =
         eventStoreSupport.createEventAndSnapshotTransactWriteItemsRequest(event, aggregate);
@@ -241,7 +264,8 @@ public final class EventStoreForDynamoDB<
     return result;
   }
 
-  private TransactWriteItemsResponse updateEventAndSnapshotOpt(@Nonnull  E event, long version, A aggregate) {
+  private TransactWriteItemsResponse updateEventAndSnapshotOpt(
+      @Nonnull E event, long version, A aggregate) {
     LOGGER.debug("updateEventAndSnapshotOpt({}, {}, {}): start", event, version, aggregate);
     var request =
         eventStoreSupport.updateEventAndSnapshotOptTransactWriteItemsRequest(

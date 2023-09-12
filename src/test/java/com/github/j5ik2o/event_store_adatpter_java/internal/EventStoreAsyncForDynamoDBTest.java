@@ -74,7 +74,7 @@ public class EventStoreAsyncForDynamoDBTest {
       client.listTables().join().tableNames().forEach(System.out::println);
 
       EventStoreAsyncForDynamoDB<UserAccountId, UserAccount, UserAccountEvent> eventStore =
-          new EventStoreAsyncForDynamoDB<>(
+          EventStoreAsyncForDynamoDB.create(
               client,
               JOURNAL_TABLE_NAME,
               SNAPSHOT_TABLE_NAME,

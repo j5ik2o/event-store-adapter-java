@@ -43,7 +43,7 @@ public final class EventStoreAsyncForDynamoDB<
 
   @Nonnull private final EventStoreSupport<AID, A, E> eventStoreSupport;
 
-  public EventStoreAsyncForDynamoDB(
+  EventStoreAsyncForDynamoDB(
       @Nonnull DynamoDbAsyncClient dynamoDbAsyncClient,
       @Nonnull String journalTableName,
       @Nonnull String snapshotTableName,
@@ -81,7 +81,24 @@ public final class EventStoreAsyncForDynamoDB<
             snapshotSerializer);
   }
 
-  public EventStoreAsyncForDynamoDB(
+  public static <AID extends AggregateId, A extends Aggregate<AID>, E extends Event<AID>>
+      EventStoreAsyncForDynamoDB<AID, A, E> create(
+          @Nonnull DynamoDbAsyncClient dynamoDbAsyncClient,
+          @Nonnull String journalTableName,
+          @Nonnull String snapshotTableName,
+          @Nonnull String journalAidIndexName,
+          @Nonnull String snapshotAidIndexName,
+          long shardCount) {
+    return new EventStoreAsyncForDynamoDB<>(
+        dynamoDbAsyncClient,
+        journalTableName,
+        snapshotTableName,
+        journalAidIndexName,
+        snapshotAidIndexName,
+        shardCount);
+  }
+
+  EventStoreAsyncForDynamoDB(
       @Nonnull DynamoDbAsyncClient dynamoDbAsyncClient,
       @Nonnull String journalTableName,
       @Nonnull String snapshotTableName,
@@ -102,6 +119,7 @@ public final class EventStoreAsyncForDynamoDB<
         new JsonSnapshotSerializer<>(objectMapper));
   }
 
+  @Nonnull
   public EventStoreAsyncForDynamoDB<AID, A, E> withKeepSnapshotCount(long keepSnapshotCount) {
     return new EventStoreAsyncForDynamoDB<>(
         dynamoDbAsyncClient,
@@ -117,7 +135,8 @@ public final class EventStoreAsyncForDynamoDB<
         snapshotSerializer);
   }
 
-  public EventStoreAsyncForDynamoDB<AID, A, E> withDeleteTtl(Duration deleteTtl) {
+  @Nonnull
+  public EventStoreAsyncForDynamoDB<AID, A, E> withDeleteTtl(@Nonnull Duration deleteTtl) {
     return new EventStoreAsyncForDynamoDB<>(
         dynamoDbAsyncClient,
         journalTableName,
@@ -132,7 +151,9 @@ public final class EventStoreAsyncForDynamoDB<
         snapshotSerializer);
   }
 
-  public EventStoreAsyncForDynamoDB<AID, A, E> withKeyResolver(KeyResolver<AID> keyResolver) {
+  @Nonnull
+  public EventStoreAsyncForDynamoDB<AID, A, E> withKeyResolver(
+      @Nonnull KeyResolver<AID> keyResolver) {
     return new EventStoreAsyncForDynamoDB<>(
         dynamoDbAsyncClient,
         journalTableName,
@@ -147,8 +168,9 @@ public final class EventStoreAsyncForDynamoDB<
         snapshotSerializer);
   }
 
+  @Nonnull
   public EventStoreAsyncForDynamoDB<AID, A, E> withEventSerializer(
-      EventSerializer<AID, E> eventSerializer) {
+      @Nonnull EventSerializer<AID, E> eventSerializer) {
     return new EventStoreAsyncForDynamoDB<>(
         dynamoDbAsyncClient,
         journalTableName,
@@ -163,8 +185,9 @@ public final class EventStoreAsyncForDynamoDB<
         snapshotSerializer);
   }
 
+  @Nonnull
   public EventStoreAsyncForDynamoDB<AID, A, E> withSnapshotSerializer(
-      SnapshotSerializer<AID, A> snapshotSerializer) {
+      @Nonnull SnapshotSerializer<AID, A> snapshotSerializer) {
     return new EventStoreAsyncForDynamoDB<>(
         dynamoDbAsyncClient,
         journalTableName,

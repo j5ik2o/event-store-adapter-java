@@ -14,7 +14,7 @@ public interface EventStore<
   List<E> getEventsByIdSinceSequenceNumber(
       @Nonnull Class<E> clazz, @Nonnull AID aggregateId, long sequenceNumber);
 
-  void persistEvent(@Nonnull  E event, long version);
+  void persistEvent(@Nonnull E event, long version);
 
-  void persistEventAndSnapshot(@Nonnull  E event, @Nonnull  A aggregate);
+  void persistEventAndSnapshot(@Nonnull E event, @Nonnull A aggregate);
 }

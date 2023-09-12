@@ -37,7 +37,7 @@ public class EventStoreForDynamoDBTest {
       client.listTables().tableNames().forEach(System.out::println);
 
       EventStoreForDynamoDB<UserAccountId, UserAccount, UserAccountEvent> eventStore =
-          new EventStoreForDynamoDB<>(
+          EventStoreForDynamoDB.create(
               client,
               JOURNAL_TABLE_NAME,
               SNAPSHOT_TABLE_NAME,
