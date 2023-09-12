@@ -9,7 +9,7 @@ import com.github.j5ik2o.event_store_adatpter_java.SerializationException;
 import java.io.IOException;
 import javax.annotation.Nonnull;
 
-public class JsonEventSerializer<AID extends AggregateId, E extends Event<AID>>
+public final class JsonEventSerializer<AID extends AggregateId, E extends Event<AID>>
     implements EventSerializer<AID, E> {
   @Nonnull private final ObjectMapper objectMapper;
 

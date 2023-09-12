@@ -36,7 +36,9 @@ public final class UserAccountRepositoryAsync {
               } else {
                 return eventStore
                     .getEventsByIdSinceSequenceNumber(
-                        UserAccountEvent.class, id, result.get().getAggregate().getSequenceNumber() + 1)
+                        UserAccountEvent.class,
+                        id,
+                        result.get().getAggregate().getSequenceNumber() + 1)
                     .thenApply(
                         events ->
                             Optional.of(

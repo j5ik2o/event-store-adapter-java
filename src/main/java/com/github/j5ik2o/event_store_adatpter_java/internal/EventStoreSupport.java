@@ -31,7 +31,7 @@ final class EventStoreSupport<
 
   private final SnapshotSerializer<AID, A> snapshotSerializer;
 
-  public EventStoreSupport(
+  EventStoreSupport(
       @Nonnull String journalTableName,
       @Nonnull String snapshotTableName,
       @Nonnull String journalAidIndexName,
@@ -42,7 +42,6 @@ final class EventStoreSupport<
       @Nullable KeyResolver<AID> keyResolver,
       @Nullable EventSerializer<AID, E> eventSerializer,
       @Nullable SnapshotSerializer<AID, A> snapshotSerializer) {
-
     this.journalTableName = journalTableName;
     this.snapshotTableName = snapshotTableName;
     this.journalAidIndexName = journalAidIndexName;
@@ -55,7 +54,8 @@ final class EventStoreSupport<
     this.snapshotSerializer = snapshotSerializer;
   }
 
-  public EventStoreSupport<AID, A, E> withKeepSnapshotCount(long keepSnapshotCount) {
+  @Nonnull
+  EventStoreSupport<AID, A, E> withKeepSnapshotCount(long keepSnapshotCount) {
     return new EventStoreSupport<>(
         journalTableName,
         snapshotTableName,
@@ -69,7 +69,8 @@ final class EventStoreSupport<
         snapshotSerializer);
   }
 
-  public EventStoreSupport<AID, A, E> withDeleteTtl(@Nonnull Duration deleteTtl) {
+  @Nonnull
+  EventStoreSupport<AID, A, E> withDeleteTtl(@Nonnull Duration deleteTtl) {
     return new EventStoreSupport<>(
         journalTableName,
         snapshotTableName,
@@ -83,7 +84,8 @@ final class EventStoreSupport<
         snapshotSerializer);
   }
 
-  public EventStoreSupport<AID, A, E> withKeyResolver(@Nonnull KeyResolver<AID> keyResolver) {
+  @Nonnull
+  EventStoreSupport<AID, A, E> withKeyResolver(@Nonnull KeyResolver<AID> keyResolver) {
     return new EventStoreSupport<>(
         journalTableName,
         snapshotTableName,
@@ -97,7 +99,8 @@ final class EventStoreSupport<
         snapshotSerializer);
   }
 
-  public EventStoreSupport<AID, A, E> withEventSerializer(
+  @Nonnull
+  EventStoreSupport<AID, A, E> withEventSerializer(
       @Nonnull EventSerializer<AID, E> eventSerializer) {
     return new EventStoreSupport<>(
         journalTableName,
@@ -112,7 +115,8 @@ final class EventStoreSupport<
         snapshotSerializer);
   }
 
-  public EventStoreSupport<AID, A, E> withSnapshotSerializer(
+  @Nonnull
+  EventStoreSupport<AID, A, E> withSnapshotSerializer(
       @Nonnull SnapshotSerializer<AID, A> snapshotSerializer) {
     return new EventStoreSupport<>(
         journalTableName,
@@ -127,6 +131,7 @@ final class EventStoreSupport<
         snapshotSerializer);
   }
 
+  @Nonnull
   QueryRequest getLatestSnapshotByIdQueryRequest(@Nonnull AID aggregateId) {
     LOGGER.debug("getLatestSnapshotByIdQueryRequest({}): start", aggregateId);
     var request =
@@ -188,6 +193,7 @@ final class EventStoreSupport<
         .build();
   }
 
+  @Nonnull
   List<E> convertToEvents(@Nonnull QueryResponse response, @Nonnull Class<E> clazz) {
     var items = response.items();
     LOGGER.debug("items = {}", items);
@@ -200,6 +206,7 @@ final class EventStoreSupport<
     return events;
   }
 
+  @Nonnull
   TransactWriteItemsRequest createEventAndSnapshotTransactWriteItemsRequest(
       @Nonnull E event, @Nonnull A aggregate) {
     List<TransactWriteItem> transactItems = new java.util.ArrayList<>();
@@ -211,6 +218,7 @@ final class EventStoreSupport<
     return TransactWriteItemsRequest.builder().transactItems(transactItems).build();
   }
 
+  @Nonnull
   TransactWriteItemsRequest updateEventAndSnapshotOptTransactWriteItemsRequest(
       @Nonnull E event, long version, A aggregate) {
     List<TransactWriteItem> transactItems = new java.util.ArrayList<>();
@@ -222,6 +230,7 @@ final class EventStoreSupport<
     return TransactWriteItemsRequest.builder().transactItems(transactItems).build();
   }
 
+  @Nonnull
   TransactWriteItem putSnapshot(@Nonnull E event, long sequenceNumber, A aggregate) {
     LOGGER.debug("putSnapshot({}, {}, {}): start", event, sequenceNumber, aggregate);
     var pkey = resolvePartitionKey(event.getAggregateId(), shardCount);
@@ -264,6 +273,7 @@ final class EventStoreSupport<
     return result;
   }
 
+  @Nonnull
   TransactWriteItem updateSnapshot(
       @Nonnull E event, long sequenceNumber, long version, A aggregate) {
     LOGGER.debug("updateSnapshot({}, {}, {}): start", event, sequenceNumber, aggregate);
@@ -327,14 +337,17 @@ final class EventStoreSupport<
     return result;
   }
 
+  @Nonnull
   String resolvePartitionKey(@Nonnull AID aggregateId, long shardCount) {
     return keyResolver.resolvePartitionKey(aggregateId, shardCount);
   }
 
+  @Nonnull
   String resolveSortKey(@Nonnull AID aggregateId, long sequenceNumber) {
     return keyResolver.resolveSortKey(aggregateId, sequenceNumber);
   }
 
+  @Nonnull
   TransactWriteItem putJournal(@Nonnull E event) {
     LOGGER.debug("putJournal({}): start", event);
     var pkey = resolvePartitionKey(event.getAggregateId(), shardCount);
