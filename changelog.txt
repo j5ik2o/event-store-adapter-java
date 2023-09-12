@@ -1,0 +1,9 @@
+
+### [1.0.6](https://github.com/j5ik2o/event-store-adapter-java/compare/v1.0.5...v1.0.6) (2023-09-12)
+
+
+### Build Systems
+
+* add trim() (eb2e6dc)
+* release scripts (7d50393)
+
