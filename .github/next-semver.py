@@ -12,8 +12,8 @@ for s in sys.stdin:
         cur_ver = semver.VersionInfo.parse(r.group(1))
         next_ver = ""
         if args[1] == "snapshot":
-            next_ver = str(cur_ver.bump_patch()) + "-SNAPSHOT"
-        if args[1] == "major":
+            next_ver = f"{cur_ver.bump_patch()}-SNAPSHOT"
+        elif args[1] == "major":
             next_ver = str(cur_ver.bump_major())
         elif args[1] == "minor":
             next_ver = str(cur_ver.bump_minor())
