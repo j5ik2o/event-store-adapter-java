@@ -1,12 +1,12 @@
 
-### [1.0.7](https://github.com/j5ik2o/event-store-adapter-java/compare/v1.0.6...v1.0.7) (2023-09-12)
+### [1.0.8](https://github.com/j5ik2o/event-store-adapter-java/compare/v1.0.7...v1.0.8) (2023-09-12)
 
 
 ### Build Systems
 
-* Update next-semver.py (1347cb2)
+* release scripts (e754943)
 
 ### Bug Fixes
 
-* version (f2d1974)
+* version (314b9c4)
 
