@@ -28,7 +28,7 @@ public final class UserAccountRepository {
     } else {
       var events =
           eventStore.getEventsByIdSinceSequenceNumber(
-              UserAccountEvent.class, id, snapshot.get().getAggregate().getSequenceNumber());
+              UserAccountEvent.class, id, snapshot.get().getAggregate().getSequenceNumber() + 1);
       return Optional.of(
           UserAccount.replay(events, snapshot.get().getAggregate(), snapshot.get().getVersion()));
     }

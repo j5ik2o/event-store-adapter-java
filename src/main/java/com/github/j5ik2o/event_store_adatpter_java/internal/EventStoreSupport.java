@@ -174,7 +174,7 @@ final class EventStoreSupport<
     return QueryRequest.builder()
         .tableName(journalTableName)
         .indexName(journalAidIndexName)
-        .keyConditionExpression("#aid = :aid and #seq_nr > :seq_nr")
+        .keyConditionExpression("#aid = :aid and #seq_nr >= :seq_nr")
         .expressionAttributeNames(
             Map.of(
                 "#aid", "aid",
