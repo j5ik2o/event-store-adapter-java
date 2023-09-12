@@ -1,16 +1,15 @@
 # event-store-adapter-java
 
 [![CI](https://github.com/j5ik2o/event-store-adapter-java/actions/workflows/ci.yml/badge.svg)](https://github.com/j5ik2o/event-store-adapter-java/actions/workflows/ci.yml)
-[![Maven Central](https://maven-badges.herokuapp.com/maven-central/com.github.j5ik2o/event-store-adapter-java/badge.svg)](https://maven-badges.herokuapp.com/maven-central/com.github.j5ik2o/event-store-adapter-java)
 [![tokei](https://tokei.rs/b1/github/j5ik2o/event-store-adapter-java)](https://github.com/XAMPPRocky/tokei)
 
-This library is designed to turn DynamoDB into an Event Store for Event Sourcing.
+このライブラリは、DynamoDBをEvent Sourcing用のEvent Storeにするためのものです。
 
-[日本語](./README.ja.md)
+[English](./README.md)
 
-# Usage
+# 使い方
 
-You can easily implement an Event Sourcing-enabled repository using EventStore.
+EventStoreを使えば、Event Sourcing対応リポジトリを簡単に実装できます。
 
 ```java
 public final class UserAccountRepositoryAsync {
@@ -51,7 +50,7 @@ public final class UserAccountRepositoryAsync {
 }
 ```
 
-The following is an example of the repository usage.
+以下はリポジトリの使用例です。
 
 ```java
 var eventStore = EventStoreAsyncForDynamoDB.create<UserAccountId, UserAccount, UserAccountEvent>(
