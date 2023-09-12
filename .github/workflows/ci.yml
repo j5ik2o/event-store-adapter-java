@@ -3,9 +3,13 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - 'version'
   pull_request:
     branches:
       - main
+    paths-ignore:
+      - 'version'
 jobs:
   test:
     runs-on: ubuntu-latest
