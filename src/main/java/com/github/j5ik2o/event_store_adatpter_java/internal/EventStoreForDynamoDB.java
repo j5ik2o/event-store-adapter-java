@@ -116,7 +116,7 @@ public final class EventStoreForDynamoDB<
         snapshotSerializer);
   }
 
-  public EventStoreForDynamoDB<AID, A, E> withDeleteTtl(Duration deleteTtl) {
+  public EventStoreForDynamoDB<AID, A, E> withDeleteTtl(@Nonnull Duration deleteTtl) {
     return new EventStoreForDynamoDB<>(
         dynamoDbClient,
         journalTableName,
@@ -131,7 +131,7 @@ public final class EventStoreForDynamoDB<
         snapshotSerializer);
   }
 
-  public EventStoreForDynamoDB<AID, A, E> withKeyResolver(KeyResolver<AID> keyResolver) {
+  public EventStoreForDynamoDB<AID, A, E> withKeyResolver(@Nonnull KeyResolver<AID> keyResolver) {
     return new EventStoreForDynamoDB<>(
         dynamoDbClient,
         journalTableName,
@@ -147,7 +147,7 @@ public final class EventStoreForDynamoDB<
   }
 
   public EventStoreForDynamoDB<AID, A, E> withEventSerializer(
-      EventSerializer<AID, E> eventSerializer) {
+      @Nonnull EventSerializer<AID, E> eventSerializer) {
     return new EventStoreForDynamoDB<>(
         dynamoDbClient,
         journalTableName,
@@ -163,7 +163,7 @@ public final class EventStoreForDynamoDB<
   }
 
   public EventStoreForDynamoDB<AID, A, E> withSnapshotSerializer(
-      SnapshotSerializer<AID, A> snapshotSerializer) {
+      @Nonnull SnapshotSerializer<AID, A> snapshotSerializer) {
     return new EventStoreForDynamoDB<>(
         dynamoDbClient,
         journalTableName,
@@ -181,11 +181,8 @@ public final class EventStoreForDynamoDB<
   @Nonnull
   @Override
   public Optional<AggregateAndVersion<AID, A>> getLatestSnapshotById(
-      Class<A> clazz, AID aggregateId) {
+      @Nonnull Class<A> clazz, @Nonnull AID aggregateId) {
     LOGGER.debug("getLatestSnapshotById({}, {}): start", clazz, aggregateId);
-    if (aggregateId == null) {
-      throw new IllegalArgumentException("aggregateId is null");
-    }
     var request = eventStoreSupport.getLatestSnapshotByIdQueryRequest(aggregateId);
     var response = dynamoDbClient.query(request);
     var result = eventStoreSupport.convertToAggregateAndVersion(response, clazz);
@@ -196,12 +193,9 @@ public final class EventStoreForDynamoDB<
   @Nonnull
   @Override
   public List<E> getEventsByIdSinceSequenceNumber(
-      Class<E> clazz, AID aggregateId, long sequenceNumber) {
+      @Nonnull Class<E> clazz, @Nonnull AID aggregateId, long sequenceNumber) {
     LOGGER.debug(
         "getEventsByIdSinceSequenceNumber({}, {}, {}): start", clazz, aggregateId, sequenceNumber);
-    if (aggregateId == null) {
-      throw new IllegalArgumentException("aggregateId is null");
-    }
     var request =
         eventStoreSupport.getEventsByIdSinceSequenceNumberQueryRequest(aggregateId, sequenceNumber);
     var response = dynamoDbClient.query(request);
@@ -216,11 +210,8 @@ public final class EventStoreForDynamoDB<
   }
 
   @Override
-  public void persistEvent(E event, long version) {
+  public void persistEvent(@Nonnull E event, long version) {
     LOGGER.debug("persistEvent({}, {}): start", event, version);
-    if (event == null) {
-      throw new IllegalArgumentException("event is null");
-    }
     if (event.isCreated()) {
       throw new IllegalArgumentException("event is created");
     }
@@ -229,11 +220,8 @@ public final class EventStoreForDynamoDB<
   }
 
   @Override
-  public void persistEventAndSnapshot(E event, A aggregate) {
+  public void persistEventAndSnapshot(@Nonnull  E event,  @Nonnull A aggregate) {
     LOGGER.debug("persistEventAndSnapshot({}, {}): start", event, aggregate);
-    if (event == null) {
-      throw new IllegalArgumentException("event is null");
-    }
     TransactWriteItemsResponse result;
     if (event.isCreated()) {
       result = createEventAndSnapshot(event, aggregate);
@@ -244,7 +232,7 @@ public final class EventStoreForDynamoDB<
     LOGGER.debug("persistEventAndSnapshot({}, {}): finished", event, aggregate);
   }
 
-  private TransactWriteItemsResponse createEventAndSnapshot(E event, A aggregate) {
+  private TransactWriteItemsResponse createEventAndSnapshot(@Nonnull  E event, @Nonnull  A aggregate) {
     LOGGER.debug("createEventAndSnapshot({}, {}): start", event, aggregate);
     var request =
         eventStoreSupport.createEventAndSnapshotTransactWriteItemsRequest(event, aggregate);
@@ -253,7 +241,7 @@ public final class EventStoreForDynamoDB<
     return result;
   }
 
-  private TransactWriteItemsResponse updateEventAndSnapshotOpt(E event, long version, A aggregate) {
+  private TransactWriteItemsResponse updateEventAndSnapshotOpt(@Nonnull  E event, long version, A aggregate) {
     LOGGER.debug("updateEventAndSnapshotOpt({}, {}, {}): start", event, version, aggregate);
     var request =
         eventStoreSupport.updateEventAndSnapshotOptTransactWriteItemsRequest(

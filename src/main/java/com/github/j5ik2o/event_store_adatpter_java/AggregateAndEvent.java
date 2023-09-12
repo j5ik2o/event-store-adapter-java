@@ -1,19 +1,23 @@
 package com.github.j5ik2o.event_store_adatpter_java;
 
+import javax.annotation.Nonnull;
+
 public final class AggregateAndEvent<
     AID extends AggregateId, A extends Aggregate<AID>, E extends Event<AID>> {
-  private final A aggregate;
-  private final E event;
+  @Nonnull private final A aggregate;
+  @Nonnull private final E event;
 
-  public AggregateAndEvent(A aggregate, E event) {
+  public AggregateAndEvent(@Nonnull A aggregate, @Nonnull E event) {
     this.aggregate = aggregate;
     this.event = event;
   }
 
+  @Nonnull
   public A getAggregate() {
     return aggregate;
   }
 
+  @Nonnull
   public E getEvent() {
     return event;
   }

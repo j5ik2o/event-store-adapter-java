@@ -1,7 +1,11 @@
 package com.github.j5ik2o.event_store_adatpter_java;
 
-public interface EventSerializer<AID extends AggregateId, E extends Event<AID>> {
-  byte[] serialize(E event) throws SerializationException;
+import javax.annotation.Nonnull;
 
-  E deserialize(byte[] bytes, Class<E> clazz) throws SerializationException;
+public interface EventSerializer<AID extends AggregateId, E extends Event<AID>> {
+  @Nonnull
+  byte[] serialize(@Nonnull E event) throws SerializationException;
+
+  @Nonnull
+  E deserialize(@Nonnull byte[] bytes, @Nonnull Class<E> clazz) throws SerializationException;
 }

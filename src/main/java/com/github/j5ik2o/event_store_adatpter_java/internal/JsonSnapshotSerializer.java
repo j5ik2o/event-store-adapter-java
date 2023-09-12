@@ -7,17 +7,19 @@ import com.github.j5ik2o.event_store_adatpter_java.AggregateId;
 import com.github.j5ik2o.event_store_adatpter_java.SerializationException;
 import com.github.j5ik2o.event_store_adatpter_java.SnapshotSerializer;
 import java.io.IOException;
+import javax.annotation.Nonnull;
 
 public class JsonSnapshotSerializer<AID extends AggregateId, A extends Aggregate<AID>>
     implements SnapshotSerializer<AID, A> {
-  private final ObjectMapper objectMapper;
+  @Nonnull private final ObjectMapper objectMapper;
 
-  public JsonSnapshotSerializer(ObjectMapper objectMapper) {
+  public JsonSnapshotSerializer(@Nonnull ObjectMapper objectMapper) {
     this.objectMapper = objectMapper;
   }
 
+  @Nonnull
   @Override
-  public byte[] serialize(A snapshot) throws SerializationException {
+  public byte[] serialize(@Nonnull A snapshot) throws SerializationException {
     try {
       return objectMapper.writeValueAsBytes(snapshot);
     } catch (JsonProcessingException e) {
@@ -25,8 +27,10 @@ public class JsonSnapshotSerializer<AID extends AggregateId, A extends Aggregate
     }
   }
 
+  @Nonnull
   @Override
-  public A deserialize(byte[] bytes, Class<A> clazz) throws SerializationException {
+  public A deserialize(@Nonnull byte[] bytes, @Nonnull Class<A> clazz)
+      throws SerializationException {
     try {
       return objectMapper.readValue(bytes, clazz);
     } catch (IOException e) {

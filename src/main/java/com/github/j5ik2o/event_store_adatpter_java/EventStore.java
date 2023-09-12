@@ -7,12 +7,14 @@ import javax.annotation.Nonnull;
 public interface EventStore<
     AID extends AggregateId, A extends Aggregate<AID>, E extends Event<AID>> {
   @Nonnull
-  Optional<AggregateAndVersion<AID, A>> getLatestSnapshotById(Class<A> clazz, AID aggregateId);
+  Optional<AggregateAndVersion<AID, A>> getLatestSnapshotById(
+      @Nonnull Class<A> clazz, @Nonnull AID aggregateId);
 
   @Nonnull
-  List<E> getEventsByIdSinceSequenceNumber(Class<E> clazz, AID aggregateId, long sequenceNumber);
+  List<E> getEventsByIdSinceSequenceNumber(
+      @Nonnull Class<E> clazz, @Nonnull AID aggregateId, long sequenceNumber);
 
-  void persistEvent(E event, long version);
+  void persistEvent(@Nonnull  E event, long version);
 
-  void persistEventAndSnapshot(E event, A aggregate);
+  void persistEventAndSnapshot(@Nonnull  E event, @Nonnull  A aggregate);
 }

@@ -24,24 +24,24 @@ public final class EventStoreAsyncForDynamoDB<
     objectMapper.findAndRegisterModules();
   }
 
-  private final DynamoDbAsyncClient dynamoDbAsyncClient;
-  private final String journalTableName;
-  private final String snapshotTableName;
-  private final String journalAidIndexName;
-  private final String snapshotAidIndexName;
+  @Nonnull private final DynamoDbAsyncClient dynamoDbAsyncClient;
+  @Nonnull private final String journalTableName;
+  @Nonnull private final String snapshotTableName;
+  @Nonnull private final String journalAidIndexName;
+  @Nonnull private final String snapshotAidIndexName;
   private final long shardCount;
 
-  private final Long keepSnapshotCount;
+  @Nullable private final Long keepSnapshotCount;
 
-  private final Duration deleteTtl;
+  @Nullable private final Duration deleteTtl;
 
-  private final KeyResolver<AID> keyResolver;
+  @Nullable private final KeyResolver<AID> keyResolver;
 
-  private final EventSerializer<AID, E> eventSerializer;
+  @Nullable private final EventSerializer<AID, E> eventSerializer;
 
-  private final SnapshotSerializer<AID, A> snapshotSerializer;
+  @Nullable private final SnapshotSerializer<AID, A> snapshotSerializer;
 
-  private final EventStoreSupport<AID, A, E> eventStoreSupport;
+  @Nonnull private final EventStoreSupport<AID, A, E> eventStoreSupport;
 
   public EventStoreAsyncForDynamoDB(
       @Nonnull DynamoDbAsyncClient dynamoDbAsyncClient,
