@@ -91,6 +91,7 @@ jobs:
         if: steps.changes.outputs.count > 0
       - name: Switch to Snapshot version
         run: |
+          rm changelog.txt
           SNAPSHOT_VERSION=$(echo "${{ steps.versions.outputs.next_version }}" | python3 "${GITHUB_WORKSPACE}"/.github/next-semver.py snapshot)
           echo $SNAPSHOT_VERSION > version
           git add .
