@@ -12,48 +12,39 @@ You can easily implement an Event Sourcing-enabled repository using EventStore.
 ```java
 public final class UserAccountRepositoryAsync {
 
-    @Nonnull private final EventStoreAsync<UserAccountId, UserAccount, UserAccountEvent> eventStore;
+  @Nonnull private final EventStoreAsync<UserAccountId, UserAccount, UserAccountEvent> eventStore;
 
-    public UserAccountRepositoryAsync(
-            @Nonnull EventStoreAsync<UserAccountId, UserAccount, UserAccountEvent> eventStore) {
-        this.eventStore = eventStore;
-    }
+  public UserAccountRepositoryAsync(
+    @Nonnull EventStoreAsync<UserAccountId, UserAccount, UserAccountEvent> eventStore) {
+    this.eventStore = eventStore;
+  }
 
-    @Nonnull
-    public CompletableFuture<Void> store(@Nonnull UserAccountEvent event, long version) {
-        return eventStore.persistEvent(event, version);
-    }
+  @Nonnull
+  public CompletableFuture<Void> store(@Nonnull UserAccountEvent event, long version) {
+    return eventStore.persistEvent(event, version);
+  }
 
-    @Nonnull
-    public CompletableFuture<Void> store(
-            @Nonnull UserAccountEvent event, @Nonnull UserAccount aggregate) {
-        return eventStore.persistEventAndSnapshot(event, aggregate);
-    }
+  @Nonnull
+  public CompletableFuture<Void> store(
+    @Nonnull UserAccountEvent event, @Nonnull UserAccount aggregate) {
+    return eventStore.persistEventAndSnapshot(event, aggregate);
+  }
 
-    @Nonnull
-    public CompletableFuture<Optional<UserAccount>> findById(@Nonnull UserAccountId id) {
-        return eventStore
-                .getLatestSnapshotById(UserAccount.class, id)
-                .thenCompose(
-                        result -> {
-                            if (result.isEmpty()) {
-                                return CompletableFuture.completedFuture(Optional.empty());
-                            } else {
-                                return eventStore
-                                        .getEventsByIdSinceSequenceNumber(
-                                                UserAccountEvent.class,
-                                                id,
-                                                result.get().getAggregate().getSequenceNumber() + 1)
-                                        .thenApply(
-                                                events ->
-                                                        Optional.of(
-                                                                UserAccount.replay(
-                                                                        events,
-                                                                        result.get().getAggregate(),
-                                                                        result.get().getVersion())));
-                            }
-                        });
-    }
+  @Nonnull
+  public CompletableFuture<Optional<UserAccount>> findById(@Nonnull UserAccountId id) {
+    return eventStore
+      .getLatestSnapshotById(UserAccount.class, id)
+      .thenCompose(result -> {
+        if (result.isEmpty()) {
+          return CompletableFuture.completedFuture(Optional.empty());
+        } else {
+          return eventStore.getEventsByIdSinceSequenceNumber(UserAccountEvent.class,
+            id, result.get().getAggregate().getSequenceNumber() + 1)
+            .thenApply(events -> Optional.of(UserAccount.replay(
+              events, result.get().getAggregate(), result.get().getVersion())));
+        }
+      });
+  }
 }
 ```
 
