@@ -1,12 +1,8 @@
 
-### [1.0.8](https://github.com/j5ik2o/event-store-adapter-java/compare/v1.0.7...v1.0.8) (2023-09-12)
+### [1.0.9](https://github.com/j5ik2o/event-store-adapter-java/compare/v1.0.8...v1.0.9) (2023-09-12)
 
 
 ### Build Systems
 
-* release scripts (e754943)
-
-### Bug Fixes
-
-* version (314b9c4)
+* workflows (3285477)
 
