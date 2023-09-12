@@ -60,8 +60,7 @@ public final class UserAccountRepositoryAsync {
 The following is an example of the repository usage.
 
 ```java
-EventStoreAsyncForDynamoDB<UserAccountId, UserAccount, UserAccountEvent> eventStore =
-  EventStoreAsyncForDynamoDB.create(
+var eventStore = EventStoreAsyncForDynamoDB.create<UserAccountId, UserAccount, UserAccountEvent>(
     client,
     JOURNAL_TABLE_NAME,
     SNAPSHOT_TABLE_NAME,
@@ -74,10 +73,12 @@ var id = new UserAccountId(IdGenerator.generate().toString());
 var aggregateAndEvent1 = UserAccount.create(id, "test-1");
 var aggregate1 = aggregateAndEvent1.getAggregate();
 
-var result = userAccountRepository.store(aggregateAndEvent1.getEvent(), aggregate1).thenCompose(r -> {
-  var aggregateAndEvent2 = aggregate1.changeName("test-2");
-  return userAccountRepository.store(aggregateAndEvent2.getEvent(), aggregateAndEvent2.getAggregate().getVersion());
-}).thenCompose(r -> userAccountRepository.findById(id)).join();
+var result = userAccountRepository.store(aggregateAndEvent1.getEvent(), aggregate1)
+  .thenCompose(r -> {
+    var aggregateAndEvent2 = aggregate1.changeName("test-2");
+    return userAccountRepository.store(
+            aggregateAndEvent2.getEvent(), aggregateAndEvent2.getAggregate().getVersion());
+  }).thenCompose(r -> userAccountRepository.findById(id)).join();
 
 if (result.isPresent()) {
   assertEquals(result.get().getId(), aggregateAndEvent2.getAggregate().getId());
