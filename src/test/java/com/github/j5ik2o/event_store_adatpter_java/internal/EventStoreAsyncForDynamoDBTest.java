@@ -87,17 +87,21 @@ public class EventStoreAsyncForDynamoDBTest {
       var aggregateAndEvent1 = UserAccount.create(id, "test-1");
       var aggregate1 = aggregateAndEvent1.getAggregate();
 
-      userAccountRepository.store(aggregateAndEvent1.getEvent(), aggregate1).join();
+      var result =
+          userAccountRepository
+              .store(aggregateAndEvent1.getEvent(), aggregate1)
+              .thenCompose(
+                  r -> {
+                    var aggregateAndEvent2 = aggregate1.changeName("test-2");
+                    return userAccountRepository.store(
+                        aggregateAndEvent2.getEvent(),
+                        aggregateAndEvent2.getAggregate().getVersion());
+                  })
+              .thenCompose(r -> userAccountRepository.findById(id))
+              .join();
 
-      var aggregateAndEvent2 = aggregate1.changeName("test-2");
-
-      userAccountRepository
-          .store(aggregateAndEvent2.getEvent(), aggregateAndEvent2.getAggregate().getVersion())
-          .join();
-
-      var result = userAccountRepository.findById(id).join();
       if (result.isPresent()) {
-        assertEquals(result.get().getId(), aggregateAndEvent2.getAggregate().getId());
+        assertEquals(result.get().getId(), aggregateAndEvent1.getAggregate().getId());
         assertEquals(result.get().getName(), "test-2");
       } else {
         fail("result is empty");
