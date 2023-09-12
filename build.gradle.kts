@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "com.github.j5ik2o"
-version = File("./version").readText()
+version = File("./version").readText().trim()
 
 repositories {
     mavenCentral()
