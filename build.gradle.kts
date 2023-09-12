@@ -1,12 +1,12 @@
 plugins {
     id("com.diffplug.spotless") version "6.21.0"
-    id("java")
+    id("java-library")
     id("maven-publish")
     signing
 }
 
 group = "com.github.j5ik2o"
-version = "1.0.1-SNAPSHOT"
+version = File("./version").readText()
 
 repositories {
     mavenCentral()
@@ -15,17 +15,17 @@ repositories {
 dependencies {
     testImplementation(platform("org.junit:junit-bom:5.10.0"))
     testImplementation("org.junit.jupiter:junit-jupiter")
-    implementation("software.amazon.awssdk:dynamodb:2.20.145")
-    implementation("com.fasterxml.jackson.core:jackson-databind:2.15.2")
-    implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.15.2")
-    implementation("org.slf4j:slf4j-api:1.7.36")
     testImplementation("ch.qos.logback:logback-classic:1.4.11")
     testImplementation("org.testcontainers:testcontainers:1.19.0")
     testImplementation("org.testcontainers:junit-jupiter:1.19.0")
     testImplementation("org.testcontainers:localstack:1.19.0")
+    
+    implementation("software.amazon.awssdk:dynamodb:2.20.145")
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.15.2")
+    implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.15.2")
+    implementation("org.slf4j:slf4j-api:1.7.36")
     implementation("com.google.code.findbugs:jsr305:3.0.2")
     implementation("de.huxhorn.sulky:de.huxhorn.sulky.ulid:8.3.0")
-
 }
 
 
@@ -51,9 +51,6 @@ java {
 
 
 tasks {
-    build {
-        dependsOn(spotlessApply)
-    }
 
     withType<Test> {
         useJUnitPlatform()
@@ -88,6 +85,7 @@ tasks {
 
     withType<JavaCompile> {
         options.compilerArgs.add("-Xlint:deprecation")
+        dependsOn(spotlessApply)
     }
 }
 
@@ -128,13 +126,6 @@ publishing {
                 }
             }
             repositories {
-                // To locally check out the poms
-                maven {
-                    val releasesRepoUrl = uri("${layout.buildDirectory}/repos/releases")
-                    val snapshotsRepoUrl = uri("${layout.buildDirectory}/repos/snapshots")
-                    name = "BuildDir"
-                    url = if (project.extra["isReleaseVersion"] as Boolean) releasesRepoUrl else snapshotsRepoUrl
-                }
                 maven {
                     val releasesRepoUrl = uri("https://oss.sonatype.org/service/local/staging/deploy/maven2/")
                     val snapshotsRepoUrl = uri("https://oss.sonatype.org/content/repositories/snapshots/")
