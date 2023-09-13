@@ -126,18 +126,6 @@ publishing {
                     url.set("https://github.com/j5ik2o/event-store-adapter-java")
                 }
             }
-//            repositories {
-//                maven {
-//                    val releasesRepoUrl = uri("https://oss.sonatype.org/service/local/staging/deploy/maven2/")
-//                    val snapshotsRepoUrl = uri("https://oss.sonatype.org/content/repositories/snapshots/")
-//                    name = "SonatypeOSS"
-//                    url = if (project.extra["isReleaseVersion"] as Boolean) releasesRepoUrl else snapshotsRepoUrl
-//                    credentials {
-//                        username = System.getenv("SONATYPE_USERNAME")
-//                        password = System.getenv("SONATYPE_PASSWORD")
-//                    }
-//                }
-//            }
         }
     }
 }
