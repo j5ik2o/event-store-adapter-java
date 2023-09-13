@@ -146,8 +146,8 @@ nexusPublishing {
     this.repositories {
         this.sonatype {
             packageGroup = "com.github.j5ik2o"
-            nexusUrl = uri("https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/")
-            snapshotRepositoryUrl = uri("https://s01.oss.sonatype.org/content/repositories/snapshots/")
+            nexusUrl = uri("https://oss.sonatype.org/service/local/")
+            snapshotRepositoryUrl = uri("https://oss.sonatype.org/content/repositories/snapshots/")
             username = System.getenv("SONATYPE_USERNAME")
             password = System.getenv("SONATYPE_PASSWORD")
         }
