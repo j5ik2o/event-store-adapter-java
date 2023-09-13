@@ -1,8 +1,9 @@
 plugins {
-    id("com.diffplug.spotless") version "6.21.0"
-    id("java-library")
-    id("maven-publish")
+    `java-library`
+    `maven-publish`
     signing
+    id("com.diffplug.spotless") version "6.21.0"
+    id("io.github.gradle-nexus.publish-plugin") version "2.0.0-rc-1"
 }
 
 group = "com.github.j5ik2o"
@@ -125,18 +126,29 @@ publishing {
                     url.set("https://github.com/j5ik2o/event-store-adapter-java")
                 }
             }
-            repositories {
-                maven {
-                    val releasesRepoUrl = uri("https://oss.sonatype.org/service/local/staging/deploy/maven2/")
-                    val snapshotsRepoUrl = uri("https://oss.sonatype.org/content/repositories/snapshots/")
-                    name = "SonatypeOSS"
-                    url = if (project.extra["isReleaseVersion"] as Boolean) releasesRepoUrl else snapshotsRepoUrl
-                    credentials {
-                        username = System.getenv("SONATYPE_USERNAME")
-                        password = System.getenv("SONATYPE_PASSWORD")
-                    }
-                }
-            }
+//            repositories {
+//                maven {
+//                    val releasesRepoUrl = uri("https://oss.sonatype.org/service/local/staging/deploy/maven2/")
+//                    val snapshotsRepoUrl = uri("https://oss.sonatype.org/content/repositories/snapshots/")
+//                    name = "SonatypeOSS"
+//                    url = if (project.extra["isReleaseVersion"] as Boolean) releasesRepoUrl else snapshotsRepoUrl
+//                    credentials {
+//                        username = System.getenv("SONATYPE_USERNAME")
+//                        password = System.getenv("SONATYPE_PASSWORD")
+//                    }
+//                }
+//            }
+        }
+    }
+}
+
+nexusPublishing {
+    this.repositories {
+        create("myNexus") {
+            nexusUrl = uri("https://oss.sonatype.org/service/local/staging/deploy/maven2/")
+            snapshotRepositoryUrl = uri("https://oss.sonatype.org/content/repositories/snapshots/")
+            username = System.getenv("SONATYPE_USERNAME")
+            password = System.getenv("SONATYPE_PASSWORD")
         }
     }
 }

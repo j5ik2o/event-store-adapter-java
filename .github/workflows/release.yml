@@ -26,4 +26,4 @@ jobs:
       - uses: gradle/gradle-build-action@v2
         with:
           gradle-version: 8.3
-          arguments: assemble publish --info --stacktrace
+          arguments: publishToSonatype closeAndReleaseSonatypeStagingRepository --info --stacktrace
