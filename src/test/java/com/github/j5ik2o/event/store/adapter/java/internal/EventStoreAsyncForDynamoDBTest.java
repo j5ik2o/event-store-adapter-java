@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.testcontainers.containers.localstack.LocalStackContainer.Service.DYNAMODB;
 
+import com.github.j5ik2o.event.store.adapter.java.EventStoreAsync;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,8 +40,8 @@ public class EventStoreAsyncForDynamoDBTest {
           .join();
       client.listTables().join().tableNames().forEach(System.out::println);
 
-      EventStoreAsyncForDynamoDB<UserAccountId, UserAccount, UserAccountEvent> eventStore =
-          new EventStoreAsyncForDynamoDB<>(
+      EventStoreAsync<UserAccountId, UserAccount, UserAccountEvent> eventStore =
+          EventStoreAsync.ofDynamoDB(
               client,
               JOURNAL_TABLE_NAME,
               SNAPSHOT_TABLE_NAME,
