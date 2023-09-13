@@ -119,6 +119,7 @@ public final class EventStoreForDynamoDB<
   }
 
   @Nonnull
+  @Override
   public EventStoreForDynamoDB<AID, A, E> withKeepSnapshotCount(long keepSnapshotCount) {
     return new EventStoreForDynamoDB<>(
         dynamoDbClient,
@@ -135,6 +136,7 @@ public final class EventStoreForDynamoDB<
   }
 
   @Nonnull
+  @Override
   public EventStoreForDynamoDB<AID, A, E> withDeleteTtl(@Nonnull Duration deleteTtl) {
     return new EventStoreForDynamoDB<>(
         dynamoDbClient,
@@ -151,6 +153,7 @@ public final class EventStoreForDynamoDB<
   }
 
   @Nonnull
+  @Override
   public EventStoreForDynamoDB<AID, A, E> withKeyResolver(@Nonnull KeyResolver<AID> keyResolver) {
     return new EventStoreForDynamoDB<>(
         dynamoDbClient,
@@ -167,6 +170,7 @@ public final class EventStoreForDynamoDB<
   }
 
   @Nonnull
+  @Override
   public EventStoreForDynamoDB<AID, A, E> withEventSerializer(
       @Nonnull EventSerializer<AID, E> eventSerializer) {
     return new EventStoreForDynamoDB<>(
@@ -184,6 +188,7 @@ public final class EventStoreForDynamoDB<
   }
 
   @Nonnull
+  @Override
   public EventStoreForDynamoDB<AID, A, E> withSnapshotSerializer(
       @Nonnull SnapshotSerializer<AID, A> snapshotSerializer) {
     return new EventStoreForDynamoDB<>(

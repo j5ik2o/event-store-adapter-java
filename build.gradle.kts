@@ -11,6 +11,7 @@ version = File("./version").readText().trim()
 
 repositories {
     mavenCentral()
+    maven { url = uri("https://oss.sonatype.org/content/repositories/snapshots") }
 }
 
 dependencies {

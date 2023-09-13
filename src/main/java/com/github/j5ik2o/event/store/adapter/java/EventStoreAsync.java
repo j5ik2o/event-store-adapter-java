@@ -8,7 +8,8 @@ import javax.annotation.Nonnull;
 import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
 
 public interface EventStoreAsync<
-    AID extends AggregateId, A extends Aggregate<AID>, E extends Event<AID>> {
+        AID extends AggregateId, A extends Aggregate<AID>, E extends Event<AID>>
+    extends EventStoreOptions<EventStoreAsync<AID, A, E>, AID, A, E> {
   static <AID extends AggregateId, A extends Aggregate<AID>, E extends Event<AID>>
       EventStoreAsync<AID, A, E> ofDynamoDB(
           @Nonnull DynamoDbAsyncClient dynamoDbAsyncClient,
