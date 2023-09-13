@@ -144,7 +144,7 @@ publishing {
 
 nexusPublishing {
     this.repositories {
-        create("myNexus") {
+        this.sonatype {
             nexusUrl = uri("https://oss.sonatype.org/service/local/staging/deploy/maven2/")
             snapshotRepositoryUrl = uri("https://oss.sonatype.org/content/repositories/snapshots/")
             username = System.getenv("SONATYPE_USERNAME")
