@@ -82,3 +82,11 @@ if (result.isPresent()) {
   fail("result is empty");
 }
 ```
+
+## Table Specifications
+
+See [docs/DATABASE_SCHEMA.md](docs/DATABASE_SCHEMA.md).
+
+## License.
+
+MIT License. See [LICENSE](LICENSE) for details.
