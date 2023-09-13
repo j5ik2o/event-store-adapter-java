@@ -2,15 +2,22 @@ package com.github.j5ik2o.event.store.adapter.java.internal;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.j5ik2o.event.store.adapter.java.*;
+import io.vavr.Tuple2;
 import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.dynamodb.model.BatchWriteItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsResponse;
+import software.amazon.awssdk.services.dynamodb.model.WriteRequest;
 
 public final class EventStoreForDynamoDB<
         AID extends AggregateId, A extends Aggregate<AID>, E extends Event<AID>>
@@ -243,6 +250,13 @@ public final class EventStoreForDynamoDB<
       throw new IllegalArgumentException("event is created");
     }
     updateEventAndSnapshotOpt(event, version, null);
+    if (keepSnapshotCount != null) {
+      if (deleteTtl == null) {
+        deleteExcessSnapshots(event.getAggregateId());
+      } else {
+        updateTtlOfExcessSnapshots(event.getAggregateId());
+      }
+    }
     LOGGER.debug("persistEvent({}, {}): finished", event, version);
   }
 
@@ -254,6 +268,13 @@ public final class EventStoreForDynamoDB<
       result = createEventAndSnapshot(event, aggregate);
     } else {
       result = updateEventAndSnapshotOpt(event, aggregate.getVersion(), aggregate);
+      if (keepSnapshotCount != null) {
+        if (deleteTtl == null) {
+          deleteExcessSnapshots(event.getAggregateId());
+        } else {
+          updateTtlOfExcessSnapshots(event.getAggregateId());
+        }
+      }
     }
     LOGGER.debug("result = {}", result);
     LOGGER.debug("persistEventAndSnapshot({}, {}): finished", event, aggregate);
@@ -278,5 +299,70 @@ public final class EventStoreForDynamoDB<
     var result = dynamoDbClient.transactWriteItems(request);
     LOGGER.debug("updateEventAndSnapshotOpt({}, {}, {}): finished", event, version, aggregate);
     return result;
+  }
+
+  private int getSnapshotCount(AID id) {
+    var request = eventStoreSupport.getSnapshotCountQueryRequest(id);
+    var response = dynamoDbClient.query(request);
+    return response.count();
+  }
+
+  private List<Tuple2<String, String>> getLastSnapshotKeys(AID id, int limit) {
+    var request = eventStoreSupport.getLastSnapshotKeysQueryRequest(id, limit);
+    var response = dynamoDbClient.query(request);
+    var items = response.items();
+    var result = new ArrayList<Tuple2<String, String>>();
+    for (var item : items) {
+      var pkey = item.get("pkey").s();
+      var skey = item.get("skey").s();
+      result.add(new Tuple2<>(pkey, skey));
+    }
+    return result;
+  }
+
+  private void deleteExcessSnapshots(AID id) {
+    if (keepSnapshotCount != null) {
+      var snapshotCount = getSnapshotCount(id) - 1;
+      var excessCount = snapshotCount - keepSnapshotCount;
+      if (excessCount > 0) {
+        var keys = getLastSnapshotKeys(id, (int) excessCount);
+        if (!keys.isEmpty()) {
+          var requestItems =
+              keys.stream().map(key -> WriteRequest.builder().build()).collect(Collectors.toList());
+          var result =
+              dynamoDbClient.batchWriteItem(
+                  BatchWriteItemRequest.builder()
+                      .requestItems(Map.of(snapshotTableName, requestItems))
+                      .build());
+          if (result.sdkHttpResponse().isSuccessful()) {
+            LOGGER.debug("excess snapshots are deleted");
+          } else {
+            LOGGER.warn("Failed to delete excess snapshots: {}", result);
+          }
+        }
+      }
+    }
+  }
+
+  private void updateTtlOfExcessSnapshots(AID id) {
+    if (keepSnapshotCount != null && deleteTtl != null) {
+      var snapshotCount = getSnapshotCount(id) - 1;
+      var excessCount = snapshotCount - keepSnapshotCount;
+      if (excessCount > 0) {
+        var keys = getLastSnapshotKeys(id, (int) excessCount);
+        var ttl = Instant.now().plus(deleteTtl);
+        for (var key : keys) {
+          var result =
+              dynamoDbClient.updateItem(
+                  eventStoreSupport.updateTtlOfExcessSnapshots(
+                      key._1, key._2, ttl.getEpochSecond()));
+          if (result.sdkHttpResponse().isSuccessful()) {
+            LOGGER.debug("excess snapshots are deleted");
+          } else {
+            LOGGER.warn("Failed to delete excess snapshots: {}", result);
+          }
+        }
+      }
+    }
   }
 }

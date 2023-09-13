@@ -2,7 +2,9 @@ package com.github.j5ik2o.event.store.adapter.java.internal;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.j5ik2o.event.store.adapter.java.*;
+import io.vavr.Tuple2;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -287,5 +289,28 @@ public final class EventStoreAsyncForDynamoDB<
     var result = dynamoDbAsyncClient.transactWriteItems(request);
     LOGGER.debug("updateEventAndSnapshotOpt({}, {}, {}): finished", event, version, aggregate);
     return result;
+  }
+
+  private CompletableFuture<Integer> getSnapshotCount(AID id) {
+    var request = eventStoreSupport.getSnapshotCountQueryRequest(id);
+    var response = dynamoDbAsyncClient.query(request);
+    return response.thenApply(QueryResponse::count);
+  }
+
+  private CompletableFuture<List<Tuple2<String, String>>> getLastSnapshotKeys(AID id, int limit) {
+    var request = eventStoreSupport.getLastSnapshotKeysQueryRequest(id, limit);
+    return dynamoDbAsyncClient
+        .query(request)
+        .thenApply(
+            r -> {
+              var items = r.items();
+              var result = new ArrayList<Tuple2<String, String>>();
+              for (var item : items) {
+                var pkey = item.get("pkey").s();
+                var skey = item.get("skey").s();
+                result.add(new Tuple2<>(pkey, skey));
+              }
+              return result;
+            });
   }
 }

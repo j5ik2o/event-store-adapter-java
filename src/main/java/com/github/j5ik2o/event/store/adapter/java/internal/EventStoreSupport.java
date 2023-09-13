@@ -387,4 +387,69 @@ final class EventStoreSupport<
     LOGGER.debug("putJournal({}): finished", event);
     return result;
   }
+
+  QueryRequest getSnapshotCountQueryRequest(AID id) {
+    return QueryRequest.builder()
+        .tableName(snapshotTableName)
+        .indexName(snapshotAidIndexName)
+        .keyConditionExpression("#aid = :aid")
+        .expressionAttributeNames(Map.of("#aid", "aid"))
+        .expressionAttributeValues(
+            Map.of(":aid", AttributeValue.builder().s(id.asString()).build()))
+        .select(Select.COUNT)
+        .build();
+  }
+
+  QueryRequest getLastSnapshotKeysQueryRequest(AID id, int limit) {
+    var queryBuilder =
+        QueryRequest.builder()
+            .tableName(snapshotTableName)
+            .indexName(snapshotAidIndexName)
+            .keyConditionExpression("#aid = :aid AND #seq_nr > :seq_nr")
+            .expressionAttributeNames(
+                Map.of(
+                    "#aid", "aid",
+                    "#seq_nr", "seq_nr"))
+            .expressionAttributeValues(
+                Map.of(
+                    ":aid", AttributeValue.builder().s(id.asString()).build(),
+                    ":seq_nr", AttributeValue.builder().n("0").build()))
+            .scanIndexForward(false)
+            .limit(limit);
+    if (deleteTtl != null) {
+      queryBuilder =
+          queryBuilder
+              .filterExpression("ttl < :ttl")
+              .expressionAttributeNames(
+                  Map.of(
+                      "#aid", "aid",
+                      "#seq_nr", "seq_nr",
+                      "#ttl", "ttl"))
+              .expressionAttributeValues(
+                  Map.of(
+                      ":aid", AttributeValue.builder().s(id.asString()).build(),
+                      ":seq_nr", AttributeValue.builder().n("0").build(),
+                      ":ttl",
+                          AttributeValue.builder()
+                              .n(String.valueOf(deleteTtl.toSeconds()))
+                              .build()));
+    }
+    return queryBuilder.build();
+  }
+
+  UpdateItemRequest updateTtlOfExcessSnapshots(String pkey, String skey, Long seconds) {
+    return UpdateItemRequest.builder()
+        .tableName(snapshotTableName)
+        .key(
+            Map.of(
+                "pkey",
+                AttributeValue.builder().s(pkey).build(),
+                "skey",
+                AttributeValue.builder().s(skey).build()))
+        .updateExpression("SET #ttl = :ttl")
+        .expressionAttributeNames(Map.of("#ttl", "ttl"))
+        .expressionAttributeValues(
+            Map.of(":ttl", AttributeValue.builder().n(String.valueOf(seconds)).build()))
+        .build();
+  }
 }
