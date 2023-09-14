@@ -1,1 +1,0 @@
-packageSearchIndex = [{"l":"com.github.j5ik2o.event_store_adatpter_java"},{"l":"com.github.j5ik2o.event_store_adatpter_java.internal"},{"l":"すべてのパッケージ","u":"allpackages-index.html"}];updateSearchResults();

@@ -1,6 +1,7 @@
 package com.github.j5ik2o.event.store.adapter.java.internal;
 
 import com.github.j5ik2o.event.store.adapter.java.*;
+import io.vavr.Tuple2;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -286,20 +287,18 @@ final class EventStoreSupport<
     LOGGER.debug("seq_nr = {}", sequenceNumber);
     LOGGER.debug("<--- update snapshot ---");
 
-    var expressionAttributeNames =
-        new java.util.HashMap<>(
-            Map.of("#version", "version", "#last_updated_at", "last_updated_at"));
-    var expressionAttributeValues =
-        new java.util.HashMap<>(
-            Map.of(
-                ":before_version",
-                AttributeValue.builder().n(String.valueOf(version)).build(),
-                ":after_version",
-                AttributeValue.builder().n(String.valueOf(version + 1)).build(),
-                ":last_updated_at",
-                AttributeValue.builder()
-                    .n(String.valueOf(event.getOccurredAt().toEpochMilli()))
-                    .build()));
+    var names =
+        io.vavr.collection.HashMap.of("#version", "version", "#last_updated_at", "last_updated_at");
+    var values =
+        io.vavr.collection.HashMap.of(
+            ":before_version",
+            AttributeValue.builder().n(String.valueOf(version)).build(),
+            ":after_version",
+            AttributeValue.builder().n(String.valueOf(version + 1)).build(),
+            ":last_updated_at",
+            AttributeValue.builder()
+                .n(String.valueOf(event.getOccurredAt().toEpochMilli()))
+                .build());
     var update =
         Update.builder()
             .tableName(snapshotTableName)
@@ -310,27 +309,31 @@ final class EventStoreSupport<
                     AttributeValue.builder().s(pkey).build(),
                     "skey",
                     AttributeValue.builder().s(skey).build()))
-            .expressionAttributeNames(expressionAttributeNames)
-            .expressionAttributeValues(expressionAttributeValues)
+            .expressionAttributeNames(names.toJavaMap())
+            .expressionAttributeValues(values.toJavaMap())
             .conditionExpression("#version = :before_version");
     if (aggregate != null) {
       var payload = snapshotSerializer.serialize(aggregate);
       LOGGER.debug("payload = {}", payload);
-      var expressionAttributeNames2 = Map.of("#seq_nr", ":seq_nr", "#payload", "payload");
-      expressionAttributeNames.putAll(expressionAttributeNames2);
-      var expressionAttributeValues2 =
-          Map.of(
-              ":seq_nr",
-              AttributeValue.builder().n(String.valueOf(sequenceNumber)).build(),
-              ":payload",
-              AttributeValue.builder().b(SdkBytes.fromByteArray(payload)).build());
-      expressionAttributeValues.putAll(expressionAttributeValues2);
       update =
           update
               .updateExpression(
                   "SET #payload=:payload, #seq_nr=:seq_nr, #version=:after_version, #last_updated_at=:last_updated_at")
-              .expressionAttributeNames(expressionAttributeNames)
-              .expressionAttributeValues(expressionAttributeValues);
+              .expressionAttributeNames(
+                  names
+                      .merge(
+                          io.vavr.collection.HashMap.of(
+                              "#seq_nr", ":seq_nr", "#payload", "payload"))
+                      .toJavaMap())
+              .expressionAttributeValues(
+                  values
+                      .merge(
+                          io.vavr.collection.HashMap.of(
+                              ":seq_nr",
+                              AttributeValue.builder().n(String.valueOf(sequenceNumber)).build(),
+                              ":payload",
+                              AttributeValue.builder().b(SdkBytes.fromByteArray(payload)).build()))
+                      .toJavaMap());
     }
     var result = TransactWriteItem.builder().update(update.build()).build();
     LOGGER.debug("updateSnapshot({}, {}, {}): finished", event, sequenceNumber, aggregate);
@@ -386,5 +389,90 @@ final class EventStoreSupport<
     var result = TransactWriteItem.builder().put(put).build();
     LOGGER.debug("putJournal({}): finished", event);
     return result;
+  }
+
+  QueryRequest getSnapshotCountQueryRequest(AID id) {
+    return QueryRequest.builder()
+        .tableName(snapshotTableName)
+        .indexName(snapshotAidIndexName)
+        .keyConditionExpression("#aid = :aid")
+        .expressionAttributeNames(Map.of("#aid", "aid"))
+        .expressionAttributeValues(
+            Map.of(":aid", AttributeValue.builder().s(id.asString()).build()))
+        .select(Select.COUNT)
+        .build();
+  }
+
+  QueryRequest getLastSnapshotKeysQueryRequest(AID id, int limit) {
+    var names = io.vavr.collection.HashMap.of("#aid", "aid", "#seq_nr", "seq_nr");
+    var values =
+        io.vavr.collection.HashMap.of(
+            ":aid", AttributeValue.builder().s(id.asString()).build(),
+            ":seq_nr", AttributeValue.builder().n("0").build());
+    var queryBuilder =
+        QueryRequest.builder()
+            .tableName(snapshotTableName)
+            .indexName(snapshotAidIndexName)
+            .keyConditionExpression("#aid = :aid AND #seq_nr > :seq_nr")
+            .expressionAttributeNames(names.toJavaMap())
+            .expressionAttributeValues(values.toJavaMap())
+            .scanIndexForward(false)
+            .limit(limit);
+    if (deleteTtl != null) {
+      queryBuilder =
+          queryBuilder
+              .filterExpression("ttl < :ttl")
+              .expressionAttributeNames(
+                  names.merge(io.vavr.collection.HashMap.of("#ttl", "ttl")).toJavaMap())
+              .expressionAttributeValues(
+                  values
+                      .merge(
+                          io.vavr.collection.HashMap.of(
+                              ":ttl",
+                              AttributeValue.builder()
+                                  .n(String.valueOf(deleteTtl.toSeconds()))
+                                  .build()))
+                      .toJavaMap());
+    }
+    return queryBuilder.build();
+  }
+
+  UpdateItemRequest updateTtlOfExcessSnapshots(
+      @Nonnull String pkey, @Nonnull String skey, long seconds) {
+    return UpdateItemRequest.builder()
+        .tableName(snapshotTableName)
+        .key(
+            Map.of(
+                "pkey",
+                AttributeValue.builder().s(pkey).build(),
+                "skey",
+                AttributeValue.builder().s(skey).build()))
+        .updateExpression("SET #ttl = :ttl")
+        .expressionAttributeNames(Map.of("#ttl", "ttl"))
+        .expressionAttributeValues(
+            Map.of(":ttl", AttributeValue.builder().n(String.valueOf(seconds)).build()))
+        .build();
+  }
+
+  BatchWriteItemRequest batchDeleteSnapshotRequest(
+      io.vavr.collection.List<Tuple2<String, String>> keys) {
+    var requestItems = keys.map(EventStoreSupport::deleteSnapshotRequest).toJavaList();
+    return BatchWriteItemRequest.builder()
+        .requestItems(Map.of(snapshotTableName, requestItems))
+        .build();
+  }
+
+  private static WriteRequest deleteSnapshotRequest(Tuple2<String, String> key) {
+    return WriteRequest.builder()
+        .deleteRequest(
+            DeleteRequest.builder()
+                .key(
+                    Map.of(
+                        "pkey",
+                        AttributeValue.builder().s(key._1).build(),
+                        "skey",
+                        AttributeValue.builder().s(key._2).build()))
+                .build())
+        .build();
   }
 }

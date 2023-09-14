@@ -1,3 +1,6 @@
+import org.gradle.api.tasks.testing.logging.TestExceptionFormat
+import org.gradle.api.tasks.testing.logging.TestLogEvent
+
 plugins {
     `java-library`
     `maven-publish`
@@ -14,14 +17,20 @@ repositories {
     maven { url = uri("https://oss.sonatype.org/content/repositories/snapshots") }
 }
 
+
 dependencies {
-    testImplementation(platform("org.junit:junit-bom:5.10.0"))
-    testImplementation("org.junit.jupiter:junit-jupiter")
+//    testImplementation(platform("org.junit:junit-bom:5.10.0"))
+//    testImplementation("org.junit.jupiter:junit-jupiter")
+
+    testImplementation("org.junit.jupiter:junit-jupiter-api:5.8.1")
+    testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.8.1")
+
     testImplementation("ch.qos.logback:logback-classic:1.4.11")
     testImplementation("org.testcontainers:testcontainers:1.19.0")
     testImplementation("org.testcontainers:junit-jupiter:1.19.0")
     testImplementation("org.testcontainers:localstack:1.19.0")
-    
+
+    implementation("io.vavr:vavr:0.10.4")
     implementation("software.amazon.awssdk:dynamodb:2.20.146")
     implementation("com.fasterxml.jackson.core:jackson-databind:2.15.2")
     implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.15.2")
@@ -56,6 +65,12 @@ tasks {
 
     withType<Test> {
         useJUnitPlatform()
+        outputs.upToDateWhen { false }
+        testLogging {
+            showStandardStreams = true
+            events = setOf(TestLogEvent.STARTED, TestLogEvent.SKIPPED, TestLogEvent.PASSED, TestLogEvent.FAILED)
+            exceptionFormat = TestExceptionFormat.FULL
+        }
     }
 
     create<Copy>("javadocToDocsFolder") {
@@ -63,9 +78,9 @@ tasks {
         into("docs/javadoc")
     }
 
-    assemble {
-        dependsOn("javadocToDocsFolder")
-    }
+//    assemble {
+//        dependsOn("javadocToDocsFolder")
+//    }
 
     create<Jar>("sourcesJar") {
         from(sourceSets.main.get().allJava)
@@ -87,9 +102,10 @@ tasks {
 
     withType<JavaCompile> {
         options.compilerArgs.add("-Xlint:deprecation")
-        dependsOn(spotlessApply)
     }
 }
+
+
 
 
 publishing {
