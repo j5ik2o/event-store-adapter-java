@@ -31,7 +31,7 @@ dependencies {
     testImplementation("org.testcontainers:localstack:1.19.0")
 
     implementation("io.vavr:vavr:0.10.4")
-    implementation("software.amazon.awssdk:dynamodb:2.20.146")
+    implementation("software.amazon.awssdk:dynamodb:2.20.147")
     implementation("com.fasterxml.jackson.core:jackson-databind:2.15.2")
     implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.15.2")
     implementation("org.slf4j:slf4j-api:1.7.36")
