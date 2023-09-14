@@ -3,9 +3,12 @@ package com.github.j5ik2o.event.store.adapter.java.internal;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.j5ik2o.event.store.adapter.java.*;
 import io.vavr.Tuple2;
+import io.vavr.control.Option;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import javax.annotation.Nonnull;
@@ -33,15 +36,15 @@ public final class EventStoreAsyncForDynamoDB<
   @Nonnull private final String snapshotAidIndexName;
   private final long shardCount;
 
-  @Nullable private final Long keepSnapshotCount;
+  @Nonnull private final Option<Long> keepSnapshotCount;
 
-  @Nullable private final Duration deleteTtl;
+  @Nonnull private final Option<Duration> deleteTtl;
 
-  @Nullable private final KeyResolver<AID> keyResolver;
+  @Nonnull private final KeyResolver<AID> keyResolver;
 
-  @Nullable private final EventSerializer<AID, E> eventSerializer;
+  @Nonnull private final EventSerializer<AID, E> eventSerializer;
 
-  @Nullable private final SnapshotSerializer<AID, A> snapshotSerializer;
+  @Nonnull private final SnapshotSerializer<AID, A> snapshotSerializer;
 
   @Nonnull private final EventStoreSupport<AID, A, E> eventStoreSupport;
 
@@ -54,17 +57,17 @@ public final class EventStoreAsyncForDynamoDB<
       long shardCount,
       @Nullable Long keepSnapshotCount,
       @Nullable Duration deleteTtl,
-      @Nullable KeyResolver<AID> keyResolver,
-      @Nullable EventSerializer<AID, E> eventSerializer,
-      @Nullable SnapshotSerializer<AID, A> snapshotSerializer) {
+      @Nonnull KeyResolver<AID> keyResolver,
+      @Nonnull EventSerializer<AID, E> eventSerializer,
+      @Nonnull SnapshotSerializer<AID, A> snapshotSerializer) {
     this.dynamoDbAsyncClient = dynamoDbAsyncClient;
     this.journalTableName = journalTableName;
     this.snapshotTableName = snapshotTableName;
     this.journalAidIndexName = journalAidIndexName;
     this.snapshotAidIndexName = snapshotAidIndexName;
     this.shardCount = shardCount;
-    this.keepSnapshotCount = keepSnapshotCount;
-    this.deleteTtl = deleteTtl;
+    this.keepSnapshotCount = Option.of(keepSnapshotCount);
+    this.deleteTtl = Option.of(deleteTtl);
     this.keyResolver = keyResolver;
     this.eventSerializer = eventSerializer;
     this.snapshotSerializer = snapshotSerializer;
@@ -132,7 +135,7 @@ public final class EventStoreAsyncForDynamoDB<
         snapshotAidIndexName,
         shardCount,
         keepSnapshotCount,
-        deleteTtl,
+        deleteTtl.getOrNull(),
         keyResolver,
         eventSerializer,
         snapshotSerializer);
@@ -148,7 +151,7 @@ public final class EventStoreAsyncForDynamoDB<
         journalAidIndexName,
         snapshotAidIndexName,
         shardCount,
-        keepSnapshotCount,
+        keepSnapshotCount.getOrNull(),
         deleteTtl,
         keyResolver,
         eventSerializer,
@@ -166,8 +169,8 @@ public final class EventStoreAsyncForDynamoDB<
         journalAidIndexName,
         snapshotAidIndexName,
         shardCount,
-        keepSnapshotCount,
-        deleteTtl,
+        keepSnapshotCount.getOrNull(),
+        deleteTtl.getOrNull(),
         keyResolver,
         eventSerializer,
         snapshotSerializer);
@@ -184,8 +187,8 @@ public final class EventStoreAsyncForDynamoDB<
         journalAidIndexName,
         snapshotAidIndexName,
         shardCount,
-        keepSnapshotCount,
-        deleteTtl,
+        keepSnapshotCount.getOrNull(),
+        deleteTtl.getOrNull(),
         keyResolver,
         eventSerializer,
         snapshotSerializer);
@@ -202,8 +205,8 @@ public final class EventStoreAsyncForDynamoDB<
         journalAidIndexName,
         snapshotAidIndexName,
         shardCount,
-        keepSnapshotCount,
-        deleteTtl,
+        keepSnapshotCount.getOrNull(),
+        deleteTtl.getOrNull(),
         keyResolver,
         eventSerializer,
         snapshotSerializer);
@@ -250,7 +253,19 @@ public final class EventStoreAsyncForDynamoDB<
     if (event.isCreated()) {
       throw new IllegalArgumentException("event is created");
     }
-    var result = updateEventAndSnapshotOpt(event, version, null).thenRun(() -> {});
+    var result =
+        updateEventAndSnapshotOpt(event, version, null)
+            .thenCompose(
+                ignored -> {
+                  if (keepSnapshotCount.isDefined()) {
+                    if (deleteTtl.isDefined()) {
+                      return updateTtlOfExcessSnapshots(event.getAggregateId());
+                    } else {
+                      return deleteExcessSnapshots(event.getAggregateId());
+                    }
+                  }
+                  return CompletableFuture.completedFuture(null);
+                });
     LOGGER.debug("persistEvent({}, {}): finished", event, version);
     return result;
   }
@@ -264,7 +279,18 @@ public final class EventStoreAsyncForDynamoDB<
       result = createEventAndSnapshot(event, aggregate).thenRun(() -> {});
     } else {
       result =
-          updateEventAndSnapshotOpt(event, aggregate.getVersion(), aggregate).thenRun(() -> {});
+          updateEventAndSnapshotOpt(event, aggregate.getVersion(), aggregate)
+              .thenCompose(
+                  ignored -> {
+                    if (keepSnapshotCount.isDefined()) {
+                      if (deleteTtl.isDefined()) {
+                        return updateTtlOfExcessSnapshots(event.getAggregateId());
+                      } else {
+                        return deleteExcessSnapshots(event.getAggregateId());
+                      }
+                    }
+                    return CompletableFuture.completedFuture(null);
+                  });
     }
     LOGGER.debug("persistEventAndSnapshot({}, {}): finished", event, aggregate);
     return result;
@@ -297,7 +323,8 @@ public final class EventStoreAsyncForDynamoDB<
     return response.thenApply(QueryResponse::count);
   }
 
-  private CompletableFuture<List<Tuple2<String, String>>> getLastSnapshotKeys(AID id, int limit) {
+  private CompletableFuture<io.vavr.collection.List<Tuple2<String, String>>> getLastSnapshotKeys(
+      AID id, int limit) {
     var request = eventStoreSupport.getLastSnapshotKeysQueryRequest(id, limit);
     return dynamoDbAsyncClient
         .query(request)
@@ -310,7 +337,83 @@ public final class EventStoreAsyncForDynamoDB<
                 var skey = item.get("skey").s();
                 result.add(new Tuple2<>(pkey, skey));
               }
-              return result;
+              return io.vavr.collection.List.ofAll(result);
             });
+  }
+
+  private CompletableFuture<Void> deleteExcessSnapshots(AID id) {
+    if (keepSnapshotCount.isDefined()) {
+      return getSnapshotCount(id)
+          .thenCompose(
+              count -> {
+                var snapshotCount = count - 1;
+                var excessCount = snapshotCount - keepSnapshotCount.get();
+                if (excessCount > 0) {
+                  return getLastSnapshotKeys(id, (int) excessCount)
+                      .thenCompose(
+                          keys -> {
+                            if (!keys.isEmpty()) {
+                              var requestItems =
+                                  keys.map(
+                                          key ->
+                                              WriteRequest.builder()
+                                                  .deleteRequest(
+                                                      DeleteRequest.builder()
+                                                          .key(
+                                                              Map.of(
+                                                                  "pkey",
+                                                                  AttributeValue.builder()
+                                                                      .s(key._1)
+                                                                      .build(),
+                                                                  "skey",
+                                                                  AttributeValue.builder()
+                                                                      .s(key._2)
+                                                                      .build()))
+                                                          .build())
+                                                  .build())
+                                      .toJavaList();
+                              return dynamoDbAsyncClient
+                                  .batchWriteItem(
+                                      BatchWriteItemRequest.builder()
+                                          .requestItems(Map.of(snapshotTableName, requestItems))
+                                          .build())
+                                  .thenRun(() -> {});
+                            }
+                            return CompletableFuture.completedFuture(null);
+                          });
+                }
+                return CompletableFuture.completedFuture(null);
+              });
+    }
+    return CompletableFuture.completedFuture(null);
+  }
+
+  private CompletableFuture<Void> updateTtlOfExcessSnapshots(AID id) {
+    if (keepSnapshotCount.isDefined() && deleteTtl.isDefined()) {
+      return getSnapshotCount(id)
+          .thenCompose(
+              count -> {
+                var snapshotCount = count - 1;
+                var excessCount = snapshotCount - keepSnapshotCount.get();
+                if (excessCount > 0) {
+                  var keysFuture = getLastSnapshotKeys(id, (int) excessCount);
+                  var ttl = Instant.now().plus(deleteTtl.get());
+                  return keysFuture.thenCompose(
+                      keys ->
+                          keys.foldLeft(
+                              CompletableFuture.completedFuture(null),
+                              (acc, key) ->
+                                  acc.thenCompose(
+                                      ignored ->
+                                          dynamoDbAsyncClient
+                                              .updateItem(
+                                                  eventStoreSupport.updateTtlOfExcessSnapshots(
+                                                      key._1, key._2, ttl.getEpochSecond()))
+                                              .thenRun(() -> {}))));
+                }
+                return CompletableFuture.completedFuture(null);
+              });
+    }
+    return CompletableFuture.completedFuture(null);
   }
 }
