@@ -55,7 +55,7 @@ public final class UserAccountRepositoryAsync {
 The following is an example of the repository usage.
 
 ```java
-var eventStore = EventStoreAsyncForDynamoDB.create<UserAccountId, UserAccount, UserAccountEvent>(
+var eventStore = EventStoreAsync.ofDynamoDB<UserAccountId, UserAccount, UserAccountEvent>(
     client,
     JOURNAL_TABLE_NAME,
     SNAPSHOT_TABLE_NAME,
