@@ -8,7 +8,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -323,25 +322,7 @@ public final class EventStoreForDynamoDB<
       if (excessCount > 0) {
         var keys = getLastSnapshotKeys(id, (int) excessCount);
         if (!keys.isEmpty()) {
-          var requestItems =
-              keys.map(
-                      key ->
-                          WriteRequest.builder()
-                              .deleteRequest(
-                                  DeleteRequest.builder()
-                                      .key(
-                                          Map.of(
-                                              "pkey",
-                                              AttributeValue.builder().s(key._1).build(),
-                                              "skey",
-                                              AttributeValue.builder().s(key._2).build()))
-                                      .build())
-                              .build())
-                  .toJavaList();
-          dynamoDbClient.batchWriteItem(
-              BatchWriteItemRequest.builder()
-                  .requestItems(Map.of(snapshotTableName, requestItems))
-                  .build());
+          dynamoDbClient.batchWriteItem(eventStoreSupport.batchDeleteSnapshotRequest(keys));
         }
       }
     }

@@ -8,7 +8,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import javax.annotation.Nonnull;
@@ -353,30 +352,9 @@ public final class EventStoreAsyncForDynamoDB<
                       .thenCompose(
                           keys -> {
                             if (!keys.isEmpty()) {
-                              var requestItems =
-                                  keys.map(
-                                          key ->
-                                              WriteRequest.builder()
-                                                  .deleteRequest(
-                                                      DeleteRequest.builder()
-                                                          .key(
-                                                              Map.of(
-                                                                  "pkey",
-                                                                  AttributeValue.builder()
-                                                                      .s(key._1)
-                                                                      .build(),
-                                                                  "skey",
-                                                                  AttributeValue.builder()
-                                                                      .s(key._2)
-                                                                      .build()))
-                                                          .build())
-                                                  .build())
-                                      .toJavaList();
                               return dynamoDbAsyncClient
                                   .batchWriteItem(
-                                      BatchWriteItemRequest.builder()
-                                          .requestItems(Map.of(snapshotTableName, requestItems))
-                                          .build())
+                                      eventStoreSupport.batchDeleteSnapshotRequest(keys))
                                   .thenRun(() -> {});
                             }
                             return CompletableFuture.completedFuture(null);

@@ -1,6 +1,7 @@
 package com.github.j5ik2o.event.store.adapter.java.internal;
 
 import com.github.j5ik2o.event.store.adapter.java.*;
+import io.vavr.Tuple2;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -450,6 +451,28 @@ final class EventStoreSupport<
         .expressionAttributeNames(Map.of("#ttl", "ttl"))
         .expressionAttributeValues(
             Map.of(":ttl", AttributeValue.builder().n(String.valueOf(seconds)).build()))
+        .build();
+  }
+
+  BatchWriteItemRequest batchDeleteSnapshotRequest(
+      io.vavr.collection.List<Tuple2<String, String>> keys) {
+    var requestItems = keys.map(EventStoreSupport::deleteSnapshotRequest).toJavaList();
+    return BatchWriteItemRequest.builder()
+        .requestItems(Map.of(snapshotTableName, requestItems))
+        .build();
+  }
+
+  private static WriteRequest deleteSnapshotRequest(Tuple2<String, String> key) {
+    return WriteRequest.builder()
+        .deleteRequest(
+            DeleteRequest.builder()
+                .key(
+                    Map.of(
+                        "pkey",
+                        AttributeValue.builder().s(key._1).build(),
+                        "skey",
+                        AttributeValue.builder().s(key._2).build()))
+                .build())
         .build();
   }
 }
