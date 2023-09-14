@@ -1,3 +1,6 @@
+import org.gradle.api.tasks.testing.logging.TestExceptionFormat
+import org.gradle.api.tasks.testing.logging.TestLogEvent
+
 plugins {
     `java-library`
     `maven-publish`
@@ -14,9 +17,14 @@ repositories {
     maven { url = uri("https://oss.sonatype.org/content/repositories/snapshots") }
 }
 
+
 dependencies {
-    testImplementation(platform("org.junit:junit-bom:5.10.0"))
-    testImplementation("org.junit.jupiter:junit-jupiter")
+//    testImplementation(platform("org.junit:junit-bom:5.10.0"))
+//    testImplementation("org.junit.jupiter:junit-jupiter")
+
+    testImplementation("org.junit.jupiter:junit-jupiter-api:5.8.1")
+    testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.8.1")
+
     testImplementation("ch.qos.logback:logback-classic:1.4.11")
     testImplementation("org.testcontainers:testcontainers:1.19.0")
     testImplementation("org.testcontainers:junit-jupiter:1.19.0")
@@ -57,6 +65,12 @@ tasks {
 
     withType<Test> {
         useJUnitPlatform()
+        outputs.upToDateWhen { false }
+        testLogging {
+            showStandardStreams = true
+            events = setOf(TestLogEvent.STARTED, TestLogEvent.SKIPPED, TestLogEvent.PASSED, TestLogEvent.FAILED)
+            exceptionFormat = TestExceptionFormat.FULL
+        }
     }
 
     create<Copy>("javadocToDocsFolder") {
@@ -64,9 +78,9 @@ tasks {
         into("docs/javadoc")
     }
 
-    assemble {
-        dependsOn("javadocToDocsFolder")
-    }
+//    assemble {
+//        dependsOn("javadocToDocsFolder")
+//    }
 
     create<Jar>("sourcesJar") {
         from(sourceSets.main.get().allJava)
@@ -88,9 +102,10 @@ tasks {
 
     withType<JavaCompile> {
         options.compilerArgs.add("-Xlint:deprecation")
-        dependsOn(spotlessApply)
     }
 }
+
+
 
 
 publishing {

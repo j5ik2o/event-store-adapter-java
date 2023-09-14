@@ -32,7 +32,7 @@ public class EventStoreAsyncForDynamoDBTest {
       new LocalStackContainer(localstackImage).withServices(DYNAMODB);
 
   @Test
-  public void test_persist_and_get() {
+  public void persistAndGet() {
     try (var client = DynamoDBAsyncUtils.createDynamoDbAsyncClient(localstack)) {
       DynamoDBAsyncUtils.createJournalTable(client, JOURNAL_TABLE_NAME, JOURNAL_AID_INDEX_NAME)
           .join();
@@ -66,7 +66,7 @@ public class EventStoreAsyncForDynamoDBTest {
   }
 
   @Test
-  public void test_repository_store_and_find_by_id() {
+  public void repositoryStoreAndFindById() {
     try (var client = DynamoDBAsyncUtils.createDynamoDbAsyncClient(localstack)) {
       DynamoDBAsyncUtils.createJournalTable(client, JOURNAL_TABLE_NAME, JOURNAL_AID_INDEX_NAME)
           .join();
@@ -92,7 +92,7 @@ public class EventStoreAsyncForDynamoDBTest {
           userAccountRepository
               .store(aggregateAndEvent1.getEvent(), aggregate1)
               .thenCompose(
-                  r -> {
+                  ignored -> {
                     var aggregateAndEvent2 = aggregate1.changeName("test-2");
                     return userAccountRepository.store(
                         aggregateAndEvent2.getEvent(),

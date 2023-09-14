@@ -31,7 +31,7 @@ public class EventStoreForDynamoDBTest {
       new LocalStackContainer(localstackImage).withServices(DYNAMODB);
 
   @Test
-  public void test_persist_and_get() {
+  public void persistAndGet() {
     try (var client = DynamoDBUtils.createDynamoDbClient(localstack)) {
       DynamoDBUtils.createJournalTable(client, JOURNAL_TABLE_NAME, JOURNAL_AID_INDEX_NAME);
       DynamoDBUtils.createSnapshotTable(client, SNAPSHOT_TABLE_NAME, SNAPSHOT_AID_INDEX_NAME);
@@ -62,7 +62,7 @@ public class EventStoreForDynamoDBTest {
   }
 
   @Test
-  public void test_repository_store_and_find_by_id() {
+  public void repositoryStoreAndFindById() {
     try (var client = DynamoDBUtils.createDynamoDbClient(localstack)) {
       DynamoDBUtils.createJournalTable(client, JOURNAL_TABLE_NAME, JOURNAL_AID_INDEX_NAME);
       DynamoDBUtils.createSnapshotTable(client, SNAPSHOT_TABLE_NAME, SNAPSHOT_AID_INDEX_NAME);
