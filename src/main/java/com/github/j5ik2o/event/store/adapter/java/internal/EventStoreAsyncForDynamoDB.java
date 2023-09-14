@@ -78,8 +78,8 @@ public final class EventStoreAsyncForDynamoDB<
             journalAidIndexName,
             snapshotAidIndexName,
             shardCount,
-            keepSnapshotCount,
-            deleteTtl,
+            this.keepSnapshotCount,
+            this.deleteTtl,
             keyResolver,
             eventSerializer,
             snapshotSerializer);
@@ -253,7 +253,7 @@ public final class EventStoreAsyncForDynamoDB<
       throw new IllegalArgumentException("event is created");
     }
     var result =
-        updateEventAndSnapshotOpt(event, version, null)
+        updateEventAndSnapshotOpt(event, version, Option.none())
             .thenCompose(
                 ignored -> {
                   if (keepSnapshotCount.isDefined()) {
@@ -278,7 +278,7 @@ public final class EventStoreAsyncForDynamoDB<
       result = createEventAndSnapshot(event, aggregate).thenRun(() -> {});
     } else {
       result =
-          updateEventAndSnapshotOpt(event, aggregate.getVersion(), aggregate)
+          updateEventAndSnapshotOpt(event, aggregate.getVersion(), Option.some(aggregate))
               .thenCompose(
                   ignored -> {
                     if (keepSnapshotCount.isDefined()) {
@@ -306,7 +306,7 @@ public final class EventStoreAsyncForDynamoDB<
   }
 
   private CompletableFuture<TransactWriteItemsResponse> updateEventAndSnapshotOpt(
-      @Nonnull E event, long version, A aggregate) {
+      @Nonnull E event, long version, Option<A> aggregate) {
     LOGGER.debug("updateEventAndSnapshotOpt({}, {}, {}): start", event, version, aggregate);
     var request =
         eventStoreSupport.updateEventAndSnapshotOptTransactWriteItemsRequest(

@@ -51,11 +51,11 @@ public final class EventStoreForDynamoDB<
       @Nonnull String journalAidIndexName,
       @Nonnull String snapshotAidIndexName,
       long shardCount,
-      @Nullable Long keepSnapshotCount,
-      @Nullable Duration deleteTtl,
-      @Nullable KeyResolver<AID> keyResolver,
-      @Nullable EventSerializer<AID, E> eventSerializer,
-      @Nullable SnapshotSerializer<AID, A> snapshotSerializer) {
+      @Nonnull Long keepSnapshotCount,
+      @Nonnull Duration deleteTtl,
+      @Nonnull KeyResolver<AID> keyResolver,
+      @Nonnull EventSerializer<AID, E> eventSerializer,
+      @Nonnull SnapshotSerializer<AID, A> snapshotSerializer) {
     this.dynamoDbClient = dynamoDbClient;
     this.journalTableName = journalTableName;
     this.snapshotTableName = snapshotTableName;
@@ -75,8 +75,8 @@ public final class EventStoreForDynamoDB<
             journalAidIndexName,
             snapshotAidIndexName,
             shardCount,
-            keepSnapshotCount,
-            deleteTtl,
+            this.keepSnapshotCount,
+            this.deleteTtl,
             keyResolver,
             eventSerializer,
             snapshotSerializer);
@@ -244,7 +244,7 @@ public final class EventStoreForDynamoDB<
     if (event.isCreated()) {
       throw new IllegalArgumentException("event is created");
     }
-    updateEventAndSnapshotOpt(event, version, null);
+    updateEventAndSnapshotOpt(event, version, Option.none());
     if (keepSnapshotCount.isDefined()) {
       if (deleteTtl.isDefined()) {
         updateTtlOfExcessSnapshots(event.getAggregateId());
@@ -262,7 +262,7 @@ public final class EventStoreForDynamoDB<
     if (event.isCreated()) {
       result = createEventAndSnapshot(event, aggregate);
     } else {
-      result = updateEventAndSnapshotOpt(event, aggregate.getVersion(), aggregate);
+      result = updateEventAndSnapshotOpt(event, aggregate.getVersion(), Option.some(aggregate));
       if (keepSnapshotCount.isDefined()) {
         if (deleteTtl.isDefined()) {
           updateTtlOfExcessSnapshots(event.getAggregateId());
@@ -286,7 +286,7 @@ public final class EventStoreForDynamoDB<
   }
 
   private TransactWriteItemsResponse updateEventAndSnapshotOpt(
-      @Nonnull E event, long version, A aggregate) {
+      @Nonnull E event, long version, Option<A> aggregate) {
     LOGGER.debug("updateEventAndSnapshotOpt({}, {}, {}): start", event, version, aggregate);
     var request =
         eventStoreSupport.updateEventAndSnapshotOptTransactWriteItemsRequest(

@@ -8,6 +8,8 @@ import java.util.Map;
 import java.util.Optional;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
+
+import io.vavr.control.Option;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.core.SdkBytes;
@@ -22,9 +24,9 @@ final class EventStoreSupport<
   @Nonnull private final String snapshotAidIndexName;
   private final long shardCount;
 
-  private final Long keepSnapshotCount;
+  private final Option<Long> keepSnapshotCount;
 
-  private final Duration deleteTtl;
+  private final Option<Duration> deleteTtl;
 
   @Nonnull private final KeyResolver<AID> keyResolver;
 
@@ -38,11 +40,11 @@ final class EventStoreSupport<
       @Nonnull String journalAidIndexName,
       @Nonnull String snapshotAidIndexName,
       long shardCount,
-      @Nullable Long keepSnapshotCount,
-      @Nullable Duration deleteTtl,
-      @Nullable KeyResolver<AID> keyResolver,
-      @Nullable EventSerializer<AID, E> eventSerializer,
-      @Nullable SnapshotSerializer<AID, A> snapshotSerializer) {
+      @Nonnull Option<Long> keepSnapshotCount,
+      @Nonnull Option<Duration> deleteTtl,
+      @Nonnull KeyResolver<AID> keyResolver,
+      @Nonnull EventSerializer<AID, E> eventSerializer,
+      @Nonnull SnapshotSerializer<AID, A> snapshotSerializer) {
     this.journalTableName = journalTableName;
     this.snapshotTableName = snapshotTableName;
     this.journalAidIndexName = journalAidIndexName;
@@ -63,7 +65,7 @@ final class EventStoreSupport<
         journalAidIndexName,
         snapshotAidIndexName,
         shardCount,
-        keepSnapshotCount,
+        Option.some(keepSnapshotCount),
         deleteTtl,
         keyResolver,
         eventSerializer,
@@ -79,7 +81,7 @@ final class EventStoreSupport<
         snapshotAidIndexName,
         shardCount,
         keepSnapshotCount,
-        deleteTtl,
+        Option.some(deleteTtl),
         keyResolver,
         eventSerializer,
         snapshotSerializer);
@@ -213,7 +215,7 @@ final class EventStoreSupport<
     List<TransactWriteItem> transactItems = new java.util.ArrayList<>();
     transactItems.add(putSnapshot(event, 0, aggregate));
     transactItems.add(putJournal(event));
-    if (keepSnapshotCount != null) {
+    if (keepSnapshotCount.isDefined()) {
       transactItems.add(putSnapshot(event, aggregate.getSequenceNumber(), aggregate));
     }
     return TransactWriteItemsRequest.builder().transactItems(transactItems).build();
@@ -221,12 +223,12 @@ final class EventStoreSupport<
 
   @Nonnull
   TransactWriteItemsRequest updateEventAndSnapshotOptTransactWriteItemsRequest(
-      @Nonnull E event, long version, A aggregate) {
+      @Nonnull E event, long version, Option<A> aggregate) {
     List<TransactWriteItem> transactItems = new java.util.ArrayList<>();
     transactItems.add(updateSnapshot(event, 0, version, aggregate));
     transactItems.add(putJournal(event));
-    if (keepSnapshotCount != null && aggregate != null) {
-      transactItems.add(putSnapshot(event, aggregate.getSequenceNumber(), aggregate));
+    if (keepSnapshotCount.isDefined() && aggregate.isDefined()) {
+      transactItems.add(putSnapshot(event, aggregate.get().getSequenceNumber(), aggregate.get()));
     }
     return TransactWriteItemsRequest.builder().transactItems(transactItems).build();
   }
@@ -276,7 +278,7 @@ final class EventStoreSupport<
 
   @Nonnull
   TransactWriteItem updateSnapshot(
-      @Nonnull E event, long sequenceNumber, long version, A aggregate) {
+      @Nonnull E event, long sequenceNumber, long version, Option<A> aggregate) {
     LOGGER.debug("updateSnapshot({}, {}, {}): start", event, sequenceNumber, aggregate);
     var pkey = resolvePartitionKey(event.getAggregateId(), shardCount);
     var skey = resolveSortKey(event.getAggregateId(), sequenceNumber);
@@ -312,8 +314,8 @@ final class EventStoreSupport<
             .expressionAttributeNames(names.toJavaMap())
             .expressionAttributeValues(values.toJavaMap())
             .conditionExpression("#version = :before_version");
-    if (aggregate != null) {
-      var payload = snapshotSerializer.serialize(aggregate);
+    if (aggregate.isDefined()) {
+      var payload = snapshotSerializer.serialize(aggregate.get());
       LOGGER.debug("payload = {}", payload);
       update =
           update
@@ -418,7 +420,7 @@ final class EventStoreSupport<
             .expressionAttributeValues(values.toJavaMap())
             .scanIndexForward(false)
             .limit(limit);
-    if (deleteTtl != null) {
+    if (deleteTtl.isDefined()) {
       queryBuilder =
           queryBuilder
               .filterExpression("ttl < :ttl")
@@ -430,7 +432,7 @@ final class EventStoreSupport<
                           io.vavr.collection.HashMap.of(
                               ":ttl",
                               AttributeValue.builder()
-                                  .n(String.valueOf(deleteTtl.toSeconds()))
+                                  .n(String.valueOf(deleteTtl.get().toSeconds()))
                                   .build()))
                       .toJavaMap());
     }
