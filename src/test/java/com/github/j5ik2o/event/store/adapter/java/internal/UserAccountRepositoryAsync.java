@@ -36,16 +36,8 @@ public final class UserAccountRepositoryAsync {
               } else {
                 return eventStore
                     .getEventsByIdSinceSequenceNumber(
-                        UserAccountEvent.class,
-                        id,
-                        result.get().getAggregate().getSequenceNumber() + 1)
-                    .thenApply(
-                        events ->
-                            Optional.of(
-                                UserAccount.replay(
-                                    events,
-                                    result.get().getAggregate(),
-                                    result.get().getVersion())));
+                        UserAccountEvent.class, id, result.get().getSequenceNumber() + 1)
+                    .thenApply(events -> Optional.of(UserAccount.replay(events, result.get())));
               }
             });
   }

@@ -6,7 +6,7 @@ import javax.annotation.Nonnull;
 public interface EventStoreOptions<
     This extends EventStoreOptions<This, AID, A, E>,
     AID extends AggregateId,
-    A extends Aggregate<AID>,
+    A extends Aggregate<A, AID>,
     E extends Event<AID>> {
   @Nonnull
   This withKeepSnapshotCount(long keepSnapshotCount);

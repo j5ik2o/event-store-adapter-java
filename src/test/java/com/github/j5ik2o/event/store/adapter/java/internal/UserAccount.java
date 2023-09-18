@@ -7,7 +7,7 @@ import java.time.Instant;
 import java.util.List;
 import javax.annotation.Nonnull;
 
-public final class UserAccount implements Aggregate<UserAccountId> {
+public final class UserAccount implements Aggregate<UserAccount, UserAccountId> {
   @Nonnull private final UserAccountId id;
   private long sequenceNumber;
   @Nonnull private final String name;
@@ -49,11 +49,8 @@ public final class UserAccount implements Aggregate<UserAccountId> {
 
   @Nonnull
   public static UserAccount replay(
-      @Nonnull List<UserAccountEvent> events, @Nonnull UserAccount snapshot, long version) {
-    UserAccount userAccount =
-        events.stream().reduce(snapshot, UserAccount::applyEvent, (u1, u2) -> u2);
-    userAccount.version = version;
-    return userAccount;
+      @Nonnull List<UserAccountEvent> events, @Nonnull UserAccount snapshot) {
+    return events.stream().reduce(snapshot, UserAccount::applyEvent, (u1, u2) -> u2);
   }
 
   @Nonnull
@@ -115,5 +112,10 @@ public final class UserAccount implements Aggregate<UserAccountId> {
   @Nonnull
   public String getName() {
     return name;
+  }
+
+  @Override
+  public UserAccount withVersion(long version) {
+    return new UserAccount(id, sequenceNumber, name, version);
   }
 }

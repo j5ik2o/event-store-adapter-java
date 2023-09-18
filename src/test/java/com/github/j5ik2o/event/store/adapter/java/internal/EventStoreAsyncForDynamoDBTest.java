@@ -57,7 +57,7 @@ public class EventStoreAsyncForDynamoDBTest {
 
       var result = eventStore.getLatestSnapshotById(UserAccount.class, id).join();
       if (result.isPresent()) {
-        assertEquals(result.get().getAggregate().getId(), aggregateAndEvent.getAggregate().getId());
+        assertEquals(result.get().getId(), aggregateAndEvent.getAggregate().getId());
         LOGGER.info("result = {}", result.get());
       } else {
         fail("result is empty");

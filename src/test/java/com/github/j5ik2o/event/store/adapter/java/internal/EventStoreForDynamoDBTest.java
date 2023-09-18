@@ -53,7 +53,7 @@ public class EventStoreForDynamoDBTest {
 
       var result = eventStore.getLatestSnapshotById(UserAccount.class, id);
       if (result.isPresent()) {
-        assertEquals(result.get().getAggregate().getId(), aggregateAndEvent.getAggregate().getId());
+        assertEquals(result.get().getId(), aggregateAndEvent.getAggregate().getId());
         LOGGER.info("result = {}", result.get());
       } else {
         fail("result is empty");
@@ -93,6 +93,8 @@ public class EventStoreForDynamoDBTest {
       if (result.isPresent()) {
         assertEquals(result.get().getId(), aggregateAndEvent2.getAggregate().getId());
         assertEquals(result.get().getName(), "test-2");
+        assertEquals(result.get().getSequenceNumber(), 2L);
+        assertEquals(result.get().getVersion(), 2L);
       } else {
         fail("result is empty");
       }

@@ -8,9 +8,9 @@ import javax.annotation.Nonnull;
 import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
 
 public interface EventStoreAsync<
-        AID extends AggregateId, A extends Aggregate<AID>, E extends Event<AID>>
+        AID extends AggregateId, A extends Aggregate<A, AID>, E extends Event<AID>>
     extends EventStoreOptions<EventStoreAsync<AID, A, E>, AID, A, E> {
-  static <AID extends AggregateId, A extends Aggregate<AID>, E extends Event<AID>>
+  static <AID extends AggregateId, A extends Aggregate<A, AID>, E extends Event<AID>>
       EventStoreAsync<AID, A, E> ofDynamoDB(
           @Nonnull DynamoDbAsyncClient dynamoDbAsyncClient,
           @Nonnull String journalTableName,
@@ -28,7 +28,7 @@ public interface EventStoreAsync<
   }
 
   @Nonnull
-  CompletableFuture<Optional<AggregateAndVersion<AID, A>>> getLatestSnapshotById(
+  CompletableFuture<Optional<A>> getLatestSnapshotById(
       @Nonnull Class<A> clazz, @Nonnull AID aggregateId);
 
   @Nonnull
