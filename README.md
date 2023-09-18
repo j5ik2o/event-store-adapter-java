@@ -42,9 +42,8 @@ public final class UserAccountRepositoryAsync {
           return CompletableFuture.completedFuture(Optional.empty());
         } else {
           return eventStore.getEventsByIdSinceSequenceNumber(UserAccountEvent.class,
-            id, result.get().getAggregate().getSequenceNumber() + 1)
-            .thenApply(events -> Optional.of(UserAccount.replay(
-              events, result.get().getAggregate(), result.get().getVersion())));
+            id, result.get().getSequenceNumber() + 1)
+            .thenApply(events -> Optional.of(UserAccount.replay(events, result.get())));
         }
       });
   }
