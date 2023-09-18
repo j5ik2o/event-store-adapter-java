@@ -10,14 +10,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.*;
 
 public final class EventStoreForDynamoDB<
-        AID extends AggregateId, A extends Aggregate<AID>, E extends Event<AID>>
+        AID extends AggregateId, A extends Aggregate<A, AID>, E extends Event<AID>>
     implements EventStore<AID, A, E> {
   private static final Logger LOGGER = LoggerFactory.getLogger(EventStoreForDynamoDB.class);
   private static final ObjectMapper objectMapper = new ObjectMapper();
@@ -82,7 +81,7 @@ public final class EventStoreForDynamoDB<
             snapshotSerializer);
   }
 
-  public static <AID extends AggregateId, A extends Aggregate<AID>, E extends Event<AID>>
+  public static <AID extends AggregateId, A extends Aggregate<A, AID>, E extends Event<AID>>
       EventStoreForDynamoDB<AID, A, E> create(
           @Nonnull DynamoDbClient dynamoDbClient,
           @Nonnull String journalTableName,
@@ -209,8 +208,7 @@ public final class EventStoreForDynamoDB<
 
   @Nonnull
   @Override
-  public Optional<AggregateAndVersion<AID, A>> getLatestSnapshotById(
-      @Nonnull Class<A> clazz, @Nonnull AID aggregateId) {
+  public Optional<A> getLatestSnapshotById(@Nonnull Class<A> clazz, @Nonnull AID aggregateId) {
     LOGGER.debug("getLatestSnapshotById({}, {}): start", clazz, aggregateId);
     var request = eventStoreSupport.getLatestSnapshotByIdQueryRequest(aggregateId);
     var response = dynamoDbClient.query(request);

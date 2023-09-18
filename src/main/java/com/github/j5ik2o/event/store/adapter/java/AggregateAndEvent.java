@@ -3,7 +3,7 @@ package com.github.j5ik2o.event.store.adapter.java;
 import javax.annotation.Nonnull;
 
 public final class AggregateAndEvent<
-    AID extends AggregateId, A extends Aggregate<AID>, E extends Event<AID>> {
+    AID extends AggregateId, A extends Aggregate<A, AID>, E extends Event<AID>> {
   @Nonnull private final A aggregate;
   @Nonnull private final E event;
 

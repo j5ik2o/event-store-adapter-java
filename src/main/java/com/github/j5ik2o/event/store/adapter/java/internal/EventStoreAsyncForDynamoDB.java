@@ -18,7 +18,7 @@ import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
 import software.amazon.awssdk.services.dynamodb.model.*;
 
 public final class EventStoreAsyncForDynamoDB<
-        AID extends AggregateId, A extends Aggregate<AID>, E extends Event<AID>>
+        AID extends AggregateId, A extends Aggregate<A, AID>, E extends Event<AID>>
     implements EventStoreAsync<AID, A, E> {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(EventStoreAsyncForDynamoDB.class);
@@ -85,7 +85,7 @@ public final class EventStoreAsyncForDynamoDB<
             snapshotSerializer);
   }
 
-  public static <AID extends AggregateId, A extends Aggregate<AID>, E extends Event<AID>>
+  public static <AID extends AggregateId, A extends Aggregate<A, AID>, E extends Event<AID>>
       EventStoreAsyncForDynamoDB<AID, A, E> create(
           @Nonnull DynamoDbAsyncClient dynamoDbAsyncClient,
           @Nonnull String journalTableName,
@@ -213,7 +213,7 @@ public final class EventStoreAsyncForDynamoDB<
 
   @Nonnull
   @Override
-  public CompletableFuture<Optional<AggregateAndVersion<AID, A>>> getLatestSnapshotById(
+  public CompletableFuture<Optional<A>> getLatestSnapshotById(
       @Nonnull Class<A> clazz, @Nonnull AID aggregateId) {
     LOGGER.debug("getLatestSnapshotById({}, {}): start", clazz, aggregateId);
     var request = eventStoreSupport.getLatestSnapshotByIdQueryRequest(aggregateId);

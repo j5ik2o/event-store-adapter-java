@@ -9,7 +9,7 @@ import com.github.j5ik2o.event.store.adapter.java.SnapshotSerializer;
 import java.io.IOException;
 import javax.annotation.Nonnull;
 
-public final class JsonSnapshotSerializer<AID extends AggregateId, A extends Aggregate<AID>>
+public final class JsonSnapshotSerializer<AID extends AggregateId, A extends Aggregate<A, AID>>
     implements SnapshotSerializer<AID, A> {
   @Nonnull private final ObjectMapper objectMapper;
 

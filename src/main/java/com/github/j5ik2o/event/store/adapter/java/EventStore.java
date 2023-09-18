@@ -6,9 +6,10 @@ import java.util.Optional;
 import javax.annotation.Nonnull;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 
-public interface EventStore<AID extends AggregateId, A extends Aggregate<AID>, E extends Event<AID>>
+public interface EventStore<
+        AID extends AggregateId, A extends Aggregate<A, AID>, E extends Event<AID>>
     extends EventStoreOptions<EventStore<AID, A, E>, AID, A, E> {
-  static <AID extends AggregateId, A extends Aggregate<AID>, E extends Event<AID>>
+  static <AID extends AggregateId, A extends Aggregate<A, AID>, E extends Event<AID>>
       EventStore<AID, A, E> ofDynamoDB(
           @Nonnull DynamoDbClient dynamoDbClient,
           @Nonnull String journalTableName,
@@ -26,8 +27,7 @@ public interface EventStore<AID extends AggregateId, A extends Aggregate<AID>, E
   }
 
   @Nonnull
-  Optional<AggregateAndVersion<AID, A>> getLatestSnapshotById(
-      @Nonnull Class<A> clazz, @Nonnull AID aggregateId);
+  Optional<A> getLatestSnapshotById(@Nonnull Class<A> clazz, @Nonnull AID aggregateId);
 
   @Nonnull
   List<E> getEventsByIdSinceSequenceNumber(

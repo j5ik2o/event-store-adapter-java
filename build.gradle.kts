@@ -11,6 +11,7 @@ plugins {
 
 group = "com.github.j5ik2o"
 version = File("./version").readText().trim()
+extra["isReleaseVersion"] = !version.toString().endsWith("SNAPSHOT")
 
 repositories {
     mavenCentral()
@@ -19,9 +20,6 @@ repositories {
 
 
 dependencies {
-//    testImplementation(platform("org.junit:junit-bom:5.10.0"))
-//    testImplementation("org.junit.jupiter:junit-jupiter")
-
     testImplementation("org.junit.jupiter:junit-jupiter-api:5.10.0")
     testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.10.0")
 
@@ -29,6 +27,7 @@ dependencies {
     testImplementation("org.testcontainers:testcontainers:1.19.0")
     testImplementation("org.testcontainers:junit-jupiter:1.19.0")
     testImplementation("org.testcontainers:localstack:1.19.0")
+    testImplementation("de.huxhorn.sulky:de.huxhorn.sulky.ulid:8.3.0")
 
     implementation("io.vavr:vavr:0.10.4")
     implementation("software.amazon.awssdk:dynamodb:2.20.149")
@@ -36,7 +35,6 @@ dependencies {
     implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.15.2")
     implementation("org.slf4j:slf4j-api:1.7.36")
     implementation("com.google.code.findbugs:jsr305:3.0.2")
-    implementation("de.huxhorn.sulky:de.huxhorn.sulky.ulid:8.3.0")
 }
 
 
@@ -46,7 +44,7 @@ spotless {
     }
 }
 
-extra["isReleaseVersion"] = !version.toString().endsWith("SNAPSHOT")
+
 
 repositories {
     mavenCentral()
@@ -59,7 +57,6 @@ java {
     sourceCompatibility = JavaVersion.VERSION_11
     targetCompatibility = JavaVersion.VERSION_11
 }
-
 
 tasks {
 
@@ -104,9 +101,6 @@ tasks {
         options.compilerArgs.add("-Xlint:deprecation")
     }
 }
-
-
-
 
 publishing {
     publications {

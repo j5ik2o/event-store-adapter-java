@@ -2,21 +2,19 @@ package com.github.j5ik2o.event.store.adapter.java.internal;
 
 import com.github.j5ik2o.event.store.adapter.java.*;
 import io.vavr.Tuple2;
+import io.vavr.control.Option;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
-
-import io.vavr.control.Option;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.dynamodb.model.*;
 
 final class EventStoreSupport<
-    AID extends AggregateId, A extends Aggregate<AID>, E extends Event<AID>> {
+    AID extends AggregateId, A extends Aggregate<A, AID>, E extends Event<AID>> {
   private static final Logger LOGGER = LoggerFactory.getLogger(EventStoreSupport.class);
   @Nonnull private final String journalTableName;
   @Nonnull private final String snapshotTableName;
@@ -156,14 +154,14 @@ final class EventStoreSupport<
     return request;
   }
 
-  Optional<AggregateAndVersion<AID, A>> convertToAggregateAndVersion(
+  Optional<A> convertToAggregateAndVersion(
       @Nonnull QueryResponse response, @Nonnull Class<A> clazz) {
     LOGGER.debug("convertToAggregateAndVersion({}, {}): start", response, clazz);
     var items = response.items();
     LOGGER.debug("items = {}", items);
-    Optional<AggregateAndVersion<AID, A>> applyResult;
+    Optional<A> result;
     if (items.isEmpty()) {
-      applyResult = Optional.empty();
+      result = Optional.empty();
     } else {
       var item = items.get(0);
       var bytes = item.get("payload").b().asByteArray();
@@ -171,10 +169,10 @@ final class EventStoreSupport<
       var version = Long.parseLong(item.get("version").n());
       var sequenceNumber = aggregate.getSequenceNumber();
       LOGGER.debug("sequenceNumber = {}", sequenceNumber);
-      applyResult = Optional.of(new AggregateAndVersion<>(aggregate, version));
+      result = Optional.of(aggregate.withVersion(version));
     }
     LOGGER.debug("convertToAggregateAndVersion({}, {}): finished", response, clazz);
-    return applyResult;
+    return result;
   }
 
   QueryRequest getEventsByIdSinceSequenceNumberQueryRequest(
