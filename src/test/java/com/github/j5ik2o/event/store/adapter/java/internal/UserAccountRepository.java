@@ -1,9 +1,6 @@
 package com.github.j5ik2o.event.store.adapter.java.internal;
 
-import com.github.j5ik2o.event.store.adapter.java.EventStore;
-import com.github.j5ik2o.event.store.adapter.java.EventStoreReadException;
-import com.github.j5ik2o.event.store.adapter.java.EventStoreWriteException;
-import com.github.j5ik2o.event.store.adapter.java.SerializationException;
+import com.github.j5ik2o.event.store.adapter.java.*;
 import java.util.Optional;
 import javax.annotation.Nonnull;
 
@@ -20,6 +17,8 @@ public final class UserAccountRepository {
       eventStore.persistEvent(event, version);
     } catch (EventStoreWriteException | SerializationException e) {
       throw new RepositoryException(e);
+    } catch (TransactionException e) {
+      throw new OptimisticLockException(e);
     }
   }
 
@@ -28,6 +27,8 @@ public final class UserAccountRepository {
       eventStore.persistEventAndSnapshot(event, aggregate);
     } catch (EventStoreWriteException | SerializationException e) {
       throw new RepositoryException(e);
+    } catch (TransactionException e) {
+      throw new OptimisticLockException(e);
     }
   }
 

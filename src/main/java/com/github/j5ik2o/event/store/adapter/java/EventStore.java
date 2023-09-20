@@ -36,8 +36,8 @@ public interface EventStore<
       throws EventStoreReadException, SerializationException;
 
   void persistEvent(@Nonnull E event, long version)
-      throws EventStoreWriteException, SerializationException;
+      throws EventStoreWriteException, SerializationException, TransactionException;
 
   void persistEventAndSnapshot(@Nonnull E event, @Nonnull A aggregate)
-      throws EventStoreWriteException, SerializationException;
+      throws EventStoreWriteException, SerializationException, TransactionException;
 }
