@@ -254,17 +254,7 @@ public final class EventStoreAsyncForDynamoDB<
     }
     var result =
         updateEventAndSnapshotOpt(event, version, Option.none())
-            .thenCompose(
-                ignored -> {
-                  if (keepSnapshotCount.isDefined()) {
-                    if (deleteTtl.isDefined()) {
-                      return updateTtlOfExcessSnapshots(event.getAggregateId());
-                    } else {
-                      return deleteExcessSnapshots(event.getAggregateId());
-                    }
-                  }
-                  return CompletableFuture.completedFuture(null);
-                });
+            .thenCompose(ignored -> tryPurgeExcessSnapshots(event));
     LOGGER.debug("persistEvent({}, {}): finished", event, version);
     return result;
   }
@@ -279,17 +269,7 @@ public final class EventStoreAsyncForDynamoDB<
     } else {
       result =
           updateEventAndSnapshotOpt(event, aggregate.getVersion(), Option.some(aggregate))
-              .thenCompose(
-                  ignored -> {
-                    if (keepSnapshotCount.isDefined()) {
-                      if (deleteTtl.isDefined()) {
-                        return updateTtlOfExcessSnapshots(event.getAggregateId());
-                      } else {
-                        return deleteExcessSnapshots(event.getAggregateId());
-                      }
-                    }
-                    return CompletableFuture.completedFuture(null);
-                  });
+              .thenCompose(ignored -> tryPurgeExcessSnapshots(event));
     }
     LOGGER.debug("persistEventAndSnapshot({}, {}): finished", event, aggregate);
     return result;
@@ -338,6 +318,17 @@ public final class EventStoreAsyncForDynamoDB<
               }
               return io.vavr.collection.List.ofAll(result);
             });
+  }
+
+  private CompletableFuture<Void> tryPurgeExcessSnapshots(E event) {
+    if (keepSnapshotCount.isDefined()) {
+      if (deleteTtl.isDefined()) {
+        return updateTtlOfExcessSnapshots(event.getAggregateId());
+      } else {
+        return deleteExcessSnapshots(event.getAggregateId());
+      }
+    }
+    return CompletableFuture.completedFuture(null);
   }
 
   private CompletableFuture<Void> deleteExcessSnapshots(AID id) {

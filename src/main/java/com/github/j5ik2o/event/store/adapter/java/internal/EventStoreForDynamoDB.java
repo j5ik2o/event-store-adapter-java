@@ -243,13 +243,7 @@ public final class EventStoreForDynamoDB<
       throw new IllegalArgumentException("event is created");
     }
     updateEventAndSnapshotOpt(event, version, Option.none());
-    if (keepSnapshotCount.isDefined()) {
-      if (deleteTtl.isDefined()) {
-        updateTtlOfExcessSnapshots(event.getAggregateId());
-      } else {
-        deleteExcessSnapshots(event.getAggregateId());
-      }
-    }
+    tryPurgeExcessSnapshots(event);
     LOGGER.debug("persistEvent({}, {}): finished", event, version);
   }
 
@@ -261,13 +255,7 @@ public final class EventStoreForDynamoDB<
       result = createEventAndSnapshot(event, aggregate);
     } else {
       result = updateEventAndSnapshotOpt(event, aggregate.getVersion(), Option.some(aggregate));
-      if (keepSnapshotCount.isDefined()) {
-        if (deleteTtl.isDefined()) {
-          updateTtlOfExcessSnapshots(event.getAggregateId());
-        } else {
-          deleteExcessSnapshots(event.getAggregateId());
-        }
-      }
+      tryPurgeExcessSnapshots(event);
     }
     LOGGER.debug("result = {}", result);
     LOGGER.debug("persistEventAndSnapshot({}, {}): finished", event, aggregate);
@@ -311,6 +299,16 @@ public final class EventStoreForDynamoDB<
       result.add(new Tuple2<>(pkey, skey));
     }
     return io.vavr.collection.List.ofAll(result);
+  }
+
+  private void tryPurgeExcessSnapshots(E event) {
+    if (keepSnapshotCount.isDefined()) {
+      if (deleteTtl.isDefined()) {
+        updateTtlOfExcessSnapshots(event.getAggregateId());
+      } else {
+        deleteExcessSnapshots(event.getAggregateId());
+      }
+    }
   }
 
   private void deleteExcessSnapshots(AID id) {
