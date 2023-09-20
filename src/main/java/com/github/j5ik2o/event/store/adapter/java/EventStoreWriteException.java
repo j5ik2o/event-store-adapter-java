@@ -1,6 +1,6 @@
 package com.github.j5ik2o.event.store.adapter.java;
 
-public final class EventStoreWriteException extends Exception {
+public final class EventStoreWriteException extends EventStoreBaseException {
   public EventStoreWriteException() {
     super();
   }

@@ -16,6 +16,7 @@ import software.amazon.awssdk.awscore.exception.AwsServiceException;
 import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.*;
+import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledException;
 
 public final class EventStoreForDynamoDB<
         AID extends AggregateId, A extends Aggregate<A, AID>, E extends Event<AID>>
@@ -253,7 +254,7 @@ public final class EventStoreForDynamoDB<
 
   @Override
   public void persistEvent(@Nonnull E event, long version)
-      throws EventStoreWriteException, SerializationException {
+      throws EventStoreWriteException, SerializationException, TransactionException {
     LOGGER.debug("persistEvent({}, {}): start", event, version);
     if (event.isCreated()) {
       throw new IllegalArgumentException("event is created");
@@ -265,7 +266,7 @@ public final class EventStoreForDynamoDB<
 
   @Override
   public void persistEventAndSnapshot(@Nonnull E event, @Nonnull A aggregate)
-      throws EventStoreWriteException, SerializationException {
+      throws EventStoreWriteException, SerializationException, TransactionException {
     LOGGER.debug("persistEventAndSnapshot({}, {}): start", event, aggregate);
     TransactWriteItemsResponse result;
     if (event.isCreated()) {
@@ -294,7 +295,7 @@ public final class EventStoreForDynamoDB<
 
   private TransactWriteItemsResponse updateEventAndSnapshotOpt(
       @Nonnull E event, long version, Option<A> aggregate)
-      throws SerializationException, EventStoreWriteException {
+      throws SerializationException, EventStoreWriteException, TransactionException {
     try {
       LOGGER.debug("updateEventAndSnapshotOpt({}, {}, {}): start", event, version, aggregate);
       var request =
@@ -303,6 +304,8 @@ public final class EventStoreForDynamoDB<
       var result = dynamoDbClient.transactWriteItems(request);
       LOGGER.debug("updateEventAndSnapshotOpt({}, {}, {}): finished", event, version, aggregate);
       return result;
+    } catch (TransactionCanceledException e) {
+      throw new TransactionException(e);
     } catch (AwsServiceException | SdkClientException e) {
       throw new EventStoreWriteException(e);
     }
