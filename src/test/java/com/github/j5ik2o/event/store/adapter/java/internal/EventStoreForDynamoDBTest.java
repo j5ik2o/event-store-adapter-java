@@ -5,6 +5,9 @@ import static org.junit.jupiter.api.Assertions.fail;
 import static org.testcontainers.containers.localstack.LocalStackContainer.Service.DYNAMODB;
 
 import com.github.j5ik2o.event.store.adapter.java.EventStore;
+import com.github.j5ik2o.event.store.adapter.java.EventStoreReadException;
+import com.github.j5ik2o.event.store.adapter.java.EventStoreWriteException;
+import com.github.j5ik2o.event.store.adapter.java.SerializationException;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,7 +34,8 @@ public class EventStoreForDynamoDBTest {
       new LocalStackContainer(localstackImage).withServices(DYNAMODB);
 
   @Test
-  public void persistAndGet() {
+  public void persistAndGet()
+      throws SerializationException, EventStoreWriteException, EventStoreReadException {
     try (var client = DynamoDBUtils.createDynamoDbClient(localstack)) {
       DynamoDBUtils.createJournalTable(client, JOURNAL_TABLE_NAME, JOURNAL_AID_INDEX_NAME);
       DynamoDBUtils.createSnapshotTable(client, SNAPSHOT_TABLE_NAME, SNAPSHOT_AID_INDEX_NAME);

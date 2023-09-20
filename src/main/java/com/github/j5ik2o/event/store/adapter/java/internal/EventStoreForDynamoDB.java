@@ -12,6 +12,8 @@ import java.util.Optional;
 import javax.annotation.Nonnull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.awscore.exception.AwsServiceException;
+import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.*;
 
@@ -208,36 +210,50 @@ public final class EventStoreForDynamoDB<
 
   @Nonnull
   @Override
-  public Optional<A> getLatestSnapshotById(@Nonnull Class<A> clazz, @Nonnull AID aggregateId) {
-    LOGGER.debug("getLatestSnapshotById({}, {}): start", clazz, aggregateId);
-    var request = eventStoreSupport.getLatestSnapshotByIdQueryRequest(aggregateId);
-    var response = dynamoDbClient.query(request);
-    var result = eventStoreSupport.convertToAggregateAndVersion(response, clazz);
-    LOGGER.debug("getLatestSnapshotById({}, {}): finished", clazz, aggregateId);
-    return result;
+  public Optional<A> getLatestSnapshotById(@Nonnull Class<A> clazz, @Nonnull AID aggregateId)
+      throws EventStoreReadException, SerializationException {
+    try {
+      LOGGER.debug("getLatestSnapshotById({}, {}): start", clazz, aggregateId);
+      var request = eventStoreSupport.getLatestSnapshotByIdQueryRequest(aggregateId);
+      var response = dynamoDbClient.query(request);
+      var result = eventStoreSupport.convertToAggregateAndVersion(response, clazz);
+      LOGGER.debug("getLatestSnapshotById({}, {}): finished", clazz, aggregateId);
+      return result;
+    } catch (AwsServiceException | SdkClientException e) {
+      throw new EventStoreReadException(e);
+    }
   }
 
   @Nonnull
   @Override
   public List<E> getEventsByIdSinceSequenceNumber(
-      @Nonnull Class<E> clazz, @Nonnull AID aggregateId, long sequenceNumber) {
-    LOGGER.debug(
-        "getEventsByIdSinceSequenceNumber({}, {}, {}): start", clazz, aggregateId, sequenceNumber);
-    var request =
-        eventStoreSupport.getEventsByIdSinceSequenceNumberQueryRequest(aggregateId, sequenceNumber);
-    var response = dynamoDbClient.query(request);
-
-    var result = eventStoreSupport.convertToEvents(response, clazz);
-    LOGGER.debug(
-        "getEventsByIdSinceSequenceNumber({}, {}, {}): finished",
-        clazz,
-        aggregateId,
-        sequenceNumber);
-    return result;
+      @Nonnull Class<E> clazz, @Nonnull AID aggregateId, long sequenceNumber)
+      throws SerializationException, EventStoreReadException {
+    try {
+      LOGGER.debug(
+          "getEventsByIdSinceSequenceNumber({}, {}, {}): start",
+          clazz,
+          aggregateId,
+          sequenceNumber);
+      var request =
+          eventStoreSupport.getEventsByIdSinceSequenceNumberQueryRequest(
+              aggregateId, sequenceNumber);
+      var response = dynamoDbClient.query(request);
+      var result = eventStoreSupport.convertToEvents(response, clazz);
+      LOGGER.debug(
+          "getEventsByIdSinceSequenceNumber({}, {}, {}): finished",
+          clazz,
+          aggregateId,
+          sequenceNumber);
+      return result;
+    } catch (AwsServiceException | SdkClientException e) {
+      throw new EventStoreReadException(e);
+    }
   }
 
   @Override
-  public void persistEvent(@Nonnull E event, long version) {
+  public void persistEvent(@Nonnull E event, long version)
+      throws EventStoreWriteException, SerializationException {
     LOGGER.debug("persistEvent({}, {}): start", event, version);
     if (event.isCreated()) {
       throw new IllegalArgumentException("event is created");
@@ -248,7 +264,8 @@ public final class EventStoreForDynamoDB<
   }
 
   @Override
-  public void persistEventAndSnapshot(@Nonnull E event, @Nonnull A aggregate) {
+  public void persistEventAndSnapshot(@Nonnull E event, @Nonnull A aggregate)
+      throws EventStoreWriteException, SerializationException {
     LOGGER.debug("persistEventAndSnapshot({}, {}): start", event, aggregate);
     TransactWriteItemsResponse result;
     if (event.isCreated()) {
@@ -261,47 +278,65 @@ public final class EventStoreForDynamoDB<
     LOGGER.debug("persistEventAndSnapshot({}, {}): finished", event, aggregate);
   }
 
-  private TransactWriteItemsResponse createEventAndSnapshot(
-      @Nonnull E event, @Nonnull A aggregate) {
-    LOGGER.debug("createEventAndSnapshot({}, {}): start", event, aggregate);
-    var request =
-        eventStoreSupport.createEventAndSnapshotTransactWriteItemsRequest(event, aggregate);
-    var result = dynamoDbClient.transactWriteItems(request);
-    LOGGER.debug("createEventAndSnapshot({}, {}): finished", event, aggregate);
-    return result;
+  private TransactWriteItemsResponse createEventAndSnapshot(@Nonnull E event, @Nonnull A aggregate)
+      throws SerializationException, EventStoreWriteException {
+    try {
+      LOGGER.debug("createEventAndSnapshot({}, {}): start", event, aggregate);
+      var request =
+          eventStoreSupport.createEventAndSnapshotTransactWriteItemsRequest(event, aggregate);
+      var result = dynamoDbClient.transactWriteItems(request);
+      LOGGER.debug("createEventAndSnapshot({}, {}): finished", event, aggregate);
+      return result;
+    } catch (AwsServiceException | SdkClientException e) {
+      throw new EventStoreWriteException(e);
+    }
   }
 
   private TransactWriteItemsResponse updateEventAndSnapshotOpt(
-      @Nonnull E event, long version, Option<A> aggregate) {
-    LOGGER.debug("updateEventAndSnapshotOpt({}, {}, {}): start", event, version, aggregate);
-    var request =
-        eventStoreSupport.updateEventAndSnapshotOptTransactWriteItemsRequest(
-            event, version, aggregate);
-    var result = dynamoDbClient.transactWriteItems(request);
-    LOGGER.debug("updateEventAndSnapshotOpt({}, {}, {}): finished", event, version, aggregate);
-    return result;
-  }
-
-  private int getSnapshotCount(AID id) {
-    var request = eventStoreSupport.getSnapshotCountQueryRequest(id);
-    var response = dynamoDbClient.query(request);
-    return response.count();
-  }
-
-  private io.vavr.collection.List<Tuple2<String, String>> getLastSnapshotKeys(AID id, int limit) {
-    var request = eventStoreSupport.getLastSnapshotKeysQueryRequest(id, limit);
-    var response = dynamoDbClient.query(request);
-    var items = response.items();
-    var result = new ArrayList<Tuple2<String, String>>();
-    for (var item : items) {
-      var pkey = item.get("pkey").s();
-      var skey = item.get("skey").s();
-      result.add(new Tuple2<>(pkey, skey));
+      @Nonnull E event, long version, Option<A> aggregate)
+      throws SerializationException, EventStoreWriteException {
+    try {
+      LOGGER.debug("updateEventAndSnapshotOpt({}, {}, {}): start", event, version, aggregate);
+      var request =
+          eventStoreSupport.updateEventAndSnapshotOptTransactWriteItemsRequest(
+              event, version, aggregate);
+      var result = dynamoDbClient.transactWriteItems(request);
+      LOGGER.debug("updateEventAndSnapshotOpt({}, {}, {}): finished", event, version, aggregate);
+      return result;
+    } catch (AwsServiceException | SdkClientException e) {
+      throw new EventStoreWriteException(e);
     }
-    return io.vavr.collection.List.ofAll(result);
   }
 
-  private void tryPurgeExcessSnapshots(E event) {
+  private int getSnapshotCount(AID id) throws EventStoreReadException {
+    try {
+      var request = eventStoreSupport.getSnapshotCountQueryRequest(id);
+      var response = dynamoDbClient.query(request);
+      return response.count();
+    } catch (AwsServiceException | SdkClientException e) {
+      throw new EventStoreReadException(e);
+    }
+  }
+
+  private io.vavr.collection.List<Tuple2<String, String>> getLastSnapshotKeys(AID id, int limit)
+      throws EventStoreReadException {
+    try {
+      var request = eventStoreSupport.getLastSnapshotKeysQueryRequest(id, limit);
+      var response = dynamoDbClient.query(request);
+      var items = response.items();
+      var result = new ArrayList<Tuple2<String, String>>();
+      for (var item : items) {
+        var pkey = item.get("pkey").s();
+        var skey = item.get("skey").s();
+        result.add(new Tuple2<>(pkey, skey));
+      }
+      return io.vavr.collection.List.ofAll(result);
+    } catch (AwsServiceException | SdkClientException e) {
+      throw new EventStoreReadException(e);
+    }
+  }
+
+  private void tryPurgeExcessSnapshots(E event) throws EventStoreWriteException {
     if (keepSnapshotCount.isDefined()) {
       if (deleteTtl.isDefined()) {
         updateTtlOfExcessSnapshots(event.getAggregateId());
@@ -311,31 +346,39 @@ public final class EventStoreForDynamoDB<
     }
   }
 
-  private void deleteExcessSnapshots(AID id) {
-    if (keepSnapshotCount.isDefined()) {
-      var snapshotCount = getSnapshotCount(id) - 1;
-      var excessCount = snapshotCount - keepSnapshotCount.get();
-      if (excessCount > 0) {
-        var keys = getLastSnapshotKeys(id, (int) excessCount);
-        if (!keys.isEmpty()) {
-          dynamoDbClient.batchWriteItem(eventStoreSupport.batchDeleteSnapshotRequest(keys));
+  private void deleteExcessSnapshots(AID id) throws EventStoreWriteException {
+    try {
+      if (keepSnapshotCount.isDefined()) {
+        var snapshotCount = getSnapshotCount(id) - 1;
+        var excessCount = snapshotCount - keepSnapshotCount.get();
+        if (excessCount > 0) {
+          var keys = getLastSnapshotKeys(id, (int) excessCount);
+          if (!keys.isEmpty()) {
+            dynamoDbClient.batchWriteItem(eventStoreSupport.batchDeleteSnapshotRequest(keys));
+          }
         }
       }
+    } catch (AwsServiceException | SdkClientException | EventStoreReadException e) {
+      throw new EventStoreWriteException(e);
     }
   }
 
-  private void updateTtlOfExcessSnapshots(AID id) {
-    if (keepSnapshotCount.isDefined() && deleteTtl.isDefined()) {
-      var snapshotCount = getSnapshotCount(id) - 1;
-      var excessCount = snapshotCount - keepSnapshotCount.get();
-      if (excessCount > 0) {
-        var keys = getLastSnapshotKeys(id, (int) excessCount);
-        var ttl = Instant.now().plus(deleteTtl.get());
-        for (var key : keys) {
-          dynamoDbClient.updateItem(
-              eventStoreSupport.updateTtlOfExcessSnapshots(key._1, key._2, ttl.getEpochSecond()));
+  private void updateTtlOfExcessSnapshots(AID id) throws EventStoreWriteException {
+    try {
+      if (keepSnapshotCount.isDefined() && deleteTtl.isDefined()) {
+        var snapshotCount = getSnapshotCount(id) - 1;
+        var excessCount = snapshotCount - keepSnapshotCount.get();
+        if (excessCount > 0) {
+          var keys = getLastSnapshotKeys(id, (int) excessCount);
+          var ttl = Instant.now().plus(deleteTtl.get());
+          for (var key : keys) {
+            dynamoDbClient.updateItem(
+                eventStoreSupport.updateTtlOfExcessSnapshots(key._1, key._2, ttl.getEpochSecond()));
+          }
         }
       }
+    } catch (AwsServiceException | SdkClientException | EventStoreReadException e) {
+      throw new EventStoreWriteException(e);
     }
   }
 }

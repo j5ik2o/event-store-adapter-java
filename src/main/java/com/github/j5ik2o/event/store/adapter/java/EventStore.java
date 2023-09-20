@@ -27,13 +27,17 @@ public interface EventStore<
   }
 
   @Nonnull
-  Optional<A> getLatestSnapshotById(@Nonnull Class<A> clazz, @Nonnull AID aggregateId);
+  Optional<A> getLatestSnapshotById(@Nonnull Class<A> clazz, @Nonnull AID aggregateId)
+      throws EventStoreReadException, SerializationException;
 
   @Nonnull
   List<E> getEventsByIdSinceSequenceNumber(
-      @Nonnull Class<E> clazz, @Nonnull AID aggregateId, long sequenceNumber);
+      @Nonnull Class<E> clazz, @Nonnull AID aggregateId, long sequenceNumber)
+      throws EventStoreReadException, SerializationException;
 
-  void persistEvent(@Nonnull E event, long version);
+  void persistEvent(@Nonnull E event, long version)
+      throws EventStoreWriteException, SerializationException;
 
-  void persistEventAndSnapshot(@Nonnull E event, @Nonnull A aggregate);
+  void persistEventAndSnapshot(@Nonnull E event, @Nonnull A aggregate)
+      throws EventStoreWriteException, SerializationException;
 }
