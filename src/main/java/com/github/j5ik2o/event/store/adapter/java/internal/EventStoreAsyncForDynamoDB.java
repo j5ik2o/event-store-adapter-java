@@ -216,22 +216,26 @@ public final class EventStoreAsyncForDynamoDB<
   public CompletableFuture<Optional<A>> getLatestSnapshotById(
       @Nonnull Class<A> clazz, @Nonnull AID aggregateId) {
     LOGGER.debug("getLatestSnapshotById({}, {}): start", clazz, aggregateId);
-    var request = eventStoreSupport.getLatestSnapshotByIdQueryRequest(aggregateId);
-    return dynamoDbAsyncClient
-        .query(request)
-        .thenApply(
-            response -> {
-              try {
-                return eventStoreSupport.convertToAggregateAndVersion(response, clazz);
-              } catch (SerializationException e) {
-                throw new EventStoreRuntimeException(e);
-              }
-            })
-        .thenApply(
-            result -> {
-              LOGGER.debug("getLatestSnapshotById({}, {}): finished", clazz, aggregateId);
-              return result;
-            });
+    return CompletableFuture.completedFuture(
+            eventStoreSupport.getLatestSnapshotByIdQueryRequest(aggregateId))
+        .thenCompose(
+            request ->
+                dynamoDbAsyncClient
+                    .query(request)
+                    .thenApply(
+                        response -> {
+                          try {
+                            return eventStoreSupport.convertToAggregateAndVersion(response, clazz);
+                          } catch (SerializationException e) {
+                            throw new EventStoreRuntimeException(e);
+                          }
+                        })
+                    .thenApply(
+                        result -> {
+                          LOGGER.debug(
+                              "getLatestSnapshotById({}, {}): finished", clazz, aggregateId);
+                          return result;
+                        }));
   }
 
   @Nonnull
@@ -240,27 +244,30 @@ public final class EventStoreAsyncForDynamoDB<
       @Nonnull Class<E> clazz, @Nonnull AID aggregateId, long sequenceNumber) {
     LOGGER.debug(
         "getEventsByIdSinceSequenceNumber({}, {}, {}): start", clazz, aggregateId, sequenceNumber);
-    var request =
-        eventStoreSupport.getEventsByIdSinceSequenceNumberQueryRequest(aggregateId, sequenceNumber);
-    return dynamoDbAsyncClient
-        .query(request)
-        .thenApply(
-            response -> {
-              try {
-                return eventStoreSupport.convertToEvents(response, clazz);
-              } catch (SerializationException e) {
-                throw new EventStoreRuntimeException(e);
-              }
-            })
-        .thenApply(
-            result -> {
-              LOGGER.debug(
-                  "getEventsByIdSinceSequenceNumber({}, {}, {}): finished",
-                  clazz,
-                  aggregateId,
-                  sequenceNumber);
-              return result;
-            });
+    return CompletableFuture.completedFuture(
+            eventStoreSupport.getEventsByIdSinceSequenceNumberQueryRequest(
+                aggregateId, sequenceNumber))
+        .thenCompose(
+            request ->
+                dynamoDbAsyncClient
+                    .query(request)
+                    .thenApply(
+                        response -> {
+                          try {
+                            return eventStoreSupport.convertToEvents(response, clazz);
+                          } catch (SerializationException e) {
+                            throw new EventStoreRuntimeException(e);
+                          }
+                        })
+                    .thenApply(
+                        result -> {
+                          LOGGER.debug(
+                              "getEventsByIdSinceSequenceNumber({}, {}, {}): finished",
+                              clazz,
+                              aggregateId,
+                              sequenceNumber);
+                          return result;
+                        }));
   }
 
   @Nonnull
@@ -340,19 +347,22 @@ public final class EventStoreAsyncForDynamoDB<
 
   private CompletableFuture<io.vavr.collection.List<Tuple2<String, String>>> getLastSnapshotKeys(
       AID id, int limit) {
-    var request = eventStoreSupport.getLastSnapshotKeysQueryRequest(id, limit);
-    return dynamoDbAsyncClient
-        .query(request)
-        .thenApply(
-            response -> {
-              var result = new ArrayList<Tuple2<String, String>>();
-              for (var item : response.items()) {
-                var pkey = item.get("pkey").s();
-                var skey = item.get("skey").s();
-                result.add(new Tuple2<>(pkey, skey));
-              }
-              return io.vavr.collection.List.ofAll(result);
-            });
+    return CompletableFuture.completedFuture(
+            eventStoreSupport.getLastSnapshotKeysQueryRequest(id, limit))
+        .thenCompose(
+            request ->
+                dynamoDbAsyncClient
+                    .query(request)
+                    .thenApply(
+                        response -> {
+                          var result = new ArrayList<Tuple2<String, String>>();
+                          for (var item : response.items()) {
+                            var pkey = item.get("pkey").s();
+                            var skey = item.get("skey").s();
+                            result.add(new Tuple2<>(pkey, skey));
+                          }
+                          return io.vavr.collection.List.ofAll(result);
+                        }));
   }
 
   private CompletableFuture<Void> tryPurgeExcessSnapshots(E event) {
