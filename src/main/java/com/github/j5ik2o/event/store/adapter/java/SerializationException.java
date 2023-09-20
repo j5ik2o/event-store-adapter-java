@@ -1,6 +1,6 @@
 package com.github.j5ik2o.event.store.adapter.java;
 
-public class SerializationException extends RuntimeException {
+public final class SerializationException extends Exception {
   public SerializationException() {
     super();
   }

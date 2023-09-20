@@ -154,8 +154,8 @@ final class EventStoreSupport<
     return request;
   }
 
-  Optional<A> convertToAggregateAndVersion(
-      @Nonnull QueryResponse response, @Nonnull Class<A> clazz) {
+  Optional<A> convertToAggregateAndVersion(@Nonnull QueryResponse response, @Nonnull Class<A> clazz)
+      throws SerializationException {
     LOGGER.debug("convertToAggregateAndVersion({}, {}): start", response, clazz);
     var items = response.items();
     LOGGER.debug("items = {}", items);
@@ -195,7 +195,8 @@ final class EventStoreSupport<
   }
 
   @Nonnull
-  List<E> convertToEvents(@Nonnull QueryResponse response, @Nonnull Class<E> clazz) {
+  List<E> convertToEvents(@Nonnull QueryResponse response, @Nonnull Class<E> clazz)
+      throws SerializationException {
     var items = response.items();
     LOGGER.debug("items = {}", items);
     List<E> events = new java.util.ArrayList<>();
@@ -209,7 +210,7 @@ final class EventStoreSupport<
 
   @Nonnull
   TransactWriteItemsRequest createEventAndSnapshotTransactWriteItemsRequest(
-      @Nonnull E event, @Nonnull A aggregate) {
+      @Nonnull E event, @Nonnull A aggregate) throws SerializationException {
     List<TransactWriteItem> transactItems = new java.util.ArrayList<>();
     transactItems.add(putSnapshot(event, 0, aggregate));
     transactItems.add(putJournal(event));
@@ -221,7 +222,7 @@ final class EventStoreSupport<
 
   @Nonnull
   TransactWriteItemsRequest updateEventAndSnapshotOptTransactWriteItemsRequest(
-      @Nonnull E event, long version, Option<A> aggregate) {
+      @Nonnull E event, long version, Option<A> aggregate) throws SerializationException {
     List<TransactWriteItem> transactItems = new java.util.ArrayList<>();
     transactItems.add(updateSnapshot(event, 0, version, aggregate));
     transactItems.add(putJournal(event));
@@ -232,7 +233,8 @@ final class EventStoreSupport<
   }
 
   @Nonnull
-  TransactWriteItem putSnapshot(@Nonnull E event, long sequenceNumber, A aggregate) {
+  TransactWriteItem putSnapshot(@Nonnull E event, long sequenceNumber, A aggregate)
+      throws SerializationException {
     LOGGER.debug("putSnapshot({}, {}, {}): start", event, sequenceNumber, aggregate);
     var pkey = resolvePartitionKey(event.getAggregateId(), shardCount);
     var skey = resolveSortKey(event.getAggregateId(), sequenceNumber);
@@ -276,7 +278,8 @@ final class EventStoreSupport<
 
   @Nonnull
   TransactWriteItem updateSnapshot(
-      @Nonnull E event, long sequenceNumber, long version, Option<A> aggregate) {
+      @Nonnull E event, long sequenceNumber, long version, Option<A> aggregate)
+      throws SerializationException {
     LOGGER.debug("updateSnapshot({}, {}, {}): start", event, sequenceNumber, aggregate);
     var pkey = resolvePartitionKey(event.getAggregateId(), shardCount);
     var skey = resolveSortKey(event.getAggregateId(), sequenceNumber);
@@ -351,7 +354,7 @@ final class EventStoreSupport<
   }
 
   @Nonnull
-  TransactWriteItem putJournal(@Nonnull E event) {
+  TransactWriteItem putJournal(@Nonnull E event) throws SerializationException {
     LOGGER.debug("putJournal({}): start", event);
     var pkey = resolvePartitionKey(event.getAggregateId(), shardCount);
     var skey = resolveSortKey(event.getAggregateId(), event.getSequenceNumber());

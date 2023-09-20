@@ -217,12 +217,21 @@ public final class EventStoreAsyncForDynamoDB<
       @Nonnull Class<A> clazz, @Nonnull AID aggregateId) {
     LOGGER.debug("getLatestSnapshotById({}, {}): start", clazz, aggregateId);
     var request = eventStoreSupport.getLatestSnapshotByIdQueryRequest(aggregateId);
-    var result =
-        dynamoDbAsyncClient
-            .query(request)
-            .thenApply(response -> eventStoreSupport.convertToAggregateAndVersion(response, clazz));
-    LOGGER.debug("getLatestSnapshotById({}, {}): finished", clazz, aggregateId);
-    return result;
+    return dynamoDbAsyncClient
+        .query(request)
+        .thenApply(
+            response -> {
+              try {
+                return eventStoreSupport.convertToAggregateAndVersion(response, clazz);
+              } catch (SerializationException e) {
+                throw new EventStoreRuntimeException(e);
+              }
+            })
+        .thenApply(
+            result -> {
+              LOGGER.debug("getLatestSnapshotById({}, {}): finished", clazz, aggregateId);
+              return result;
+            });
   }
 
   @Nonnull
@@ -233,16 +242,25 @@ public final class EventStoreAsyncForDynamoDB<
         "getEventsByIdSinceSequenceNumber({}, {}, {}): start", clazz, aggregateId, sequenceNumber);
     var request =
         eventStoreSupport.getEventsByIdSinceSequenceNumberQueryRequest(aggregateId, sequenceNumber);
-    var result =
-        dynamoDbAsyncClient
-            .query(request)
-            .thenApply(response -> eventStoreSupport.convertToEvents(response, clazz));
-    LOGGER.debug(
-        "getEventsByIdSinceSequenceNumber({}, {}, {}): finished",
-        clazz,
-        aggregateId,
-        sequenceNumber);
-    return result;
+    return dynamoDbAsyncClient
+        .query(request)
+        .thenApply(
+            response -> {
+              try {
+                return eventStoreSupport.convertToEvents(response, clazz);
+              } catch (SerializationException e) {
+                throw new EventStoreRuntimeException(e);
+              }
+            })
+        .thenApply(
+            result -> {
+              LOGGER.debug(
+                  "getEventsByIdSinceSequenceNumber({}, {}, {}): finished",
+                  clazz,
+                  aggregateId,
+                  sequenceNumber);
+              return result;
+            });
   }
 
   @Nonnull
@@ -252,11 +270,9 @@ public final class EventStoreAsyncForDynamoDB<
     if (event.isCreated()) {
       throw new IllegalArgumentException("event is created");
     }
-    var result =
-        updateEventAndSnapshotOpt(event, version, Option.none())
-            .thenCompose(ignored -> tryPurgeExcessSnapshots(event));
-    LOGGER.debug("persistEvent({}, {}): finished", event, version);
-    return result;
+    return updateEventAndSnapshotOpt(event, version, Option.none())
+        .thenCompose(ignored -> tryPurgeExcessSnapshots(event))
+        .thenRun(() -> LOGGER.debug("persistEvent({}, {}): finished", event, version));
   }
 
   @Nonnull
@@ -271,29 +287,49 @@ public final class EventStoreAsyncForDynamoDB<
           updateEventAndSnapshotOpt(event, aggregate.getVersion(), Option.some(aggregate))
               .thenCompose(ignored -> tryPurgeExcessSnapshots(event));
     }
-    LOGGER.debug("persistEventAndSnapshot({}, {}): finished", event, aggregate);
-    return result;
+    return result.thenRun(
+        () -> LOGGER.debug("persistEventAndSnapshot({}, {}): finished", event, aggregate));
   }
 
   private CompletableFuture<TransactWriteItemsResponse> createEventAndSnapshot(
       @Nonnull E event, @Nonnull A aggregate) {
     LOGGER.debug("createEventAndSnapshot({}, {}): start", event, aggregate);
-    var request =
-        eventStoreSupport.createEventAndSnapshotTransactWriteItemsRequest(event, aggregate);
-    var result = dynamoDbAsyncClient.transactWriteItems(request);
-    LOGGER.debug("createEventAndSnapshot({}, {}): finished", event, aggregate);
-    return result;
+    return CompletableFuture.supplyAsync(
+            () -> {
+              try {
+                return eventStoreSupport.createEventAndSnapshotTransactWriteItemsRequest(
+                    event, aggregate);
+              } catch (SerializationException e) {
+                throw new EventStoreRuntimeException(e);
+              }
+            })
+        .thenCompose(dynamoDbAsyncClient::transactWriteItems)
+        .thenApply(
+            result -> {
+              LOGGER.debug("createEventAndSnapshot({}, {}): finished", event, aggregate);
+              return result;
+            });
   }
 
   private CompletableFuture<TransactWriteItemsResponse> updateEventAndSnapshotOpt(
       @Nonnull E event, long version, Option<A> aggregate) {
     LOGGER.debug("updateEventAndSnapshotOpt({}, {}, {}): start", event, version, aggregate);
-    var request =
-        eventStoreSupport.updateEventAndSnapshotOptTransactWriteItemsRequest(
-            event, version, aggregate);
-    var result = dynamoDbAsyncClient.transactWriteItems(request);
-    LOGGER.debug("updateEventAndSnapshotOpt({}, {}, {}): finished", event, version, aggregate);
-    return result;
+    return CompletableFuture.supplyAsync(
+            () -> {
+              try {
+                return eventStoreSupport.updateEventAndSnapshotOptTransactWriteItemsRequest(
+                    event, version, aggregate);
+              } catch (SerializationException e) {
+                throw new EventStoreRuntimeException(e);
+              }
+            })
+        .thenCompose(dynamoDbAsyncClient::transactWriteItems)
+        .thenApply(
+            result -> {
+              LOGGER.debug(
+                  "updateEventAndSnapshotOpt({}, {}, {}): finished", event, version, aggregate);
+              return result;
+            });
   }
 
   private CompletableFuture<Integer> getSnapshotCount(AID id) {
@@ -308,10 +344,9 @@ public final class EventStoreAsyncForDynamoDB<
     return dynamoDbAsyncClient
         .query(request)
         .thenApply(
-            r -> {
-              var items = r.items();
+            response -> {
               var result = new ArrayList<Tuple2<String, String>>();
-              for (var item : items) {
+              for (var item : response.items()) {
                 var pkey = item.get("pkey").s();
                 var skey = item.get("skey").s();
                 result.add(new Tuple2<>(pkey, skey));

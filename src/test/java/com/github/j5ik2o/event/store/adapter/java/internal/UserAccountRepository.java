@@ -1,6 +1,9 @@
 package com.github.j5ik2o.event.store.adapter.java.internal;
 
 import com.github.j5ik2o.event.store.adapter.java.EventStore;
+import com.github.j5ik2o.event.store.adapter.java.EventStoreReadException;
+import com.github.j5ik2o.event.store.adapter.java.EventStoreWriteException;
+import com.github.j5ik2o.event.store.adapter.java.SerializationException;
 import java.util.Optional;
 import javax.annotation.Nonnull;
 
@@ -13,23 +16,35 @@ public final class UserAccountRepository {
   }
 
   public void store(@Nonnull UserAccountEvent event, long version) {
-    eventStore.persistEvent(event, version);
+    try {
+      eventStore.persistEvent(event, version);
+    } catch (EventStoreWriteException | SerializationException e) {
+      throw new RepositoryException(e);
+    }
   }
 
   public void store(@Nonnull UserAccountEvent event, @Nonnull UserAccount aggregate) {
-    eventStore.persistEventAndSnapshot(event, aggregate);
+    try {
+      eventStore.persistEventAndSnapshot(event, aggregate);
+    } catch (EventStoreWriteException | SerializationException e) {
+      throw new RepositoryException(e);
+    }
   }
 
   @Nonnull
   public Optional<UserAccount> findById(@Nonnull UserAccountId id) {
-    var snapshot = eventStore.getLatestSnapshotById(UserAccount.class, id);
-    if (snapshot.isEmpty()) {
-      return Optional.empty();
-    } else {
-      var events =
-          eventStore.getEventsByIdSinceSequenceNumber(
-              UserAccountEvent.class, id, snapshot.get().getSequenceNumber() + 1);
-      return Optional.of(UserAccount.replay(events, snapshot.get()));
+    try {
+      var snapshot = eventStore.getLatestSnapshotById(UserAccount.class, id);
+      if (snapshot.isEmpty()) {
+        return Optional.empty();
+      } else {
+        var events =
+            eventStore.getEventsByIdSinceSequenceNumber(
+                UserAccountEvent.class, id, snapshot.get().getSequenceNumber() + 1);
+        return Optional.of(UserAccount.replay(events, snapshot.get()));
+      }
+    } catch (EventStoreReadException | SerializationException e) {
+      throw new RepositoryException(e);
     }
   }
 }
