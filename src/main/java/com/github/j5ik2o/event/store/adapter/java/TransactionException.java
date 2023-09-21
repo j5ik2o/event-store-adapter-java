@@ -1,6 +1,6 @@
 package com.github.j5ik2o.event.store.adapter.java;
 
-public class TransactionException extends EventStoreBaseException {
+public final class TransactionException extends EventStoreBaseException {
   public TransactionException() {
     super();
   }

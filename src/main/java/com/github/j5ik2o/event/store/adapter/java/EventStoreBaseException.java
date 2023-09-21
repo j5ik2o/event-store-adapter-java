@@ -1,19 +1,19 @@
 package com.github.j5ik2o.event.store.adapter.java;
 
 public abstract class EventStoreBaseException extends Exception {
-  public EventStoreBaseException() {
+  protected EventStoreBaseException() {
     super();
   }
 
-  public EventStoreBaseException(String message) {
+  protected EventStoreBaseException(String message) {
     super(message);
   }
 
-  public EventStoreBaseException(String message, Throwable cause) {
+  protected EventStoreBaseException(String message, Throwable cause) {
     super(message, cause);
   }
 
-  public EventStoreBaseException(Throwable cause) {
+  protected EventStoreBaseException(Throwable cause) {
     super(cause);
   }
 }

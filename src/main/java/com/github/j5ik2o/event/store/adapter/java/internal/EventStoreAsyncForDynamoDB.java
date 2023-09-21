@@ -227,8 +227,15 @@ public final class EventStoreAsyncForDynamoDB<
                           try {
                             return eventStoreSupport.convertToAggregateAndVersion(response, clazz);
                           } catch (SerializationException e) {
-                            throw new EventStoreRuntimeException(e);
+                            throw new SerializationRuntimeException(e);
                           }
+                        })
+                    .handle(
+                        (response, ex) -> {
+                          if (ex != null) {
+                            throw new EventStoreReadRuntimeException(ex);
+                          }
+                          return response;
                         })
                     .thenApply(
                         result -> {
@@ -256,8 +263,15 @@ public final class EventStoreAsyncForDynamoDB<
                           try {
                             return eventStoreSupport.convertToEvents(response, clazz);
                           } catch (SerializationException e) {
-                            throw new EventStoreRuntimeException(e);
+                            throw new SerializationRuntimeException(e);
                           }
+                        })
+                    .handle(
+                        (response, ex) -> {
+                          if (ex != null) {
+                            throw new EventStoreReadRuntimeException(ex);
+                          }
+                          return response;
                         })
                     .thenApply(
                         result -> {
@@ -307,10 +321,21 @@ public final class EventStoreAsyncForDynamoDB<
                 return eventStoreSupport.createEventAndSnapshotTransactWriteItemsRequest(
                     event, aggregate);
               } catch (SerializationException e) {
-                throw new EventStoreRuntimeException(e);
+                throw new SerializationRuntimeException(e);
               }
             })
         .thenCompose(dynamoDbAsyncClient::transactWriteItems)
+        .handle(
+            (response, ex) -> {
+              if (ex != null) {
+                if (ex instanceof TransactionCanceledException) {
+                  throw new TransactionRuntimeException(ex);
+                } else {
+                  throw new EventStoreReadRuntimeException(ex);
+                }
+              }
+              return response;
+            })
         .thenApply(
             result -> {
               LOGGER.debug("createEventAndSnapshot({}, {}): finished", event, aggregate);
@@ -327,10 +352,21 @@ public final class EventStoreAsyncForDynamoDB<
                 return eventStoreSupport.updateEventAndSnapshotOptTransactWriteItemsRequest(
                     event, version, aggregate);
               } catch (SerializationException e) {
-                throw new EventStoreRuntimeException(e);
+                throw new SerializationRuntimeException(e);
               }
             })
         .thenCompose(dynamoDbAsyncClient::transactWriteItems)
+        .handle(
+            (response, ex) -> {
+              if (ex != null) {
+                if (ex instanceof TransactionCanceledException) {
+                  throw new TransactionRuntimeException(ex);
+                } else {
+                  throw new EventStoreReadRuntimeException(ex);
+                }
+              }
+              return response;
+            })
         .thenApply(
             result -> {
               LOGGER.debug(
