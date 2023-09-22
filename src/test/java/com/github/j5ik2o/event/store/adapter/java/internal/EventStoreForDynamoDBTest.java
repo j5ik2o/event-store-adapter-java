@@ -35,7 +35,8 @@ public class EventStoreForDynamoDBTest {
       throws SerializationException,
           EventStoreWriteException,
           EventStoreReadException,
-          TransactionException {
+          TransactionException,
+          DeserializationException {
     try (var client = DynamoDBUtils.createDynamoDbClient(localstack)) {
       DynamoDBUtils.createJournalTable(client, JOURNAL_TABLE_NAME, JOURNAL_AID_INDEX_NAME);
       DynamoDBUtils.createSnapshotTable(client, SNAPSHOT_TABLE_NAME, SNAPSHOT_AID_INDEX_NAME);

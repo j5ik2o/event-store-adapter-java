@@ -26,9 +26,9 @@ public interface EventSerializer<AID extends AggregateId, E extends Event<AID>> 
    * @param bytes bytes / バイト列
    * @param clazz class of {@link Event} E to be deserialized / デシリアライズ対象のイベントEのクラス
    * @return deserialized event / デシリアライズされたイベント
-   * @throws SerializationException if an error occurred during deserialization /
+   * @throws DeserializationException if an error occurred during deserialization /
    *     デシリアライズ中にエラーが発生した場合
    */
   @Nonnull
-  E deserialize(@Nonnull byte[] bytes, @Nonnull Class<E> clazz) throws SerializationException;
+  E deserialize(@Nonnull byte[] bytes, @Nonnull Class<E> clazz) throws DeserializationException;
 }

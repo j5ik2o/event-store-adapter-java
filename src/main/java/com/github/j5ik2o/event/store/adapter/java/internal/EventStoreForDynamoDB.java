@@ -206,7 +206,7 @@ public final class EventStoreForDynamoDB<
   @Nonnull
   @Override
   public Optional<A> getLatestSnapshotById(@Nonnull Class<A> clazz, @Nonnull AID aggregateId)
-      throws EventStoreReadException, SerializationException {
+      throws EventStoreReadException, DeserializationException {
     try {
       LOGGER.debug("getLatestSnapshotById({}, {}): start", clazz, aggregateId);
       var request = eventStoreSupport.getLatestSnapshotByIdQueryRequest(aggregateId);
@@ -223,7 +223,7 @@ public final class EventStoreForDynamoDB<
   @Override
   public List<E> getEventsByIdSinceSequenceNumber(
       @Nonnull Class<E> clazz, @Nonnull AID aggregateId, long sequenceNumber)
-      throws SerializationException, EventStoreReadException {
+      throws DeserializationException, EventStoreReadException {
     try {
       LOGGER.debug(
           "getEventsByIdSinceSequenceNumber({}, {}, {}): start",

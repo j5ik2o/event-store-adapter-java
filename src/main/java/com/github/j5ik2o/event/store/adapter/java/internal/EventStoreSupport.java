@@ -155,7 +155,7 @@ final class EventStoreSupport<
   }
 
   Optional<A> convertToAggregateAndVersion(@Nonnull QueryResponse response, @Nonnull Class<A> clazz)
-      throws SerializationException {
+      throws DeserializationException {
     LOGGER.debug("convertToAggregateAndVersion({}, {}): start", response, clazz);
     var items = response.items();
     LOGGER.debug("items = {}", items);
@@ -196,7 +196,7 @@ final class EventStoreSupport<
 
   @Nonnull
   List<E> convertToEvents(@Nonnull QueryResponse response, @Nonnull Class<E> clazz)
-      throws SerializationException {
+      throws DeserializationException {
     var items = response.items();
     LOGGER.debug("items = {}", items);
     List<E> events = new java.util.ArrayList<>();

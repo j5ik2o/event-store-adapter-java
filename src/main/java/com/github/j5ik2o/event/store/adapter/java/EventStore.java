@@ -61,7 +61,7 @@ public interface EventStore<
    */
   @Nonnull
   Optional<A> getLatestSnapshotById(@Nonnull Class<A> clazz, @Nonnull AID aggregateId)
-      throws EventStoreReadException, SerializationException;
+      throws EventStoreReadException, DeserializationException;
 
   /**
    * Gets the events by the aggregate id and since the sequence number. / IDとシーケンス番号以降のイベントを取得します。
@@ -77,7 +77,7 @@ public interface EventStore<
   @Nonnull
   List<E> getEventsByIdSinceSequenceNumber(
       @Nonnull Class<E> clazz, @Nonnull AID aggregateId, long sequenceNumber)
-      throws EventStoreReadException, SerializationException;
+      throws EventStoreReadException, DeserializationException;
 
   /**
    * Persists an event only. / イベントのみを永続化します。

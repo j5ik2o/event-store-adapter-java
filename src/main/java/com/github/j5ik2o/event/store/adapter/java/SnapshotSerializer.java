@@ -26,9 +26,9 @@ public interface SnapshotSerializer<AID extends AggregateId, A extends Aggregate
    * @param bytes bytes / バイト列
    * @param clazz class of {@link Aggregate} A to be deserialized / デシリアライズ対象の集約Aのクラス
    * @return deserialized snapshot / デシリアライズされたスナップショット
-   * @throws SerializationException if an error occurred during deserialization /
+   * @throws DeserializationException if an error occurred during deserialization /
    *     デシリアライズ中にエラーが発生した場合
    */
   @Nonnull
-  A deserialize(@Nonnull byte[] bytes, @Nonnull Class<A> clazz) throws SerializationException;
+  A deserialize(@Nonnull byte[] bytes, @Nonnull Class<A> clazz) throws DeserializationException;
 }

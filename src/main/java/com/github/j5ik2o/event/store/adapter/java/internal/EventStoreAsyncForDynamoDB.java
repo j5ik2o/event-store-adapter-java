@@ -220,7 +220,7 @@ public final class EventStoreAsyncForDynamoDB<
                         response -> {
                           try {
                             return eventStoreSupport.convertToAggregateAndVersion(response, clazz);
-                          } catch (SerializationException e) {
+                          } catch (DeserializationException e) {
                             throw new SerializationRuntimeException(e);
                           }
                         })
@@ -256,8 +256,8 @@ public final class EventStoreAsyncForDynamoDB<
                         response -> {
                           try {
                             return eventStoreSupport.convertToEvents(response, clazz);
-                          } catch (SerializationException e) {
-                            throw new SerializationRuntimeException(e);
+                          } catch (DeserializationException e) {
+                            throw new DeserializationRuntimeException(e);
                           }
                         })
                     .handle(
