@@ -57,7 +57,7 @@ public interface EventStore<
    * @return latest snapshot / 最新のスナップショット
    * @throws EventStoreReadException if an error occurred during reading from the event store /
    *     イベントストアからの読み込み中にエラーが発生した場合
-   * @throws SerializationException if an error occurred during serialization / シリアライズ中にエラーが発生した場合
+   * @throws DeserializationException if an error occurred during serialization / シリアライズ中にエラーが発生した場合
    */
   @Nonnull
   Optional<A> getLatestSnapshotById(@Nonnull Class<A> clazz, @Nonnull AID aggregateId)
@@ -72,7 +72,7 @@ public interface EventStore<
    * @return events / イベント
    * @throws EventStoreReadException if an error occurred during reading from the event store /
    *     イベントストアからの読み込み中にエラーが発生した場合
-   * @throws SerializationException if an error occurred during serialization / シリアライズ中にエラーが発生した場合
+   * @throws DeserializationException if an error occurred during serialization / シリアライズ中にエラーが発生した場合
    */
   @Nonnull
   List<E> getEventsByIdSinceSequenceNumber(
