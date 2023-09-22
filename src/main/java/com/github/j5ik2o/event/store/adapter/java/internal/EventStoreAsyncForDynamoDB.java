@@ -1,6 +1,5 @@
 package com.github.j5ik2o.event.store.adapter.java.internal;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.j5ik2o.event.store.adapter.java.*;
 import io.vavr.Tuple2;
 import io.vavr.control.Option;
@@ -22,11 +21,6 @@ public final class EventStoreAsyncForDynamoDB<
     implements EventStoreAsync<AID, A, E> {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(EventStoreAsyncForDynamoDB.class);
-  private static final ObjectMapper objectMapper = new ObjectMapper();
-
-  static {
-    objectMapper.findAndRegisterModules();
-  }
 
   @Nonnull private final DynamoDbAsyncClient dynamoDbAsyncClient;
   @Nonnull private final String journalTableName;
@@ -119,8 +113,8 @@ public final class EventStoreAsyncForDynamoDB<
         null,
         null,
         new DefaultKeyResolver<>(),
-        new JsonEventSerializer<>(objectMapper),
-        new JsonSnapshotSerializer<>(objectMapper));
+        new JsonEventSerializer<>(),
+        new JsonSnapshotSerializer<>());
   }
 
   @Nonnull

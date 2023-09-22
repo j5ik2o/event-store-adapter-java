@@ -11,11 +11,13 @@ import javax.annotation.Nonnull;
 
 public final class JsonEventSerializer<AID extends AggregateId, E extends Event<AID>>
     implements EventSerializer<AID, E> {
-  @Nonnull private final ObjectMapper objectMapper;
+  private static final ObjectMapper objectMapper = new ObjectMapper();
 
-  public JsonEventSerializer(@Nonnull ObjectMapper objectMapper) {
-    this.objectMapper = objectMapper;
+  static {
+    objectMapper.findAndRegisterModules();
   }
+
+  public JsonEventSerializer() {}
 
   @Nonnull
   @Override
