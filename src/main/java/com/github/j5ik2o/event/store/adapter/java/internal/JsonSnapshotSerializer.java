@@ -11,11 +11,13 @@ import javax.annotation.Nonnull;
 
 public final class JsonSnapshotSerializer<AID extends AggregateId, A extends Aggregate<A, AID>>
     implements SnapshotSerializer<AID, A> {
-  @Nonnull private final ObjectMapper objectMapper;
+  private static final ObjectMapper objectMapper = new ObjectMapper();
 
-  public JsonSnapshotSerializer(@Nonnull ObjectMapper objectMapper) {
-    this.objectMapper = objectMapper;
+  static {
+    objectMapper.findAndRegisterModules();
   }
+
+  public JsonSnapshotSerializer() {}
 
   @Nonnull
   @Override
