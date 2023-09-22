@@ -44,7 +44,7 @@ public final class UserAccountRepository {
                 UserAccountEvent.class, id, snapshot.get().getSequenceNumber() + 1);
         return Optional.of(UserAccount.replay(events, snapshot.get()));
       }
-    } catch (EventStoreReadException | SerializationException e) {
+    } catch (EventStoreReadException | DeserializationException e) {
       throw new RepositoryException(e);
     }
   }
