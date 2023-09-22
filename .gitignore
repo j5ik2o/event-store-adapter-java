@@ -1,8 +1,7 @@
 # Compiled class file
 *.class
 
-# Log file
-*.log
+# Log file *.log
 
 # BlueJ files
 *.ctxt
@@ -37,3 +36,5 @@ gradle-app.setting
 
 .vscode/*
 !.vscode/settings.json
+
+.DS_Store

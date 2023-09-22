@@ -5,15 +5,15 @@ import javax.annotation.Nonnull;
 
 public final class IdGenerator {
   private static final ULID ulid = new ULID();
-  private static ULID.Value prevValue;
+  private static ULID.Value prevValue = ulid.nextValue();
 
   @Nonnull
   public static synchronized ULID.Value generate() {
-    if (prevValue == null) {
-      prevValue = ulid.nextValue();
-    } else {
-      prevValue = ulid.nextMonotonicValue(prevValue);
+    var result = ulid.nextMonotonicValue(prevValue);
+    if (result == null) {
+      throw new IllegalStateException("ULID overflow");
     }
-    return prevValue;
+    prevValue = result;
+    return result;
   }
 }
