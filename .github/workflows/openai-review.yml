@@ -17,6 +17,7 @@ jobs:
   review:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    if: "!contains(github.event.pull_request.labels.*.name, 'renovate')"
     steps:
       - uses: coderabbitai/openai-pr-reviewer@latest
         env:
