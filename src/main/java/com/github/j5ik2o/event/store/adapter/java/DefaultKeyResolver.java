@@ -1,7 +1,5 @@
-package com.github.j5ik2o.event.store.adapter.java.internal;
+package com.github.j5ik2o.event.store.adapter.java;
 
-import com.github.j5ik2o.event.store.adapter.java.AggregateId;
-import com.github.j5ik2o.event.store.adapter.java.KeyResolver;
 import javax.annotation.Nonnull;
 
 public class DefaultKeyResolver<AID extends AggregateId> implements KeyResolver<AID> {

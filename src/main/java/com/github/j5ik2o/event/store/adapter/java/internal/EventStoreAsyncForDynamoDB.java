@@ -113,8 +113,8 @@ public final class EventStoreAsyncForDynamoDB<
         null,
         null,
         new DefaultKeyResolver<>(),
-        new JsonEventSerializer<>(),
-        new JsonSnapshotSerializer<>());
+        new DefaultEventSerializer<>(),
+        new DefaultSnapshotSerializer<>());
   }
 
   @Nonnull
