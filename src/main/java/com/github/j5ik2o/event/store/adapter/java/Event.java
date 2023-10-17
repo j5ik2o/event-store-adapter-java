@@ -33,9 +33,9 @@ public interface Event<AID extends AggregateId> {
   long getSequenceNumber();
 
   /**
-   * Returns the version. / バージョンを返します。
+   * Returns the occurred at. / 発生日時を返します。
    *
-   * @return version / バージョン
+   * @return occurred at / 発生日時
    */
   @Nonnull
   Instant getOccurredAt();
