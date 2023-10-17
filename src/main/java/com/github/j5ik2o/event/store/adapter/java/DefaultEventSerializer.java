@@ -1,12 +1,11 @@
-package com.github.j5ik2o.event.store.adapter.java.internal;
+package com.github.j5ik2o.event.store.adapter.java;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.j5ik2o.event.store.adapter.java.*;
 import java.io.IOException;
 import javax.annotation.Nonnull;
 
-public final class JsonEventSerializer<AID extends AggregateId, E extends Event<AID>>
+public final class DefaultEventSerializer<AID extends AggregateId, E extends Event<AID>>
     implements EventSerializer<AID, E> {
   private static final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -14,7 +13,7 @@ public final class JsonEventSerializer<AID extends AggregateId, E extends Event<
     objectMapper.findAndRegisterModules();
   }
 
-  public JsonEventSerializer() {}
+  public DefaultEventSerializer() {}
 
   @Nonnull
   @Override

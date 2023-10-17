@@ -1,12 +1,11 @@
-package com.github.j5ik2o.event.store.adapter.java.internal;
+package com.github.j5ik2o.event.store.adapter.java;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.j5ik2o.event.store.adapter.java.*;
 import java.io.IOException;
 import javax.annotation.Nonnull;
 
-public final class JsonSnapshotSerializer<AID extends AggregateId, A extends Aggregate<A, AID>>
+public final class DefaultSnapshotSerializer<AID extends AggregateId, A extends Aggregate<A, AID>>
     implements SnapshotSerializer<AID, A> {
   private static final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -14,7 +13,7 @@ public final class JsonSnapshotSerializer<AID extends AggregateId, A extends Agg
     objectMapper.findAndRegisterModules();
   }
 
-  public JsonSnapshotSerializer() {}
+  public DefaultSnapshotSerializer() {}
 
   @Nonnull
   @Override
