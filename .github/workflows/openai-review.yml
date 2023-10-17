@@ -5,6 +5,7 @@ permissions:
 on:
   pull_request_target:
     types: [opened, synchronize, reopened]
+    branches-ignore: [main]
   pull_request_review_comment:
     types: [created]
 concurrency:
@@ -16,20 +17,25 @@ concurrency:
 jobs:
   review:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
           repository: ${{github.event.pull_request.head.repo.full_name}}
           ref: ${{github.event.pull_request.head.ref}}
           submodules: false
-      - uses: ./
+      - uses: coderabbitai/openai-pr-reviewer@latest
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         with:
           debug: true
+          review_simple_changes: false
           review_comment_lgtm: false
-          openai_heavy_model: gpt-4
+          openai_light_model: gpt-4 # 好みで変更
+          openai_heavy_model: gpt-4 # 好みで変更
+          openai_timeout_ms: 900000 # 15分.
+          language: ja-JP
           path_filters: |
             !dist/**
             !**/*.lock
