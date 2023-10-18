@@ -32,11 +32,11 @@ public class EventStoreForDynamoDBTest {
 
   @Test
   public void persistAndGet()
-      throws SerializationException,
+          throws SerializationException,
           EventStoreWriteException,
           EventStoreReadException,
-          TransactionException,
-          DeserializationException {
+          OptimisticLockException,
+          DeserializationException  {
     try (var client = DynamoDBUtils.createDynamoDbClient(localstack)) {
       DynamoDBUtils.createJournalTable(client, JOURNAL_TABLE_NAME, JOURNAL_AID_INDEX_NAME);
       DynamoDBUtils.createSnapshotTable(client, SNAPSHOT_TABLE_NAME, SNAPSHOT_AID_INDEX_NAME);
@@ -53,10 +53,14 @@ public class EventStoreForDynamoDBTest {
 
       var id = new UserAccountId(IdGenerator.generate().toString());
       var aggregateAndEvent = UserAccount.create(id, "test-1");
-      eventStore.persistEventAndSnapshot(
-          aggregateAndEvent.getEvent(), aggregateAndEvent.getAggregate());
+        try {
+            eventStore.persistEventAndSnapshot(
+                    aggregateAndEvent.getEvent(), aggregateAndEvent.getAggregate());
+        } catch (com.github.j5ik2o.event.store.adapter.java.OptimisticLockException e) {
+            throw new OptimisticLockException(e);
+        }
 
-      var result = eventStore.getLatestSnapshotById(UserAccount.class, id);
+        var result = eventStore.getLatestSnapshotById(UserAccount.class, id);
       if (result.isPresent()) {
         assertEquals(result.get().getId(), aggregateAndEvent.getAggregate().getId());
         LOGGER.info("result = {}", result.get());

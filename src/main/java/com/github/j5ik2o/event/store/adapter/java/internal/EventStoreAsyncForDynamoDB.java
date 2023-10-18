@@ -323,10 +323,11 @@ public final class EventStoreAsyncForDynamoDB<
             (response, ex) -> {
               if (ex != null) {
                 if (ex instanceof TransactionCanceledException) {
-                  throw new TransactionRuntimeException(ex);
-                } else {
-                  throw new EventStoreReadRuntimeException(ex);
+                  if (((TransactionCanceledException) ex).hasCancellationReasons()) {
+                    throw new OptimisticLockRuntimeException(ex);
+                  }
                 }
+                throw new EventStoreReadRuntimeException(ex);
               }
               return response;
             })
@@ -354,10 +355,11 @@ public final class EventStoreAsyncForDynamoDB<
             (response, ex) -> {
               if (ex != null) {
                 if (ex instanceof TransactionCanceledException) {
-                  throw new TransactionRuntimeException(ex);
-                } else {
-                  throw new EventStoreReadRuntimeException(ex);
+                  if (((TransactionCanceledException) ex).hasCancellationReasons()) {
+                    throw new OptimisticLockRuntimeException(ex);
+                  }
                 }
+                throw new EventStoreReadRuntimeException(ex);
               }
               return response;
             })

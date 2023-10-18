@@ -17,7 +17,7 @@ public final class UserAccountRepository {
       eventStore.persistEvent(event, version);
     } catch (EventStoreWriteException | SerializationException e) {
       throw new RepositoryException(e);
-    } catch (TransactionException e) {
+    } catch (com.github.j5ik2o.event.store.adapter.java.OptimisticLockException e) {
       throw new OptimisticLockException(e);
     }
   }
@@ -27,7 +27,7 @@ public final class UserAccountRepository {
       eventStore.persistEventAndSnapshot(event, aggregate);
     } catch (EventStoreWriteException | SerializationException e) {
       throw new RepositoryException(e);
-    } catch (TransactionException e) {
+    } catch (com.github.j5ik2o.event.store.adapter.java.OptimisticLockException e) {
       throw new OptimisticLockException(e);
     }
   }
