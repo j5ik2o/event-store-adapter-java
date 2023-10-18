@@ -248,7 +248,7 @@ public final class EventStoreForDynamoDB<
 
   @Override
   public void persistEvent(@Nonnull E event, long version)
-      throws EventStoreWriteException, SerializationException, TransactionException {
+      throws EventStoreWriteException, SerializationException, OptimisticLockException {
     LOGGER.debug("persistEvent({}, {}): start", event, version);
     if (event.isCreated()) {
       throw new IllegalArgumentException("event is created");
@@ -260,7 +260,7 @@ public final class EventStoreForDynamoDB<
 
   @Override
   public void persistEventAndSnapshot(@Nonnull E event, @Nonnull A aggregate)
-      throws EventStoreWriteException, SerializationException, TransactionException {
+      throws EventStoreWriteException, SerializationException, OptimisticLockException {
     LOGGER.debug("persistEventAndSnapshot({}, {}): start", event, aggregate);
     TransactWriteItemsResponse result;
     if (event.isCreated()) {
@@ -289,7 +289,7 @@ public final class EventStoreForDynamoDB<
 
   private TransactWriteItemsResponse updateEventAndSnapshotOpt(
       @Nonnull E event, long version, Option<A> aggregate)
-      throws SerializationException, EventStoreWriteException, TransactionException {
+      throws SerializationException, EventStoreWriteException, OptimisticLockException {
     try {
       LOGGER.debug("updateEventAndSnapshotOpt({}, {}, {}): start", event, version, aggregate);
       var request =
@@ -299,7 +299,10 @@ public final class EventStoreForDynamoDB<
       LOGGER.debug("updateEventAndSnapshotOpt({}, {}, {}): finished", event, version, aggregate);
       return result;
     } catch (TransactionCanceledException e) {
-      throw new TransactionException(e);
+      if (e.hasCancellationReasons()) {
+        throw new OptimisticLockException(e);
+      }
+      throw new EventStoreWriteException(e);
     } catch (AwsServiceException | SdkClientException e) {
       throw new EventStoreWriteException(e);
     }
