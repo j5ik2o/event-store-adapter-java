@@ -87,7 +87,8 @@ public interface EventStore<
    * @throws EventStoreWriteException if an error occurred during writing to the event store /
    *     イベントストアへの書き込み中にエラーが発生した場合
    * @throws SerializationException if an error occurred during serialization / シリアライズ中にエラーが発生した場合
-   * @throws OptimisticLockException if an error occurred during optimistic lock / 楽観的ロック中にエラーが発生した場合
+   * @throws OptimisticLockException if an error occurred during optimistic lock /
+   *     楽観的ロック中にエラーが発生した場合
    */
   void persistEvent(@Nonnull E event, long version)
       throws EventStoreWriteException, SerializationException, OptimisticLockException;
@@ -100,7 +101,8 @@ public interface EventStore<
    * @throws EventStoreWriteException if an error occurred during writing to the event store /
    *     イベントストアへの書き込み中にエラーが発生した場合
    * @throws SerializationException if an error occurred during serialization / シリアライズ中にエラーが発生した場合
-   * @throws OptimisticLockException if an error occurred during optimistic lock / 楽観的ロック中にエラーが発生した場合
+   * @throws OptimisticLockException if an error occurred during optimistic lock /
+   *     楽観的ロック中にエラーが発生した場合
    */
   void persistEventAndSnapshot(@Nonnull E event, @Nonnull A aggregate)
       throws EventStoreWriteException, SerializationException, OptimisticLockException;
