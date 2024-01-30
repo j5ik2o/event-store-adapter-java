@@ -22,7 +22,7 @@ jobs:
         with:
           distribution: temurin
           java-version: 11
-      - uses: gradle/gradle-build-action@v2
+      - uses: gradle/gradle-build-action@v3
         with:
           gradle-version: 8.3
           arguments: spotlessCheck --info
@@ -42,7 +42,7 @@ jobs:
         with:
           distribution: temurin
           java-version: ${{ matrix.java }}
-      - uses: gradle/gradle-build-action@v2
+      - uses: gradle/gradle-build-action@v3
         with:
           gradle-version: 8.3
           arguments: test --info
