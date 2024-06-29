@@ -30,7 +30,7 @@ dependencies {
     testImplementation("de.huxhorn.sulky:de.huxhorn.sulky.ulid:8.3.0")
 
     implementation("io.vavr:vavr:0.10.4")
-    implementation("software.amazon.awssdk:dynamodb:2.26.11")
+    implementation("software.amazon.awssdk:dynamodb:2.26.12")
     implementation("com.fasterxml.jackson.core:jackson-databind:2.17.1")
     implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.17.1")
     implementation("org.slf4j:slf4j-api:1.7.36")
