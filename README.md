@@ -3,6 +3,7 @@
 [![CI](https://github.com/j5ik2o/event-store-adapter-java/actions/workflows/ci.yml/badge.svg)](https://github.com/j5ik2o/event-store-adapter-java/actions/workflows/ci.yml)
 [![Maven Central](https://maven-badges.herokuapp.com/maven-central/com.github.j5ik2o/event-store-adapter-java/badge.svg)](https://maven-badges.herokuapp.com/maven-central/com.github.j5ik2o/event-store-adapter-java)
 [![Renovate](https://img.shields.io/badge/renovate-enabled-brightgreen.svg)](https://renovatebot.com)
+[![License](https://img.shields.io/badge/License-APACHE2.0-blue.svg)](https://opensource.org/licenses/apache-2-0)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![tokei](https://tokei.rs/b1/github/j5ik2o/event-store-adapter-java)](https://github.com/XAMPPRocky/tokei)
 
@@ -91,14 +92,6 @@ See [docs/DATABASE_SCHEMA.md](docs/DATABASE_SCHEMA.md).
 
 MIT License. See [LICENSE](LICENSE) for details.
 
-## Other language implementations
+## Links
 
-- [for Java](https://github.com/j5ik2o/event-store-adapter-java)
-- [for Scala](https://github.com/j5ik2o/event-store-adapter-scala)
-- [for Kotlin](https://github.com/j5ik2o/event-store-adapter-kotlin)
-- [for Rust](https://github.com/j5ik2o/event-store-adapter-rs)
-- [for Go](https://github.com/j5ik2o/event-store-adapter-go)
-- [for JavaScript/TypeScript](https://github.com/j5ik2o/event-store-adapter-js)
-- [for .NET](https://github.com/j5ik2o/event-store-adapter-dotnet)
-- [for PHP](https://github.com/j5ik2o/event-store-adapter-php)
-
+- [Common Documents](https://github.com/j5ik2o/event-store-adapter)
