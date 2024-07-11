@@ -6,7 +6,7 @@ plugins {
     `maven-publish`
     signing
     id("com.diffplug.spotless") version "6.22.0"
-    id("io.github.gradle-nexus.publish-plugin") version "2.0.0-rc-1"
+    id("io.github.gradle-nexus.publish-plugin") version "2.0.0"
 }
 
 group = "com.github.j5ik2o"
@@ -15,7 +15,6 @@ extra["isReleaseVersion"] = !version.toString().endsWith("SNAPSHOT")
 
 repositories {
     mavenCentral()
-    maven { url = uri("https://oss.sonatype.org/content/repositories/snapshots") }
 }
 
 dependencies {
@@ -23,8 +22,8 @@ dependencies {
     testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.10.1")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
-    testImplementation("ch.qos.logback:logback-classic:1.4.11")
-    testImplementation("org.testcontainers:testcontainers:1.19.2")
+    testImplementation("ch.qos.logback:logback-classic:1.4.12")
+    testImplementation("org.testcontainers:testcontainers:1.24.0")
     testImplementation("org.testcontainers:junit-jupiter:1.19.2")
     testImplementation("org.testcontainers:localstack:1.19.2")
     testImplementation("de.huxhorn.sulky:de.huxhorn.sulky.ulid:8.3.0")
@@ -45,9 +44,6 @@ spotless {
 
 repositories {
     mavenCentral()
-    maven {
-        url = uri("https://oss.sonatype.org/content/repositories/snapshots")
-    }
 }
 
 java {
@@ -143,8 +139,7 @@ nexusPublishing {
     this.repositories {
         this.sonatype {
             packageGroup = "com.github.j5ik2o"
-            nexusUrl = uri("https://oss.sonatype.org/service/local/")
-            snapshotRepositoryUrl = uri("https://oss.sonatype.org/content/repositories/snapshots/")
+            nexusUrl = uri("https://s01.oss.sonatype.org/service/local/")
             username = System.getenv("SONATYPE_USERNAME")
             password = System.getenv("SONATYPE_PASSWORD")
         }
