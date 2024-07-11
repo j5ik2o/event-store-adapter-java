@@ -15,7 +15,6 @@ extra["isReleaseVersion"] = !version.toString().endsWith("SNAPSHOT")
 
 repositories {
     mavenCentral()
-    maven { url = uri("https://oss.sonatype.org/content/repositories/snapshots") }
 }
 
 dependencies {
@@ -27,6 +26,7 @@ dependencies {
     testImplementation("org.testcontainers:testcontainers:1.19.8")
     testImplementation("org.testcontainers:junit-jupiter:1.19.8")
     testImplementation("org.testcontainers:localstack:1.19.8")
+
     testImplementation("de.huxhorn.sulky:de.huxhorn.sulky.ulid:8.3.0")
 
     implementation("io.vavr:vavr:0.10.4")
@@ -45,9 +45,6 @@ spotless {
 
 repositories {
     mavenCentral()
-    maven {
-        url = uri("https://oss.sonatype.org/content/repositories/snapshots")
-    }
 }
 
 java {
@@ -143,8 +140,7 @@ nexusPublishing {
     this.repositories {
         this.sonatype {
             packageGroup = "com.github.j5ik2o"
-            nexusUrl = uri("https://oss.sonatype.org/service/local/")
-            snapshotRepositoryUrl = uri("https://oss.sonatype.org/content/repositories/snapshots/")
+            nexusUrl = uri("https://s01.oss.sonatype.org/service/local/")
             username = System.getenv("SONATYPE_USERNAME")
             password = System.getenv("SONATYPE_PASSWORD")
         }
