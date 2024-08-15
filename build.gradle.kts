@@ -22,7 +22,7 @@ dependencies {
     testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.11.0")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
-    testImplementation("ch.qos.logback:logback-classic:1.5.6")
+    testImplementation("ch.qos.logback:logback-classic:1.5.7")
     testImplementation("org.testcontainers:testcontainers:1.20.1")
     testImplementation("org.testcontainers:junit-jupiter:1.20.1")
     testImplementation("org.testcontainers:localstack:1.20.1")
