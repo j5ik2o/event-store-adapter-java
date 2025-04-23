@@ -1,96 +1,169 @@
 name: Bump-Version
 on:
   workflow_dispatch:
+    inputs:
+      force_bump:
+        description: 'Force version bump'
+        required: true
+        type: boolean
+        default: false
   schedule:
     - cron: "0 0 * * *"
 jobs:
   bump-version:
     runs-on: ubuntu-latest
     steps:
+      # ─────────────────────────────────────────
+      # 1. ソース取得
+      # ─────────────────────────────────────────
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          persist-credentials: true
+          persist-credentials: true   # PAT を使うステップがあるので true
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+
+      # ─────────────────────────────────────────
+      # 2. Python と依存ライブラリ
+      # ─────────────────────────────────────────
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.12"      # 3.13 は pre-release のため安定版を利用
       - run: pip install semver
+
+      # ─────────────────────────────────────────
+      # 3. “比較対象” を決定
+      # ─────────────────────────────────────────
       - id: defines
         run: |
-          LATEST_TAG=$(git describe --abbrev=0 --tags)
-          echo "LATEST_TAG=$LATEST_TAG"
-          echo "prev_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+          if git tag -l | grep -q .; then
+            LATEST_TAG=$(git describe --abbrev=0 --tags)
+            echo "prev_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+          else
+            FIRST_COMMIT=$(git rev-list --max-parents=0 HEAD)
+            echo "prev_tag=$FIRST_COMMIT" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ─────────────────────────────────────────
+      # 4. 変更点をカウント（force_bump 対応）
+      # ─────────────────────────────────────────
       - name: Calculate changes from the latest tag to HEAD
         id: changes
         run: |
-          COUNT=$(git log ${{ steps.defines.outputs.prev_tag }}..HEAD --pretty=format:"%s" \
-            --no-merges -P --grep='^(BREAKING CHANGE|build|ci|feat|fix|docs|style|refactor|perf|test|revert|chore)(\(.*\))?:' | awk 'END{print NR}')
-          echo "COUNT=$COUNT"
-          echo "count=$COUNT" >> $GITHUB_OUTPUT
+          BASE=${{ steps.defines.outputs.prev_tag }}
+          
+          COUNT=$(git log "$BASE"..HEAD --pretty=format:"%s" \
+            --no-merges -P \
+            --grep='^(BREAKING CHANGE|build|ci|feat|fix|docs|style|refactor|perf|test|revert|chore)(\(.*\))?:' \
+            | awk 'END{print NR}')
+          
+          echo "COUNT(before force)=$COUNT"
+          
+          # ----- force_bump -----
+          if [[ "${{ inputs.force_bump }}" == "true" ]]; then
+            echo "force_bump requested — overriding COUNT to 1"
+            COUNT=1
+          fi
+          # ----------------------
+          
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+
+      # ─────────────────────────────────────────
+      # 5. SemVer レベル算定
+      # ─────────────────────────────────────────
       - name: Calculate semver level
         id: semver_level
-        run: |
-          SEMVER_LEVEL=$(git log ${{ steps.defines.outputs.prev_tag }}..HEAD --pretty=format:"%h%x09%H%x09%s" \
-            --no-merges -P --grep='^(BREAKING CHANGE|build|ci|feat|fix|docs|style|refactor|perf|test|revert|chore)(\(.*\))?:' \
-            | python3 "${GITHUB_WORKSPACE}"/.github/semver-level.py)
-          echo "SEMVER_LEVEL=$SEMVER_LEVEL"
-          echo "semver_level=$SEMVER_LEVEL" >> $GITHUB_OUTPUT
         if: steps.changes.outputs.count > 0
+        run: |
+          SEMVER_LEVEL=$(git log ${{ steps.defines.outputs.prev_tag }}..HEAD \
+            --pretty=format:"%h%x09%H%x09%s" \
+            --no-merges -P \
+            --grep='^(BREAKING CHANGE|build|ci|feat|fix|docs|style|refactor|perf|test|revert|chore)(\(.*\))?:' \
+            | python3 "${GITHUB_WORKSPACE}"/.github/semver-level.py)
+          
+          echo "semver_level=$SEMVER_LEVEL" >> "$GITHUB_OUTPUT"
+
+      # ─────────────────────────────────────────
+      # 6. 次のバージョン番号を算出
+      # ─────────────────────────────────────────
       - name: Get the next version
         id: versions
-        run: |
-          NEXT_VERSION=$(echo ${{ steps.defines.outputs.prev_tag }} | python3 "${GITHUB_WORKSPACE}"/.github/next-semver.py ${{ steps.semver_level.outputs.semver_level }})
-          echo "NEXT_VERSION=$NEXT_VERSION"
-          echo "next_version=$NEXT_VERSION" >> $GITHUB_OUTPUT
-          echo "next_tag=v$NEXT_VERSION" >> $GITHUB_OUTPUT
         if: steps.changes.outputs.count > 0
-      - name: set the next version
         run: |
-          echo ${{ steps.versions.outputs.next_version }} > version
+          NEXT_VERSION=$(echo ${{ steps.defines.outputs.prev_tag }} \
+            | python3 "${GITHUB_WORKSPACE}"/.github/next-semver.py \
+              ${{ steps.semver_level.outputs.semver_level }})
+          
+          echo "next_version=$NEXT_VERSION" >> "$GITHUB_OUTPUT"
+          echo "next_tag=v$NEXT_VERSION"   >> "$GITHUB_OUTPUT"
+
+      # ─────────────────────────────────────────
+      # 7. `version` ファイルを更新
+      # ─────────────────────────────────────────
+      - name: Set the next version
+        run: echo ${{ steps.versions.outputs.next_version }} > version
+
+      # ─────────────────────────────────────────
+      # 8. コミット & Push
+      # ─────────────────────────────────────────
       - name: git commit & push
         id: git_commit_push
+        if: steps.changes.outputs.count > 0
         run: |
           git config --global user.email "j5ik2o@gmail.com"
-          git config --global user.name "Junichi Kato"
+          git config --global user.name  "Junichi Kato"
           git diff
           git add .
           git commit -m "version up to ${{ steps.versions.outputs.next_tag }}"
           git push origin main
-          COMMIT_SHA=$(git rev-parse HEAD)
-          echo "commit_sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
-        if: steps.changes.outputs.count > 0
+          echo "commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # ─────────────────────────────────────────
+      # 9. タグ付け & リリースノート生成
+      # ─────────────────────────────────────────
       - name: tagging and push tag
         id: tag_version
+        if: steps.changes.outputs.count > 0
         run: |
-          git tag -a "${{ steps.versions.outputs.next_tag }}" ${{ steps.git_commit_push.outputs.commit_sha }} -m "${{ steps.versions.outputs.next_tag }}"
-          git push origin ${{ steps.versions.outputs.next_tag }}
+          git tag -a "${{ steps.versions.outputs.next_tag }}" \
+                  ${{ steps.git_commit_push.outputs.commit_sha }} \
+                  -m "${{ steps.versions.outputs.next_tag }}"
+          git push origin "${{ steps.versions.outputs.next_tag }}"
+          
           python3 "${GITHUB_WORKSPACE}"/.github/create-release-note-header.py \
             ${{ github.server_url }} \
             ${{ github.repository }} \
             ${{ steps.defines.outputs.prev_tag }} \
-            ${{ steps.versions.outputs.next_tag }} \
-            > changelog.txt
-          git log ${{ steps.defines.outputs.prev_tag }}..${{ steps.versions.outputs.next_tag }} --pretty=format:"%h%x09%H%x09%s" \
-            -P --grep='^(BREAKING CHANGE|build|ci|feat|fix|docs|style|refactor|perf|test|revert|chore)(\(.*\))?:.*$' \
-            --no-merges --full-history | \
-            python3 "${GITHUB_WORKSPACE}"/.github/create-release-note-body.py >> changelog.txt
-        if: steps.changes.outputs.count > 0
+            ${{ steps.versions.outputs.next_tag }} > changelog.txt
+          
+          git log ${{ steps.defines.outputs.prev_tag }}..${{ steps.versions.outputs.next_tag }} \
+            --pretty=format:"%h%x09%H%x09%s" --no-merges --full-history -P \
+            --grep='^(BREAKING CHANGE|build|ci|feat|fix|docs|style|refactor|perf|test|revert|chore)(\(.*\))?:.*$' \
+            | python3 "${GITHUB_WORKSPACE}"/.github/create-release-note-body.py \
+            >> changelog.txt
+
+      # ─────────────────────────────────────────
+      # 10. GitHub Release 作成
+      # ─────────────────────────────────────────
       - name: Create a GitHub release
+        if: steps.changes.outputs.count > 0
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
         with:
-          tag_name: ${{ steps.versions.outputs.next_tag }}
+          tag_name:     ${{ steps.versions.outputs.next_tag }}
           release_name: Release ${{ steps.versions.outputs.next_tag }}
-          body_path: changelog.txt
-        if: steps.changes.outputs.count > 0
+          body_path:    changelog.txt
+
+      # ─────────────────────────────────────────
+      # 11. Snapshot 版へ移行
+      # ─────────────────────────────────────────
       - name: Switch to Snapshot version
+        if: steps.changes.outputs.count > 0
         run: |
           rm changelog.txt
-          SNAPSHOT_VERSION=$(echo "${{ steps.versions.outputs.next_version }}" | python3 "${GITHUB_WORKSPACE}"/.github/next-semver.py snapshot)
-          echo $SNAPSHOT_VERSION > version
+          SNAPSHOT_VERSION=$(echo "${{ steps.versions.outputs.next_version }}" \
+            | python3 "${GITHUB_WORKSPACE}"/.github/next-semver.py snapshot)
+          echo "$SNAPSHOT_VERSION" > version
           git add .
-          git commit -m "version up to ${SNAPSHOT_VERSION}"
+          git commit -m "version up to $SNAPSHOT_VERSION"
           git push origin main
-        if: steps.changes.outputs.count > 0
