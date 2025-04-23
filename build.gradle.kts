@@ -9,7 +9,7 @@ plugins {
     id("io.github.gradle-nexus.publish-plugin") version "2.0.0"
 }
 
-group = "com.github.j5ik2o"
+group = "io.github.j5ik2o"
 version = File("./version").readText().trim()
 extra["isReleaseVersion"] = !version.toString().endsWith("SNAPSHOT")
 
