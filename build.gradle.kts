@@ -139,8 +139,9 @@ publishing {
 nexusPublishing {
     this.repositories {
         this.sonatype {
-            packageGroup = "com.github.j5ik2o"
+            packageGroup = "io.github.j5ik2o"
             nexusUrl = uri("https://s01.oss.sonatype.org/service/local/")
+            snapshotRepositoryUrl = uri("https://s01.oss.sonatype.org/content/repositories/snapshots/")
             username = System.getenv("SONATYPE_USERNAME")
             password = System.getenv("SONATYPE_PASSWORD")
         }
