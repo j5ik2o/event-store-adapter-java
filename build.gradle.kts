@@ -5,7 +5,7 @@ plugins {
     `java-library`
     `maven-publish`
     signing
-    id("com.diffplug.spotless") version "6.25.0"
+    id("com.diffplug.spotless") version "7.0.3"
     id("io.github.gradle-nexus.publish-plugin") version "2.0.0"
 }
 
@@ -18,21 +18,21 @@ repositories {
 }
 
 dependencies {
-    testImplementation("org.junit.jupiter:junit-jupiter-api:5.11.3")
-    testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.11.3")
+    testImplementation("org.junit.jupiter:junit-jupiter-api:5.12.2")
+    testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.12.2")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
-    testImplementation("ch.qos.logback:logback-classic:1.5.12")
-    testImplementation("org.testcontainers:testcontainers:1.20.3")
-    testImplementation("org.testcontainers:junit-jupiter:1.20.3")
-    testImplementation("org.testcontainers:localstack:1.20.3")
+    testImplementation("ch.qos.logback:logback-classic:1.5.18")
+    testImplementation("org.testcontainers:testcontainers:1.20.6")
+    testImplementation("org.testcontainers:junit-jupiter:1.20.6")
+    testImplementation("org.testcontainers:localstack:1.20.6")
 
     testImplementation("de.huxhorn.sulky:de.huxhorn.sulky.ulid:8.3.0")
 
-    implementation("io.vavr:vavr:0.10.5")
-    implementation("software.amazon.awssdk:dynamodb:2.29.13")
-    implementation("com.fasterxml.jackson.core:jackson-databind:2.18.1")
-    implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.18.1")
+    implementation("io.vavr:vavr:0.10.6")
+    implementation("software.amazon.awssdk:dynamodb:2.31.27")
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.18.3")
+    implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.18.3")
     implementation("org.slf4j:slf4j-api:1.7.36")
     implementation("com.google.code.findbugs:jsr305:3.0.2")
 }
@@ -88,7 +88,7 @@ tasks {
     }
 
     withType<Wrapper> {
-        gradleVersion = "8.11"
+        gradleVersion = "8.13"
     }
 
     withType<JavaCompile> {
