@@ -19,8 +19,8 @@ repositories {
 }
 
 dependencies {
-    testImplementation("org.junit.jupiter:junit-jupiter-api:5.13.2")
-    testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.13.2")
+    testImplementation("org.junit.jupiter:junit-jupiter-api:5.13.3")
+    testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.13.3")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
     testImplementation("ch.qos.logback:logback-classic:1.5.18")
