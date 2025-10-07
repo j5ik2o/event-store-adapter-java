@@ -27,7 +27,7 @@ jobs:
       # ─────────────────────────────────────────
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"      # 3.13 は pre-release のため安定版を利用
+          python-version: "3.14"      # 3.13 は pre-release のため安定版を利用
       - run: pip install semver
 
       # ─────────────────────────────────────────
