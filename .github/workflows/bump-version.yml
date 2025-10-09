@@ -25,7 +25,7 @@ jobs:
       # ─────────────────────────────────────────
       # 2. Python と依存ライブラリ
       # ─────────────────────────────────────────
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.14"      # 3.13 は pre-release のため安定版を利用
       - run: pip install semver
