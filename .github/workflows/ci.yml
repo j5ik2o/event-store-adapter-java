@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     name: "Run lint"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -37,7 +37,7 @@ jobs:
         java: [ 11, 17, 19 ] # LTS versions + latest version
     name: "Run tests with JDK ${{ matrix.java }}"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

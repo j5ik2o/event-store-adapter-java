@@ -16,7 +16,7 @@ jobs:
       # ─────────────────────────────────────────
       # 1. ソース取得
       # ─────────────────────────────────────────
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           persist-credentials: true   # PAT を使うステップがあるので true
