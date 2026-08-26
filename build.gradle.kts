@@ -32,8 +32,8 @@ dependencies {
 
     implementation("io.vavr:vavr:0.11.0")
     implementation("software.amazon.awssdk:dynamodb:2.54.4")
-    implementation("com.fasterxml.jackson.core:jackson-databind:2.20.1")
-    implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.20.1")
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.22.2")
+    implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.22.2")
     implementation("org.slf4j:slf4j-api:1.7.36")
     implementation("com.google.code.findbugs:jsr305:3.0.2")
 }
