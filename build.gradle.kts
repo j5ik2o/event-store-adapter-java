@@ -60,15 +60,28 @@ repositories {
 }
 
 java {
+    toolchain {
+        languageVersion.set(JavaLanguageVersion.of(11))
+    }
     sourceCompatibility = JavaVersion.VERSION_11
     targetCompatibility = JavaVersion.VERSION_11
+}
+
+val testJavaVersion = providers.gradleProperty("testJavaVersion").map(String::toInt).orElse(11)
+val testJavaLauncher = javaToolchains.launcherFor {
+    languageVersion.set(testJavaVersion.map(JavaLanguageVersion::of))
 }
 
 tasks {
 
     withType<Test> {
+        javaLauncher.set(testJavaLauncher)
         useJUnitPlatform()
         outputs.upToDateWhen { false }
+        doFirst {
+            val launcher = javaLauncher.get()
+            logger.lifecycle("Test JVM: JDK ${launcher.metadata.languageVersion} (${launcher.executablePath})")
+        }
         testLogging {
             showStandardStreams = true
             events = setOf(TestLogEvent.STARTED, TestLogEvent.SKIPPED, TestLogEvent.PASSED, TestLogEvent.FAILED)
@@ -104,6 +117,7 @@ tasks {
     }
 
     withType<JavaCompile> {
+        options.release.set(11)
         options.encoding = "UTF-8"
         options.compilerArgs.add("-Xlint:deprecation")
     }
