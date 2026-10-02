@@ -12,6 +12,12 @@
     {
       "matchDepTypes": ["devDependencies"],
       "automerge": true
+    },
+    {
+      "description": "JUnit 6+ requires Java 17, but this library targets Java 11. Block JUnit major updates until the baseline is raised.",
+      "matchPackageNames": ["/^org\\.junit\\./"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
     }
   ],
   "prHourlyLimit": 0,
