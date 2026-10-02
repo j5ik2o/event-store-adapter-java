@@ -8,8 +8,6 @@ on:
   pull_request:
     branches:
       - main
-    paths-ignore:
-      - 'version'
   schedule:
     - cron: '0 * * * *'
 jobs:
@@ -46,3 +44,18 @@ jobs:
         with:
           gradle-version: 8.3
           arguments: test --info
+  ci-success:
+    name: CI Success
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    if: always()
+    steps:
+      - name: Check CI results
+        env:
+          LINT_RESULT: ${{ needs.lint.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+        run: |
+          if [[ "$LINT_RESULT" != "success" || "$TEST_RESULT" != "success" ]]; then
+            echo "CI did not succeed: lint=$LINT_RESULT, test=$TEST_RESULT"
+            exit 1
+          fi
