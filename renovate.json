@@ -18,6 +18,18 @@
       "matchPackageNames": ["/^org\\.junit\\./"],
       "matchUpdateTypes": ["major"],
       "enabled": false
+    },
+    {
+      "description": "CI and publication run Gradle 8.3 on Java 11. Java 25 fails with Unsupported class file major version 69. Block JDK major updates until the Gradle runtime and Java 11 build/test strategy are migrated together.",
+      "matchPackageNames": ["java-jdk"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
+      "description": "Spotless 8+ requires Java 17, but CI, publication, and the Java 11 test matrix run Gradle on Java 11. Block Spotless major updates until the build JVM and Java 11 compatibility testing are migrated together.",
+      "matchPackageNames": ["com.diffplug.spotless:com.diffplug.spotless.gradle.plugin"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
     }
   ],
   "prHourlyLimit": 0,
