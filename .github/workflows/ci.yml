@@ -13,6 +13,7 @@ on:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     name: "Run lint"
     steps:
       - uses: actions/checkout@v7
@@ -26,6 +27,7 @@ jobs:
           arguments: spotlessCheck --info
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: lint
     env:
       JAVA_OPTS: -Xms2048M -Xmx2048M -Xss6M -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
@@ -47,6 +49,7 @@ jobs:
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
+    timeout-minutes: 2
     needs: [lint, test]
     if: always()
     steps:
