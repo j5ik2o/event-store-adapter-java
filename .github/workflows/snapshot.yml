@@ -37,4 +37,11 @@ jobs:
     - uses: gradle/actions/setup-gradle@v6
       with:
         cache-provider: basic
-    - run: ./gradlew publishToSonatype --info --stacktrace
+    - run: |
+        set -euo pipefail
+        current_main_sha="$(git ls-remote --exit-code origin refs/heads/main | cut -f1)"
+        if [[ "$current_main_sha" != "$GITHUB_SHA" ]]; then
+          echo "::notice::Skipping Snapshot publish because main has advanced."
+          exit 0
+        fi
+        ./gradlew publishToSonatype --info --stacktrace
