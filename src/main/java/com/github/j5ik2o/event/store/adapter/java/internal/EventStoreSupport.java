@@ -395,49 +395,47 @@ final class EventStoreSupport<
   }
 
   QueryRequest getSnapshotCountQueryRequest(AID id) {
-    return QueryRequest.builder()
-        .tableName(snapshotTableName)
-        .indexName(snapshotAidIndexName)
-        .keyConditionExpression("#aid = :aid")
-        .expressionAttributeNames(Map.of("#aid", "aid"))
-        .expressionAttributeValues(
-            Map.of(":aid", AttributeValue.builder().s(id.asString()).build()))
-        .select(Select.COUNT)
-        .build();
+    var queryBuilder =
+        QueryRequest.builder()
+            .tableName(snapshotTableName)
+            .indexName(snapshotAidIndexName)
+            .keyConditionExpression("#aid = :aid")
+            .expressionAttributeNames(Map.of("#aid", "aid"))
+            .expressionAttributeValues(
+                Map.of(":aid", AttributeValue.builder().s(id.asString()).build()))
+            .select(Select.COUNT);
+    return filterUnmarkedSnapshots(queryBuilder).build();
   }
 
   QueryRequest getLastSnapshotKeysQueryRequest(AID id, int limit) {
-    var names = io.vavr.collection.HashMap.of("#aid", "aid", "#seq_nr", "seq_nr");
-    var values =
-        io.vavr.collection.HashMap.of(
-            ":aid", AttributeValue.builder().s(id.asString()).build(),
-            ":seq_nr", AttributeValue.builder().n("0").build());
     var queryBuilder =
         QueryRequest.builder()
             .tableName(snapshotTableName)
             .indexName(snapshotAidIndexName)
             .keyConditionExpression("#aid = :aid AND #seq_nr > :seq_nr")
-            .expressionAttributeNames(names.toJavaMap())
-            .expressionAttributeValues(values.toJavaMap())
-            .scanIndexForward(false)
+            .expressionAttributeNames(Map.of("#aid", "aid", "#seq_nr", "seq_nr"))
+            .expressionAttributeValues(
+                Map.of(
+                    ":aid", AttributeValue.builder().s(id.asString()).build(),
+                    ":seq_nr", AttributeValue.builder().n("0").build()))
+            .scanIndexForward(true)
             .limit(limit);
+    return filterUnmarkedSnapshots(queryBuilder).build();
+  }
+
+  private QueryRequest.Builder filterUnmarkedSnapshots(QueryRequest.Builder queryBuilder) {
     if (deleteTtl.isDefined()) {
-      queryBuilder =
-          queryBuilder
-              .filterExpression("ttl < :ttl")
-              .expressionAttributeNames(
-                  names.merge(io.vavr.collection.HashMap.of("#ttl", "ttl")).toJavaMap())
-              .expressionAttributeValues(
-                  values
-                      .merge(
-                          io.vavr.collection.HashMap.of(
-                              ":ttl",
-                              AttributeValue.builder()
-                                  .n(String.valueOf(deleteTtl.get().toSeconds()))
-                                  .build()))
-                      .toJavaMap());
+      var request = queryBuilder.build();
+      var names = new java.util.HashMap<>(request.expressionAttributeNames());
+      names.put("#ttl", "ttl");
+      var values = new java.util.HashMap<>(request.expressionAttributeValues());
+      values.put(":unmarked", AttributeValue.builder().n("0").build());
+      queryBuilder
+          .filterExpression("attribute_not_exists(#ttl) OR #ttl = :unmarked")
+          .expressionAttributeNames(names)
+          .expressionAttributeValues(values);
     }
-    return queryBuilder.build();
+    return queryBuilder;
   }
 
   UpdateItemRequest updateTtlOfExcessSnapshots(
