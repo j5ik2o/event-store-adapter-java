@@ -334,7 +334,7 @@ public final class EventStoreForDynamoDB<
         for (var item : response.items()) {
           result.add(new Tuple2<>(item.get("pkey").s(), item.get("skey").s()));
         }
-        remaining -= response.scannedCount();
+        remaining -= response.count();
         if (!response.hasLastEvaluatedKey() || remaining <= 0) {
           break;
         }

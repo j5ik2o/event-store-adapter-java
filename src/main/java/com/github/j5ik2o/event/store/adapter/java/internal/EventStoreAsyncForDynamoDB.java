@@ -419,7 +419,7 @@ public final class EventStoreAsyncForDynamoDB<
               for (var item : response.items()) {
                 keys.add(new Tuple2<>(item.get("pkey").s(), item.get("skey").s()));
               }
-              int remaining = request.limit() - response.scannedCount();
+              int remaining = request.limit() - response.count();
               if (response.hasLastEvaluatedKey() && remaining > 0) {
                 return getLastSnapshotKeys(
                     request.toBuilder()

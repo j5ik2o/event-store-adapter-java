@@ -243,23 +243,6 @@ public class EventStoreForDynamoDBTest {
       store.persistEventAndSnapshot(created.getEvent(), created.getAggregate());
       var changed = created.getAggregate().changeName("second");
       store.persistEventAndSnapshot(changed.getEvent(), changed.getAggregate());
-      var keyResolver = new DefaultKeyResolver<UserAccountId>();
-      // A previously marked snapshot has an epoch timestamp, not a grace duration.
-      var previousTtl = Instant.now().plusSeconds(60).getEpochSecond();
-      client.updateItem(
-          UpdateItemRequest.builder()
-              .tableName(SNAPSHOT_TABLE_NAME)
-              .key(
-                  Map.of(
-                      "pkey",
-                      AttributeValue.builder().s(keyResolver.resolvePartitionKey(id, 32)).build(),
-                      "skey",
-                      AttributeValue.builder().s(keyResolver.resolveSortKey(id, 1)).build()))
-              .updateExpression("SET #ttl = :ttl")
-              .expressionAttributeNames(Map.of("#ttl", "ttl"))
-              .expressionAttributeValues(
-                  Map.of(":ttl", AttributeValue.builder().n(String.valueOf(previousTtl)).build()))
-              .build());
       var before = Instant.now().plusSeconds(3600).getEpochSecond();
       var third = changed.getAggregate().withVersion(2).changeName("third");
       store.persistEventAndSnapshot(third.getEvent(), third.getAggregate());
@@ -276,6 +259,192 @@ public class EventStoreForDynamoDBTest {
               "old snapshot TTL must be marking time plus grace, but was " + ttl);
         } else {
           assertEquals(0L, ttl, "latest and retained snapshots must remain unmarked");
+        }
+      }
+    }
+  }
+
+  @Test
+  public void excludesAlreadyMarkedSnapshotsFromRetention() throws Exception {
+    try (var client = DynamoDBUtils.createDynamoDbClient(localstack)) {
+      DynamoDBUtils.createJournalTable(client, JOURNAL_TABLE_NAME, JOURNAL_AID_INDEX_NAME);
+      DynamoDBUtils.createSnapshotTable(client, SNAPSHOT_TABLE_NAME, SNAPSHOT_AID_INDEX_NAME);
+      EventStore<UserAccountId, UserAccount, UserAccountEvent> store =
+          EventStore.<UserAccountId, UserAccount, UserAccountEvent>ofDynamoDB(
+                  client,
+                  JOURNAL_TABLE_NAME,
+                  SNAPSHOT_TABLE_NAME,
+                  JOURNAL_AID_INDEX_NAME,
+                  SNAPSHOT_AID_INDEX_NAME,
+                  32)
+              .withKeepSnapshotCount(100)
+              .withDeleteTtl(Duration.ofHours(1));
+      var id = new UserAccountId(IdGenerator.generate().toString());
+      var created = UserAccount.create(id, "first");
+      store.persistEventAndSnapshot(created.getEvent(), created.getAggregate());
+      var second = created.getAggregate().changeName("second");
+      store.persistEventAndSnapshot(second.getEvent(), second.getAggregate());
+      var third = second.getAggregate().withVersion(2).changeName("third");
+      store.persistEventAndSnapshot(third.getEvent(), third.getAggregate());
+      var keyResolver = new DefaultKeyResolver<UserAccountId>();
+      var previousTtl = Instant.now().plusSeconds(60).getEpochSecond();
+      client.updateItem(
+          UpdateItemRequest.builder()
+              .tableName(SNAPSHOT_TABLE_NAME)
+              .key(
+                  Map.of(
+                      "pkey",
+                          AttributeValue.builder()
+                              .s(keyResolver.resolvePartitionKey(id, 32))
+                              .build(),
+                      "skey",
+                          AttributeValue.builder().s(keyResolver.resolveSortKey(id, 3)).build()))
+              .updateExpression("SET #ttl = :ttl")
+              .expressionAttributeNames(Map.of("#ttl", "ttl"))
+              .expressionAttributeValues(
+                  Map.of(":ttl", AttributeValue.builder().n(String.valueOf(previousTtl)).build()))
+              .build());
+      var before = Instant.now().plusSeconds(3600).getEpochSecond();
+      var fourth = third.getAggregate().withVersion(3).changeName("fourth");
+      store
+          .withKeepSnapshotCount(2)
+          .persistEventAndSnapshot(fourth.getEvent(), fourth.getAggregate());
+      var after = Instant.now().plusSeconds(3600).getEpochSecond();
+      var snapshots =
+          client.scan(ScanRequest.builder().tableName(SNAPSHOT_TABLE_NAME).build()).items();
+      assertEquals(5, snapshots.size());
+      var ttls =
+          snapshots.stream()
+              .collect(
+                  Collectors.toMap(
+                      item -> Long.parseLong(item.get("seq_nr").n()),
+                      item -> Long.parseLong(item.get("ttl").n())));
+      assertEquals(0L, ttls.get(0L));
+      assertTrue(ttls.get(1L) >= before && ttls.get(1L) <= after);
+      assertEquals(0L, ttls.get(2L), "second snapshot must remain unmarked");
+      assertEquals(previousTtl, ttls.get(3L), "existing expiration must not change");
+      assertEquals(0L, ttls.get(4L));
+    }
+  }
+
+  @Test
+  public void countsAndMarksUnmarkedSnapshotsAcrossPages() throws Exception {
+    try (var client = DynamoDBUtils.createDynamoDbClient(localstack)) {
+      DynamoDBUtils.createJournalTable(client, JOURNAL_TABLE_NAME, JOURNAL_AID_INDEX_NAME);
+      DynamoDBUtils.createSnapshotTable(client, SNAPSHOT_TABLE_NAME, SNAPSHOT_AID_INDEX_NAME);
+      EventStore<UserAccountId, UserAccount, UserAccountEvent> store =
+          EventStore.<UserAccountId, UserAccount, UserAccountEvent>ofDynamoDB(
+                  client,
+                  JOURNAL_TABLE_NAME,
+                  SNAPSHOT_TABLE_NAME,
+                  JOURNAL_AID_INDEX_NAME,
+                  SNAPSHOT_AID_INDEX_NAME,
+                  32)
+              .withKeepSnapshotCount(100)
+              .withDeleteTtl(Duration.ofHours(1));
+      var id = new UserAccountId(IdGenerator.generate().toString());
+      var created = UserAccount.create(id, "x".repeat(100_000));
+      store.persistEventAndSnapshot(created.getEvent(), created.getAggregate());
+      var aggregate = created.getAggregate();
+      for (int i = 2; i <= 16; i++) {
+        var changed = aggregate.changeName("x".repeat(100_000));
+        store.persistEventAndSnapshot(changed.getEvent(), changed.getAggregate());
+        aggregate = changed.getAggregate().withVersion(i);
+      }
+      var keyResolver = new DefaultKeyResolver<UserAccountId>();
+      var marked = List.of(1L, 3L, 5L, 16L);
+      var previousTtl = Instant.now().plusSeconds(60).getEpochSecond();
+      for (var sequence : marked) {
+        client.updateItem(
+            UpdateItemRequest.builder()
+                .tableName(SNAPSHOT_TABLE_NAME)
+                .key(
+                    Map.of(
+                        "pkey",
+                            AttributeValue.builder()
+                                .s(keyResolver.resolvePartitionKey(id, 32))
+                                .build(),
+                        "skey",
+                            AttributeValue.builder()
+                                .s(keyResolver.resolveSortKey(id, sequence))
+                                .build()))
+                .updateExpression("SET #ttl = :ttl")
+                .expressionAttributeNames(Map.of("#ttl", "ttl"))
+                .expressionAttributeValues(
+                    Map.of(":ttl", AttributeValue.builder().n(String.valueOf(previousTtl)).build()))
+                .build());
+      }
+      // Legacy rows without a TTL attribute also count as unmarked snapshots.
+      client.updateItem(
+          UpdateItemRequest.builder()
+              .tableName(SNAPSHOT_TABLE_NAME)
+              .key(
+                  Map.of(
+                      "pkey",
+                          AttributeValue.builder()
+                              .s(keyResolver.resolvePartitionKey(id, 32))
+                              .build(),
+                      "skey",
+                          AttributeValue.builder().s(keyResolver.resolveSortKey(id, 2)).build()))
+              .updateExpression("REMOVE #ttl")
+              .expressionAttributeNames(Map.of("#ttl", "ttl"))
+              .build());
+      var changed = aggregate.changeName("trigger retention");
+      var before = Instant.now().plusSeconds(3600).getEpochSecond();
+      store
+          .withKeepSnapshotCount(2)
+          .persistEventAndSnapshot(changed.getEvent(), changed.getAggregate());
+      var after = Instant.now().plusSeconds(3600).getEpochSecond();
+      var ttls = new java.util.HashMap<Long, Long>();
+      var request = ScanRequest.builder().tableName(SNAPSHOT_TABLE_NAME).build();
+      while (true) {
+        var response = client.scan(request);
+        for (var item : response.items()) {
+          ttls.put(Long.parseLong(item.get("seq_nr").n()), Long.parseLong(item.get("ttl").n()));
+        }
+        if (!response.hasLastEvaluatedKey()) {
+          break;
+        }
+        request = request.toBuilder().exclusiveStartKey(response.lastEvaluatedKey()).build();
+      }
+      assertEquals(18, ttls.size());
+      for (var entry : ttls.entrySet()) {
+        var sequence = entry.getKey();
+        var ttl = entry.getValue();
+        if (marked.contains(sequence)) {
+          assertEquals(previousTtl, ttl, "existing expiration must not change");
+        } else if (sequence == 0 || sequence == 15 || sequence == 17) {
+          assertEquals(0L, ttl, "latest and newest unmarked snapshots must remain unmarked");
+        } else {
+          assertTrue(
+              ttl >= before && ttl <= after,
+              "old unmarked snapshot must receive a TTL: " + sequence);
+        }
+      }
+      // A repeated purge must traverse empty filtered pages and preserve all existing TTLs.
+      var next = changed.getAggregate().withVersion(17).changeName("purge again");
+      store.withKeepSnapshotCount(1).persistEvent(next.getEvent(), 17);
+      var finalTtls = new java.util.HashMap<Long, Long>();
+      request = ScanRequest.builder().tableName(SNAPSHOT_TABLE_NAME).build();
+      while (true) {
+        var response = client.scan(request);
+        for (var item : response.items()) {
+          finalTtls.put(
+              Long.parseLong(item.get("seq_nr").n()), Long.parseLong(item.get("ttl").n()));
+        }
+        if (!response.hasLastEvaluatedKey()) {
+          break;
+        }
+        request = request.toBuilder().exclusiveStartKey(response.lastEvaluatedKey()).build();
+      }
+      for (var entry : ttls.entrySet()) {
+        if (entry.getKey() == 15) {
+          assertTrue(
+              finalTtls.get(15L) > 0,
+              "oldest unmarked snapshot must be found after filtered pages");
+        } else {
+          assertEquals(
+              entry.getValue(), finalTtls.get(entry.getKey()), "existing TTL must not change");
         }
       }
     }
