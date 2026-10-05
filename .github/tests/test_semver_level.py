@@ -48,14 +48,20 @@ class SemverLevelTest(unittest.TestCase):
         self.assertEqual(MODULE.semver_level(commits(patch, minor, major)), 'major')
         self.assertEqual(MODULE.semver_level(commits(major, minor, patch)), 'major')
 
-    def test_empty_defaults_to_patch_for_forced_bump(self):
+    def test_empty_does_not_select_a_bump(self):
         for log in ['', '\n', '\x1e\n']:
             with self.subTest(log=log):
-                self.assertEqual(MODULE.semver_level(log), 'patch')
+                self.assertIsNone(MODULE.semver_level(log))
 
     def test_breaking_marker_must_start_body_line(self):
         self.assertEqual(MODULE.semver_level(commits(
             ('fix: mention feat!: in prose', 'Discuss BREAKING CHANGE: as an example\n'))), 'patch')
+
+    def test_empty_cli_fails_without_output(self):
+        result = subprocess.run([sys.executable, str(SCRIPT)], input='',
+                                text=True, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, '')
 
     def test_cli(self):
         result = subprocess.run([sys.executable, str(SCRIPT)],

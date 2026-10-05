@@ -9,10 +9,12 @@ BREAKING_BODY = re.compile(r"^BREAKING(?: |-)CHANGE:", re.MULTILINE)
 
 
 def semver_level(log):
-    level = "patch"
+    level = None
     for record in log.split("\x1e"):
         if not record.strip():
             continue
+        if level is None:
+            level = "patch"
         subject, _, body = record.lstrip("\r\n").partition("\x1f")
         match = SUBJECT.match(subject)
         if (match and match["breaking"]) or BREAKING_BODY.search(body):
@@ -23,4 +25,7 @@ def semver_level(log):
 
 
 if __name__ == "__main__":
-    print(semver_level(sys.stdin.read()))
+    level = semver_level(sys.stdin.read())
+    if level is None:
+        sys.exit(1)
+    print(level)
