@@ -61,19 +61,35 @@ jobs:
         env:
           TEST_JAVA_VERSION: ${{ matrix.java }}
         run: ./gradlew test -PtestJavaVersion="$TEST_JAVA_VERSION" --info
+  release-tools:
+    name: Check release tooling
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - name: Test SemVer classification
+        run: python3 -m unittest discover -s .github/tests -v
+      - name: Check workflows with actionlint
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          "$(go env GOPATH)/bin/actionlint"
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
     timeout-minutes: 2
-    needs: [lint, test]
+    needs: [lint, test, release-tools]
     if: always()
     steps:
       - name: Check CI results
         env:
           LINT_RESULT: ${{ needs.lint.result }}
           TEST_RESULT: ${{ needs.test.result }}
+          RELEASE_TOOLS_RESULT: ${{ needs.release-tools.result }}
         run: |
-          if [[ "$LINT_RESULT" != "success" || "$TEST_RESULT" != "success" ]]; then
-            echo "CI did not succeed: lint=$LINT_RESULT, test=$TEST_RESULT"
+          if [[ "$LINT_RESULT" != "success" || "$TEST_RESULT" != "success" || "$RELEASE_TOOLS_RESULT" != "success" ]]; then
+            echo "CI did not succeed: lint=$LINT_RESULT, test=$TEST_RESULT, release-tools=$RELEASE_TOOLS_RESULT"
             exit 1
           fi
