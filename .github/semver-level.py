@@ -1,31 +1,26 @@
 #! /usr/bin/env python3
-# -*- coding: utf-8 -*-
-import sys
-import csv
+"""Read git log --pretty=format:"%s%x1f%b%x1e" and select a bump level."""
+
 import re
+import sys
 
-commit_messages = {'BREAKING CHANGE': 0, 'build': 0, 'ci': 0, 'feat': 0, 'fix': 0, 'docs': 0, 'style': 0, 'refactor': 0, 'perf': 0, 'test': 0, 'revert': 0, 'chore': 0}
+SUBJECT = re.compile(r"^(?P<type>[a-z]+)(?:\([^\r\n]*\))?(?P<breaking>!)?:")
+BREAKING_BODY = re.compile(r"^BREAKING(?: |-)CHANGE:", re.MULTILINE)
 
-rules = {'major': ['perf', 'BREAKING CHANGE'], 'minor': ['feat', 'revert'], 'patch': ['build', 'ci', 'fix', 'docs', 'style', 'refactor', 'chore', 'test']}
 
-cin = csv.reader(sys.stdin, delimiter="\t")
+def semver_level(log):
+    level = "patch"
+    for record in log.split("\x1e"):
+        if not record.strip():
+            continue
+        subject, _, body = record.lstrip("\r\n").partition("\x1f")
+        match = SUBJECT.match(subject)
+        if (match and match["breaking"]) or BREAKING_BODY.search(body):
+            return "major"
+        if match and match["type"] in {"feat", "revert"}:
+            level = "minor"
+    return level
 
-def match_append(key, row):
-    r = re.match(f"^{key}(.*)?\: (.*)", row[2])
-    if r:
-        commit_messages[key]+=1
 
-for row in cin:
-    for key in commit_messages.keys():
-        match_append(key, row)
-
-if sum(commit_messages.values()) > 0:
-    for k,v in rules.items():
-        sum = 0
-        for t in v:
-            sum += commit_messages[t]
-        if sum > 0:
-            print(k)
-            break
-else:
-    sys.exit(-1)
+if __name__ == "__main__":
+    print(semver_level(sys.stdin.read()))
