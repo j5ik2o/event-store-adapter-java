@@ -11,6 +11,8 @@
     </appender>
 
     <logger name="com.github.j5ik2o" level="DEBUG" />
+    <!-- 大容量ペイロードを使う回帰試験で、全文の DEBUG 出力を抑える。 -->
+    <logger name="com.github.j5ik2o.event.store.adapter.java.internal" level="WARN" />
     <logger name="com.almworks.sqlite4java" level="OFF"/>
     <logger name="software.amazon" level="ERROR" />
     <logger name="io.netty" level="ERROR" />
