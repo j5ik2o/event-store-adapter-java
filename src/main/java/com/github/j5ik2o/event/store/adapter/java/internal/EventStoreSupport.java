@@ -4,6 +4,7 @@ import com.github.j5ik2o.event.store.adapter.java.*;
 import io.vavr.Tuple2;
 import io.vavr.control.Option;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -419,12 +420,12 @@ final class EventStoreSupport<
             .keyConditionExpression("#aid = :aid AND #seq_nr > :seq_nr")
             .expressionAttributeNames(names.toJavaMap())
             .expressionAttributeValues(values.toJavaMap())
-            .scanIndexForward(false)
+            .scanIndexForward(true)
             .limit(limit);
     if (deleteTtl.isDefined()) {
       queryBuilder =
           queryBuilder
-              .filterExpression("ttl < :ttl")
+              .filterExpression("#ttl < :ttl")
               .expressionAttributeNames(
                   names.merge(io.vavr.collection.HashMap.of("#ttl", "ttl")).toJavaMap())
               .expressionAttributeValues(
@@ -433,7 +434,9 @@ final class EventStoreSupport<
                           io.vavr.collection.HashMap.of(
                               ":ttl",
                               AttributeValue.builder()
-                                  .n(String.valueOf(deleteTtl.get().toSeconds()))
+                                  .n(
+                                      String.valueOf(
+                                          Instant.now().plus(deleteTtl.get()).getEpochSecond()))
                                   .build()))
                       .toJavaMap());
     }

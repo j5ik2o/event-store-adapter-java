@@ -233,8 +233,10 @@ public final class EventStoreForDynamoDB<
       var request =
           eventStoreSupport.getEventsByIdSinceSequenceNumberQueryRequest(
               aggregateId, sequenceNumber);
-      var response = dynamoDbClient.query(request);
-      var result = eventStoreSupport.convertToEvents(response, clazz);
+      var result = new ArrayList<E>();
+      for (var response : dynamoDbClient.queryPaginator(request)) {
+        result.addAll(eventStoreSupport.convertToEvents(response, clazz));
+      }
       LOGGER.debug(
           "getEventsByIdSinceSequenceNumber({}, {}, {}): finished",
           clazz,
@@ -311,8 +313,11 @@ public final class EventStoreForDynamoDB<
   private int getSnapshotCount(AID id) throws EventStoreReadException {
     try {
       var request = eventStoreSupport.getSnapshotCountQueryRequest(id);
-      var response = dynamoDbClient.query(request);
-      return response.count();
+      int count = 0;
+      for (var response : dynamoDbClient.queryPaginator(request)) {
+        count += response.count();
+      }
+      return count;
     } catch (AwsServiceException | SdkClientException e) {
       throw new EventStoreReadException(e);
     }
@@ -322,13 +327,22 @@ public final class EventStoreForDynamoDB<
       throws EventStoreReadException {
     try {
       var request = eventStoreSupport.getLastSnapshotKeysQueryRequest(id, limit);
-      var response = dynamoDbClient.query(request);
-      var items = response.items();
       var result = new ArrayList<Tuple2<String, String>>();
-      for (var item : items) {
-        var pkey = item.get("pkey").s();
-        var skey = item.get("skey").s();
-        result.add(new Tuple2<>(pkey, skey));
+      int remaining = limit;
+      while (remaining > 0) {
+        var response = dynamoDbClient.query(request);
+        for (var item : response.items()) {
+          result.add(new Tuple2<>(item.get("pkey").s(), item.get("skey").s()));
+        }
+        remaining -= response.scannedCount();
+        if (!response.hasLastEvaluatedKey() || remaining <= 0) {
+          break;
+        }
+        request =
+            request.toBuilder()
+                .exclusiveStartKey(response.lastEvaluatedKey())
+                .limit(remaining)
+                .build();
       }
       return io.vavr.collection.List.ofAll(result);
     } catch (AwsServiceException | SdkClientException e) {

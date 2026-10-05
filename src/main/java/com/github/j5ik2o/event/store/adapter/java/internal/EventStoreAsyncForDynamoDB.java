@@ -250,16 +250,7 @@ public final class EventStoreAsyncForDynamoDB<
                 aggregateId, sequenceNumber))
         .thenCompose(
             request ->
-                dynamoDbAsyncClient
-                    .query(request)
-                    .thenApply(
-                        response -> {
-                          try {
-                            return eventStoreSupport.convertToEvents(response, clazz);
-                          } catch (DeserializationException e) {
-                            throw new DeserializationRuntimeException(e);
-                          }
-                        })
+                getEvents(request, clazz, new ArrayList<>())
                     .handle(
                         (response, ex) -> {
                           if (ex != null) {
@@ -276,6 +267,28 @@ public final class EventStoreAsyncForDynamoDB<
                               sequenceNumber);
                           return result;
                         }));
+  }
+
+  @Nonnull
+  private CompletableFuture<List<E>> getEvents(
+      QueryRequest request, Class<E> clazz, List<E> events) {
+    return dynamoDbAsyncClient
+        .query(request)
+        .thenCompose(
+            response -> {
+              try {
+                events.addAll(eventStoreSupport.convertToEvents(response, clazz));
+              } catch (DeserializationException e) {
+                throw new DeserializationRuntimeException(e);
+              }
+              if (response.hasLastEvaluatedKey()) {
+                return getEvents(
+                    request.toBuilder().exclusiveStartKey(response.lastEvaluatedKey()).build(),
+                    clazz,
+                    events);
+              }
+              return CompletableFuture.completedFuture(events);
+            });
   }
 
   @Nonnull
@@ -373,28 +386,50 @@ public final class EventStoreAsyncForDynamoDB<
 
   private CompletableFuture<Integer> getSnapshotCount(AID id) {
     var request = eventStoreSupport.getSnapshotCountQueryRequest(id);
-    var response = dynamoDbAsyncClient.query(request);
-    return response.thenApply(QueryResponse::count);
+    return getSnapshotCount(request, 0);
+  }
+
+  private CompletableFuture<Integer> getSnapshotCount(QueryRequest request, int count) {
+    return dynamoDbAsyncClient
+        .query(request)
+        .thenCompose(
+            response -> {
+              int total = count + response.count();
+              if (response.hasLastEvaluatedKey()) {
+                return getSnapshotCount(
+                    request.toBuilder().exclusiveStartKey(response.lastEvaluatedKey()).build(),
+                    total);
+              }
+              return CompletableFuture.completedFuture(total);
+            });
   }
 
   private CompletableFuture<io.vavr.collection.List<Tuple2<String, String>>> getLastSnapshotKeys(
       AID id, int limit) {
-    return CompletableFuture.completedFuture(
-            eventStoreSupport.getLastSnapshotKeysQueryRequest(id, limit))
+    return getLastSnapshotKeys(
+        eventStoreSupport.getLastSnapshotKeysQueryRequest(id, limit), new ArrayList<>());
+  }
+
+  private CompletableFuture<io.vavr.collection.List<Tuple2<String, String>>> getLastSnapshotKeys(
+      QueryRequest request, List<Tuple2<String, String>> keys) {
+    return dynamoDbAsyncClient
+        .query(request)
         .thenCompose(
-            request ->
-                dynamoDbAsyncClient
-                    .query(request)
-                    .thenApply(
-                        response -> {
-                          var result = new ArrayList<Tuple2<String, String>>();
-                          for (var item : response.items()) {
-                            var pkey = item.get("pkey").s();
-                            var skey = item.get("skey").s();
-                            result.add(new Tuple2<>(pkey, skey));
-                          }
-                          return io.vavr.collection.List.ofAll(result);
-                        }));
+            response -> {
+              for (var item : response.items()) {
+                keys.add(new Tuple2<>(item.get("pkey").s(), item.get("skey").s()));
+              }
+              int remaining = request.limit() - response.scannedCount();
+              if (response.hasLastEvaluatedKey() && remaining > 0) {
+                return getLastSnapshotKeys(
+                    request.toBuilder()
+                        .exclusiveStartKey(response.lastEvaluatedKey())
+                        .limit(remaining)
+                        .build(),
+                    keys);
+              }
+              return CompletableFuture.completedFuture(io.vavr.collection.List.ofAll(keys));
+            });
   }
 
   private CompletableFuture<Void> tryPurgeExcessSnapshots(E event) {
