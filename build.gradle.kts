@@ -25,8 +25,8 @@ dependencies {
 
     testImplementation("ch.qos.logback:logback-classic:1.6.5")
     testImplementation("org.testcontainers:testcontainers:2.0.5")
-    testImplementation("org.testcontainers:junit-jupiter:1.21.4")
-    testImplementation("org.testcontainers:localstack:1.21.4")
+    testImplementation("org.testcontainers:testcontainers-junit-jupiter:2.0.5")
+    testImplementation("org.testcontainers:testcontainers-localstack:2.0.5")
 
     testImplementation("de.huxhorn.sulky:de.huxhorn.sulky.ulid:8.3.0")
 
