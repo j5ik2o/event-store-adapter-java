@@ -81,9 +81,11 @@ class CaseClassifierTest {
     CaseResult r = CaseClassifier.classify(find("seq-zero-value"), Backend.MEMORY);
     assertEquals(ConformanceStatus.UNVERIFIED, r.status());
 
-    assertFalse(CaseClassifier.violatesRequirement(r, Set.of()));
-    assertTrue(CaseClassifier.violatesRequirement(r, Set.of("seq-zero-value")));
-    assertFalse(CaseClassifier.violatesRequirement(r, Set.of("other-case")));
+    assertFalse(CaseClassifier.violatesRequirement(r, Map.of(Backend.MEMORY, Set.of())));
+    assertTrue(
+        CaseClassifier.violatesRequirement(r, Map.of(Backend.MEMORY, Set.of("seq-zero-value"))));
+    assertFalse(
+        CaseClassifier.violatesRequirement(r, Map.of(Backend.MEMORY, Set.of("other-case"))));
   }
 
   @Test
@@ -92,5 +94,16 @@ class CaseClassifierTest {
         CaseClassifier.unknownRequiredIds(Set.of("seq-zero-value", "no-such-case"), data.cases());
 
     assertEquals(List.of("no-such-case"), unknown);
+  }
+
+  @Test
+  void requirementIsDecidedPerCaseIdAndBackendPair() {
+    Map<Backend, Set<String>> required =
+        Map.of(Backend.MEMORY, Set.of("seq-zero-value"), Backend.DYNAMODB, Set.of());
+    CaseResult memory = CaseClassifier.classify(find("seq-zero-value"), Backend.MEMORY);
+    CaseResult dynamo = CaseClassifier.classify(find("seq-zero-value"), Backend.DYNAMODB);
+
+    assertTrue(CaseClassifier.violatesRequirement(memory, required));
+    assertFalse(CaseClassifier.violatesRequirement(dynamo, required));
   }
 }

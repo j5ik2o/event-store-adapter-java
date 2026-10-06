@@ -29,6 +29,7 @@ dependencies {
     testImplementation("org.testcontainers:testcontainers-localstack:2.0.5")
 
     testImplementation("de.huxhorn.sulky:de.huxhorn.sulky.ulid:8.3.0")
+    testImplementation("com.networknt:json-schema-validator:2.0.8")
 
     implementation("io.vavr:vavr:1.0.1")
     implementation("software.amazon.awssdk:dynamodb:2.55.11")

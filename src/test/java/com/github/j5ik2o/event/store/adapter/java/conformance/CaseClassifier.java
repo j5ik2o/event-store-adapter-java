@@ -1,6 +1,7 @@
 package com.github.j5ik2o.event.store.adapter.java.conformance;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -33,9 +34,10 @@ final class CaseClassifier {
     return result(c, backend, ConformanceStatus.UNVERIFIED, REASON_NOT_EXECUTED);
   }
 
-  /** 一覧にあるのに成功していないケースか。 */
-  static boolean violatesRequirement(CaseResult r, Set<String> required) {
-    return required.contains(r.caseId()) && r.status() != ConformanceStatus.PASSED;
+  /** その保存先の一覧にあるのに成功していないケースか。判定はケース ID と保存先の組で行う。 */
+  static boolean violatesRequirement(CaseResult r, Map<Backend, Set<String>> required) {
+    return required.getOrDefault(r.backend(), Set.of()).contains(r.caseId())
+        && r.status() != ConformanceStatus.PASSED;
   }
 
   /** データに存在しない必須の ID。綴りの誤りで必須のケースが黙って飛ばされることを防ぐ。 */

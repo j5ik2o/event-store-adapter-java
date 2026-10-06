@@ -2,6 +2,7 @@ package com.github.j5ik2o.event.store.adapter.java.conformance;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -11,6 +12,8 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -38,6 +41,7 @@ class ConformanceReportTest {
             data.dataVersion(),
             ManifestVerifier.verify(ConformanceTestFiles.REAL_ROOT),
             "2.0.0-SNAPSHOT",
+            "abc123",
             results,
             data.coverageExclusions());
   }
@@ -159,5 +163,72 @@ class ConformanceReportTest {
       }
     }
     return null;
+  }
+
+  @Test
+  void ruleExclusionsAreReportedWithReasonsInJsonAndSummary() {
+    JsonNode exclusions = report.toJson().get("rule_exclusions");
+    Set<String> rules = new HashSet<>();
+    for (JsonNode e : exclusions) {
+      rules.add(e.get("rule").asText());
+      assertFalse(e.get("reason").asText().isEmpty());
+    }
+    assertEquals(Set.of("W-5", "R-7"), rules);
+
+    String summary = report.summary();
+    assertTrue(summary.contains("| W-5 | deleted |"), summary);
+    assertTrue(summary.contains("| R-7 | caller-obligation |"), summary);
+    assertTrue(summary.contains("番号を再利用しない"), summary);
+  }
+
+  @Test
+  void implementationCommitAppearsInJsonAndSummary() {
+    assertEquals("abc123", report.toJson().get("implementation_commit").asText());
+    assertTrue(report.summary().contains("(commit abc123)"), report.summary());
+  }
+
+  @Test
+  void missingCommitIsJsonNull() throws IOException {
+    ConformanceReport noCommit =
+        new ConformanceReport(
+            "1.0.0",
+            ManifestVerifier.verify(ConformanceTestFiles.REAL_ROOT),
+            "2.0.0-SNAPSHOT",
+            null,
+            List.of(),
+            ConformanceDataLoader.load(ConformanceTestFiles.REAL_ROOT).coverageExclusions());
+
+    assertTrue(noCommit.toJson().get("implementation_commit").isNull());
+    assertFalse(noCommit.summary().contains("commit"));
+  }
+
+  @Test
+  void commitIsTakenFromGithubShaOnly() {
+    assertEquals("abc", ConformanceReport.commitFrom(Map.of("GITHUB_SHA", " abc ")));
+    assertNull(ConformanceReport.commitFrom(Map.of()));
+    assertNull(ConformanceReport.commitFrom(Map.of("GITHUB_SHA", "  ")));
+  }
+
+  @Test
+  void manifestVersionIsReportedAsReadAndComparedSeparately(@TempDir Path tempDir)
+      throws IOException {
+    Path copy = ConformanceTestFiles.copyOfRealData(tempDir);
+    ConformanceTestFiles.replaceInFile(
+        copy.resolve("manifest.json"), "\"version\": \"1.0.0\"", "\"version\": \"9.9.9\"");
+    ConformanceReport tampered =
+        new ConformanceReport(
+            "1.0.0",
+            ManifestVerifier.verify(copy),
+            "2.0.0-SNAPSHOT",
+            null,
+            List.of(),
+            report.toJson().get("rule_exclusions"));
+
+    JsonNode manifest = tampered.toJson().get("manifest");
+    assertEquals("9.9.9", manifest.get("version").asText());
+    assertEquals("1.0.0", manifest.get("expected_version").asText());
+    assertFalse(manifest.get("version_matches").asBoolean());
+    assertEquals("1.0.0", report.toJson().at("/manifest/version").asText());
+    assertTrue(report.toJson().at("/manifest/version_matches").asBoolean());
   }
 }

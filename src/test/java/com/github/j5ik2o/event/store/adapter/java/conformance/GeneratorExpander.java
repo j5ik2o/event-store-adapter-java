@@ -49,10 +49,7 @@ final class GeneratorExpander {
         throw invalid(caseId, "character が 1 文字でない: " + character);
       }
       JsonNode lengthNode = generator.get("byte_length");
-      if (lengthNode == null || !lengthNode.isIntegralNumber() || !lengthNode.canConvertToInt()) {
-        throw invalid(caseId, "byte_length が整数でない");
-      }
-      int byteLength = lengthNode.intValue();
+      int byteLength = integerOf(lengthNode, caseId);
       int width = character.getBytes(StandardCharsets.UTF_8).length;
       if (byteLength <= 0 || byteLength % width != 0) {
         throw invalid(caseId, "byte_length " + byteLength + " が " + width + " バイトで割り切れない");
@@ -68,6 +65,18 @@ final class GeneratorExpander {
       }
     }
     return copy;
+  }
+
+  /** JSON Schema の整数（`4.0`・`4e0` を含む）を int で返す。小数部が 0 でない値や int に収まらない値は拒む。 */
+  private static int integerOf(JsonNode node, String caseId) {
+    if (node == null || !node.isNumber()) {
+      throw invalid(caseId, "byte_length が整数でない");
+    }
+    try {
+      return node.decimalValue().intValueExact();
+    } catch (ArithmeticException e) {
+      throw invalid(caseId, "byte_length が整数でない: " + node);
+    }
   }
 
   private static String textOf(JsonNode node, String field, String caseId) {

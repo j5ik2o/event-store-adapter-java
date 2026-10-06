@@ -31,6 +31,7 @@ final class ConformanceDataLoader {
               .sorted()
               .collect(Collectors.toList());
     }
+    ConformanceSchemas schemas = ConformanceSchemas.load(root);
     List<ConformanceCase> cases = new ArrayList<>();
     Map<String, String> idToFile = new HashMap<>();
     JsonNode exclusions = null;
@@ -44,6 +45,11 @@ final class ConformanceDataLoader {
       if (format == null || !KNOWN_FORMATS.contains(format)) {
         throw new IOException("未知の format: " + relative + ": " + format);
       }
+      JsonNode caseList = doc.get("cases");
+      if (CASE_FORMATS.contains(format) && (caseList == null || !caseList.isArray())) {
+        throw new IOException("cases が配列でない: " + relative);
+      }
+      schemas.validate(format, doc, relative);
       String version = doc.path("version").asText(null);
       if (!ManifestVerifier.DATA_VERSION.equals(version)) {
         throw new IOException("未対応の version: " + relative + ": " + version);
@@ -54,7 +60,7 @@ final class ConformanceDataLoader {
       if (!CASE_FORMATS.contains(format)) {
         continue;
       }
-      for (JsonNode node : doc.path("cases")) {
+      for (JsonNode node : caseList) {
         if (!(node instanceof ObjectNode)) {
           throw new IOException("ケースがオブジェクトでない: " + relative);
         }

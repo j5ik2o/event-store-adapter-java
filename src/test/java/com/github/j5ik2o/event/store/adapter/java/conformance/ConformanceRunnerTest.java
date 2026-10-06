@@ -37,6 +37,7 @@ class ConformanceRunnerTest {
             data.dataVersion(),
             manifest,
             implementationVersion,
+            ConformanceReport.commitFrom(System.getenv()),
             results,
             data.coverageExclusions());
     report.write(Paths.get("build/reports/conformance"));
@@ -69,7 +70,7 @@ class ConformanceRunnerTest {
           dynamicTest(
               "[" + r.backend().reportName() + "] " + r.caseId(),
               () -> {
-                if (CaseClassifier.violatesRequirement(r, required.get(r.backend()))) {
+                if (CaseClassifier.violatesRequirement(r, required)) {
                   fail(r.caseId() + " is required but " + r.status().label() + ": " + r.reason());
                 }
                 switch (r.status()) {

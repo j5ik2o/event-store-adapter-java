@@ -18,6 +18,7 @@ final class ConformanceReport {
   private final String dataVersion;
   private final ManifestVerifier.Result manifest;
   private final String implementationVersion;
+  private final String implementationCommit;
   private final List<CaseResult> results;
   private final JsonNode ruleExclusions;
 
@@ -25,13 +26,21 @@ final class ConformanceReport {
       String dataVersion,
       ManifestVerifier.Result manifest,
       String implementationVersion,
+      String implementationCommit,
       List<CaseResult> results,
       JsonNode ruleExclusions) {
     this.dataVersion = dataVersion;
     this.manifest = manifest;
     this.implementationVersion = implementationVersion;
+    this.implementationCommit = implementationCommit;
     this.results = List.copyOf(results);
     this.ruleExclusions = ruleExclusions;
+  }
+
+  /** CI が渡す GITHUB_SHA からコミットを決める。未設定・空白だけなら null。 */
+  static String commitFrom(Map<String, String> env) {
+    String sha = env.get("GITHUB_SHA");
+    return sha == null || sha.isBlank() ? null : sha.trim();
   }
 
   ObjectNode toJson() {
@@ -41,10 +50,22 @@ final class ConformanceReport {
     ObjectNode manifestNode = root.putObject("manifest");
     manifestNode.put("result", manifest.ok() ? "ok" : "mismatch");
     manifestNode.put("file_count", manifest.fileCount());
+    if (manifest.manifestVersion() == null) {
+      manifestNode.putNull("version");
+    } else {
+      manifestNode.put("version", manifest.manifestVersion());
+    }
+    manifestNode.put("expected_version", ManifestVerifier.DATA_VERSION);
+    manifestNode.put("version_matches", manifest.versionMatches());
     ArrayNode mismatches = manifestNode.putArray("mismatches");
     manifest.mismatches().forEach(mismatches::add);
     root.put("language", "java");
     root.put("implementation_version", implementationVersion);
+    if (implementationCommit == null) {
+      root.putNull("implementation_commit");
+    } else {
+      root.put("implementation_commit", implementationCommit);
+    }
 
     ObjectNode backends = root.putObject("backends");
     for (Map.Entry<Backend, Map<ConformanceStatus, Integer>> entry : counts().entrySet()) {
@@ -91,7 +112,16 @@ final class ConformanceReport {
     sb.append("- data version: ").append(dataVersion).append('\n');
     sb.append("- manifest: ").append(manifest.ok() ? "ok" : "mismatch " + manifest.mismatches());
     sb.append(" (").append(manifest.fileCount()).append(" files)\n");
-    sb.append("- implementation: java ").append(implementationVersion).append("\n\n");
+    sb.append("- manifest version: ")
+        .append(manifest.manifestVersion())
+        .append(" (expected ")
+        .append(ManifestVerifier.DATA_VERSION)
+        .append(")\n");
+    sb.append("- implementation: java ").append(implementationVersion);
+    if (implementationCommit != null) {
+      sb.append(" (commit ").append(implementationCommit).append(')');
+    }
+    sb.append("\n\n");
     sb.append("| backend |");
     for (ConformanceStatus status : ConformanceStatus.values()) {
       sb.append(' ').append(status.label()).append(" |");
@@ -107,6 +137,16 @@ final class ConformanceReport {
         sb.append(' ').append(entry.getValue().get(status)).append(" |");
       }
       sb.append('\n');
+    }
+    sb.append("\n### Excluded rules\n\n| rule | status | reason |\n|---|---|---|\n");
+    for (JsonNode exclusion : ruleExclusions) {
+      sb.append("| ")
+          .append(exclusion.path("rule").asText())
+          .append(" | ")
+          .append(exclusion.path("status").asText())
+          .append(" | ")
+          .append(exclusion.path("reason").asText().replace("|", "\\|").replace("\n", " "))
+          .append(" |\n");
     }
     return sb.toString();
   }

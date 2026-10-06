@@ -31,11 +31,23 @@ final class ManifestVerifier {
     private final boolean ok;
     private final List<String> mismatches;
     private final int fileCount;
+    private final String manifestVersion;
 
-    Result(boolean ok, List<String> mismatches, int fileCount) {
+    Result(boolean ok, List<String> mismatches, int fileCount, String manifestVersion) {
       this.ok = ok;
       this.mismatches = Collections.unmodifiableList(new ArrayList<>(mismatches));
       this.fileCount = fileCount;
+      this.manifestVersion = manifestVersion;
+    }
+
+    /** 実際に読んだ manifest.json の version。文字列でない、または空の文書なら null。 */
+    String manifestVersion() {
+      return manifestVersion;
+    }
+
+    /** 実際に読んだ版が、期待する版（DATA_VERSION）と等しいか。 */
+    boolean versionMatches() {
+      return DATA_VERSION.equals(manifestVersion);
     }
 
     boolean ok() {
@@ -56,13 +68,21 @@ final class ManifestVerifier {
     JsonNode actual =
         ConformanceJson.readTree(Files.readAllBytes(root.resolve(MANIFEST_NAME)), MANIFEST_NAME);
     int fileCount = expected.get("files").size();
+    if (actual.isMissingNode()) {
+      return new Result(false, List.of("manifest.json: 空の文書"), fileCount, null);
+    }
+    JsonNode versionNode = actual.get("version");
+    String manifestVersion =
+        versionNode != null && versionNode.isTextual() ? versionNode.asText() : null;
     if (expected.equals(actual)) {
-      return new Result(true, List.of(), fileCount);
+      return new Result(true, List.of(), fileCount, manifestVersion);
     }
     List<String> mismatches = new ArrayList<>();
-    if (!expected.get("format").equals(actual.get("format"))
-        || !expected.get("version").equals(actual.get("version"))) {
-      mismatches.add("format/version");
+    if (!expected.get("format").equals(actual.get("format"))) {
+      mismatches.add("format");
+    }
+    if (!expected.get("version").equals(actual.get("version"))) {
+      mismatches.add("version");
     }
     Map<String, String> expectedFiles = filesOf(expected);
     Map<String, String> actualFiles = filesOf(actual);
@@ -77,7 +97,7 @@ final class ManifestVerifier {
     if (mismatches.isEmpty()) {
       mismatches.add("structure/order");
     }
-    return new Result(false, mismatches, fileCount);
+    return new Result(false, mismatches, fileCount, manifestVersion);
   }
 
   private static Map<String, String> filesOf(JsonNode manifest) {
