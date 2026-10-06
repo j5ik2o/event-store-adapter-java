@@ -72,7 +72,7 @@ public final class AggregateId {
 | 組み立て | `of` が型名と値から `typeName + "-" + value` を作る。利用者の `asString()`・`toString()` は使わない | T-1 |
 | 型名に `-` を含む | `of` が `ContractViolationException`（規則 T-11）を投げる。値は `-` を含んでよい | T-11 |
 | 1024 バイト超 | UTF-8 のバイト数で判定する。型名・値・区切りの合計。文字数（`String.length()`）では数えない | T-12 |
-| 空の型名・空の値 | 仕様は何も定めない。10 章に書く | — |
+| 空の型名・空の値 | 許す。仕様は禁じておらず、aid 文字列は `-` を含むので空にならない（指揮役の回答、2026-10-06） | T-11・T-12 |
 
 現行の `AggregateId` はインターフェイスで、利用者が `asString()` を実装していた。新 API は final クラスにする。利用者のドメイン ID は、型名と値を渡して `AggregateId.of` を呼ぶ。適合データの `buildAid` は `user_string` を返す試験用 ID を使う。実行器は試験用 ID から型名と値を取り出して `AggregateId.of` に渡し、結果が `user_string` に依存しないことを確かめる（5 章）。
 
@@ -93,14 +93,14 @@ public final class EventEnvelope<P> {
     public Builder<P> occurredAt(Instant v);
     public Builder<P> manifest(String v);
     public Builder<P> payload(P v);
-    public EventEnvelope<P> build();   // null の必須要素は NullPointerException、seqNr 未設定は IllegalStateException。値域の違反は ContractViolationException
+    public EventEnvelope<P> build();   // 必須要素の欠落（null・seqNr 未設定）と値域の違反は ContractViolationException
   }
 }
 ```
 
 | 項目 | 内容 | 規則 |
 |---|---|---|
-| 必須 | `manifest` 以外は必須。`aggregateId`・`occurredAt`・`payload` が `null` なら、`build()` が `Objects.requireNonNull` で `NullPointerException` を投げる。`seqNr` を設定していなければ `IllegalStateException`。欠落は 4 章の 5 分類に含まれないため、言語の慣習で扱う（設計判断。10 章 Q14）。`manifest` の省略時は空文字列 | T-2 |
+| 必須 | `manifest` 以外は必須。`aggregateId`・`occurredAt`・`payload` が `null`、または `seqNr` を設定していなければ、`build()` が `ContractViolationException` を投げる（`rule()` は `"T-2"`。欠けたのが `seqNr` なら `seqNr()` は空。共通契約の T-2・E-3、P-42）。実装 PR で、要素ごとに欠落の単体試験を書く。`manifest` の省略時は空文字列 | T-2 |
 | 不変・拡張 | final クラスとビルダー。要素が増えてもビルダーの呼び出しは壊れない | T-5 |
 | 時刻 | `Instant`（ナノ秒精度）。ストア側の時刻で置き換えない。読み取りで同じ値を返す | T-3 |
 | 時刻の値域 | エポックからのナノ秒が符号付き 64bit に収まる範囲。範囲外は契約違反 | T-13 |
@@ -127,7 +127,7 @@ public final class SnapshotEnvelope<A> {
     public Builder<A> aggregate(A v);
     public Builder<A> seqNr(long v);           // T-9 の一般値域（0 も有効）
     public Builder<A> manifest(String v);
-    public SnapshotEnvelope<A> build();   // aggregate が null なら NullPointerException、seqNr 未設定は IllegalStateException（T-10。10 章 Q14）
+    public SnapshotEnvelope<A> build();   // aggregate が null、または seqNr 未設定なら ContractViolationException（rule は "T-10"。P-42）。単体試験を書く
   }
 }
 
@@ -245,7 +245,7 @@ public abstract class EventStoreException extends RuntimeException {
 public final class OptimisticLockException extends EventStoreException { ... }
 public final class ContractViolationException extends EventStoreException {
   public String rule();                 // 例: "W-9"。規則番号（E-3）
-  public OptionalLong seqNr();          // 関係する seq_nr
+  public OptionalLong seqNr();          // 関係する seq_nr。ない場合（seqNr の欠落・T-11 など）は空（E-3）
 }
 public final class SerializationException extends EventStoreException { ... }   // 直列化・復元の両方
 public final class ConfigurationException extends EventStoreException { ... }
@@ -309,7 +309,7 @@ public final class EventStoreExceptions {
 }
 ```
 
-`RetentionPolicy.ttl` の猶予は、秒の整数（`long`）で表す。秒より細かい値は型の上で表せない。0 は有効とする（適合データのスキーマも最小値 0。期限は印付けの時刻と同じになる）。負の値は `ConfigurationException` とする。負の値の分類は仕様が定めない（設計判断。10 章 Q16）。
+`RetentionPolicy.ttl` の猶予は、秒の整数（`long`）で表す。秒より細かい値は型の上で表せない。0 は有効とする（適合データのスキーマも最小値 0。期限は印付けの時刻と同じになる）。負の値は `ConfigurationException` とする（共通契約 4 章の「生成時の不正な設定値」）。上限は定めない（指揮役の回答、2026-10-06）。
 
 メモリ:
 
@@ -366,12 +366,12 @@ public final class DynamoDbEventStore {
 | 値 | 結果 | 規則 |
 |---|---|---|
 | `RetentionPolicy.delete(0)`・負数 | `ConfigurationException` | S-1 |
-| `RetentionPolicy.ttl` の猶予が負 | `ConfigurationException` | 仕様は分類を定めない。10 章 Q16 |
+| `RetentionPolicy.ttl` の猶予が負 | `ConfigurationException` | 4 章の生成時の不正な設定値（指揮役の回答） |
 | `RetentionPolicy.ttl` を `MemoryStorage.create` に渡す | `ConfigurationException` | MEM-3・MEM-12 |
 | `configurationReadRetryLimit` が負 | `ConfigurationException` | 設計判断 |
 | 保存先に記録された設定（`store_id`・`layout_version`）との食い違い | `ConfigurationException` | P-40・DY-8 |
 | 3 テーブルの設定項目が一部だけある | `ConfigurationException` | P-40 |
-| 必須の設定（シリアライザ・テーブル名）の欠落 | `ConfigurationException` | 仕様は定めない。10 章 Q4 |
+| 必須の設定（シリアライザ・テーブル名）の欠落 | `ConfigurationException` | 4 章の生成時の不正な設定値（指揮役の回答） |
 
 ### 2.9 保持処理の失敗を知らせる経路（S-4・MEM-11）
 
@@ -485,10 +485,10 @@ public final class DynamoDbEventStore {
 2. `UnprocessedKeys` があれば、そのキーだけを、指数バックオフで強整合のまま再要求する。未処理がなくなるまで「存在しない」と判定しない。再要求の上限（`configurationReadRetryLimit`。既定 10 回。初回は数えない）に達した場合は、設定エラーではなく保存先エラー（`StorageException`）。
 3. 3 つともなければ、新しい `store_id`（ランダム値）で 1 回の `TransactWriteItems` を送る。各 Put に `attribute_not_exists(aid)` を付ける。
    - `CancellationReasons` に `ConditionalCheckFailed` があれば、応答を捨てて 3 件を強整合で読み直し、手順 4 へ（P-19）。
-   - `TransactionConflict` は、並行して作成していると読み、同じ読み直しを 1 回だけ行う（設計判断。10 章 Q15）。
+   - `TransactionConflict` は、並行して作成していると読み、同じ読み直しを 1 回だけ行う（DY-8、P-44）。
    - スロットリング・通信の失敗・その他は、読み直さずに `StorageException` にする。
    - 読み直しは、手順 1・2 と同じ `BatchGetItem` を使う。強整合で、`UnprocessedKeys` を読み切り、再要求の上限も同じにする。
-   - 読み直しでも 3 つとも設定項目がなければ、それ以上繰り返さず `StorageException` で打ち切る（10 章 Q15）。
+   - 読み直しでも 3 つとも設定項目がなければ、それ以上繰り返さず `StorageException` で打ち切る（DY-8、P-44）。
 4. 3 つともあり、`store_id` が一致し、`layout_version` が自分の版と同じなら続行する。
 5. それ以外（一部だけある・`store_id` の不一致・`layout_version` の違い）は `ConfigurationException`（P-40）。
 
@@ -528,6 +528,8 @@ public final class DynamoDbEventStore {
 | ジャーナルの条件が成立しない | 楽観ロック | W-7 |
 | `TransactionConflict` | 楽観ロック | D-6 |
 | スロットリング・通信失敗・その他 | 保存先 | 4 章 |
+
+取り消し理由が複数の項目に付いたときは、どれかの項目に `TransactionConflict` があれば楽観ロック（D-6）にする。なければ、ヘッドの条件不成立、ジャーナルの条件不成立、その他の順に見て、最初に当たったもので分類する（`dynamodb.md` 6.2、P-43）。
 
 **D-5。** ヘッドの Put・Update に `ReturnValuesOnConditionCheckFailure=ALL_OLD` を付ける。`TransactionCanceledException.cancellationReasons()` の `item()` の旧 `seq_nr` と比べる。追加の読み取りをしない。旧項目が返らなければ、ヘッド 0 とみなす。
 
@@ -890,23 +892,23 @@ head テーブルの Streams のレコードからヘッド遷移を組み立て
 
 ## 10. 未解決の疑問
 
-仕様を勝手に解釈して埋めない。「回答済み」の項目は、指揮役のレビュー（1回目）の回答を反映した。
+仕様を勝手に解釈して埋めない。「回答済み」の項目は、指揮役のレビュー（1回目）の回答と、2026-10-06 の仕様の決定（P-42〜P-45）・指揮役の回答を反映した。未解決は、実装のときに確かめる Q7 だけである。
 
 | 番号 | 疑問 | 根拠・状況 |
 |---|---|---|
 | Q1 | 障害の差し込みの段階の数 | 回答済み: 12 種類（`conformance/schema/common.schema.json`）。5.5 は 12 種類に差し込み場所を示した |
 | Q2 | `conformance/coverage.json` の「メモリのS-3」「R-8」が、メモリのプロファイルを「未合意」と記録している。現在のプロファイルは 2026-10-05 に合意済み | 回答済み: データ側の記録の更新が要るだけで、実装への影響はない。データは変更しない |
-| Q3 | `AggregateId` の型名・値が空文字列のとき | T-11・T-12 は、`-` の有無とバイト数だけを定める。空を許すかは定めがない。未解決 |
-| Q4 | 必須の設定（シリアライザ・テーブル名など）が欠けたときの分類 | S-1・MEM-3 は不正な値を設定エラーとするが、欠落は明記されていない。2.8 は設定エラーとしたが、仕様に根拠がない。未解決 |
+| Q3 | `AggregateId` の型名・値が空文字列のとき | 回答済み: 許す。T-11・T-12 は空を禁じておらず、aid 文字列は `-` を含むので空にならない（指揮役の回答、2026-10-06。2.1） |
+| Q4 | 必須の設定（シリアライザ・テーブル名など）が欠けたときの分類 | 回答済み: 設定エラー。共通契約 4 章の設定の分類は「生成時の不正な設定値」を挙げ、欠落もこれに当たる（指揮役の回答、2026-10-06。2.8） |
 | Q5 | 共有する `MemoryStorage` に、保存先の設定と異なる設定でストアを生成した場合の扱い | 回答済み: MEM-D11 のとおり保存先の設定を使う。保持の方針は `MemoryStorage.create` で渡すので、食い違いは起こらない（2.8） |
 | Q6 | `long` に収まらない `seq_nr` の扱い | 回答済み: 適合データに `long` を超える値はない（最大 9007199254740992）。`BigInteger` で読み、`long` に正確に変換する。将来 `long` を超える値が来たら `unrepresentable` と報告する |
 | Q7 | `ExecutionInterceptor` の分類が、SDK の再試行・暗号化など他の層と順序が変わる場合の、`observe.requests` の対応付け | 固定した SDK 版での動作は、実装 PR で確認する（未確認）。未解決 |
 | Q8 | E-2 の「SDK の生のエラー文を含めない」は、例外の `getCause()` に SDK の例外を付けることを禁じるか | 回答済み: E-2 の対象はメッセージ。原因の例外を持つことは禁じられていない。ただし `getMessage()`・`toString()` に SDK の文を出さない |
 | Q9 | 契約違反・保持失敗の通知のメッセージの「規則番号」の書式 | 回答済み: `"W-6"`・`"T-13"` の形で足りる |
-| Q10 | `manifest` を `PayloadSerializer` に渡してよいか（9.2 の選択肢 C） | T-4 は「ライブラリは manifest を解釈しない」と定める。シリアライザへ渡すだけなら解釈に当たらないという読みが可能だが、仕様に明記がない。未解決 |
+| Q10 | `manifest` を `PayloadSerializer` に渡してよいか（9.2 の選択肢 C） | 回答済み: T-4 は渡すことを禁じていない（解釈しなければよい）。ただし 9.2 で A を選んだので、この文書では渡さない |
 | Q11 | `last_updated_at`（ミリ秒）の丸めの向き | 回答済み: 丸めの向きは未規定。設計では `Instant.toEpochMilli()`（床関数）を使う（4.3） |
 | Q12 | `fnv1a64` を java が「対象外」と報告してよいか | 回答済み: 対象外で妥当。最初のメジャーにはハッシュを使う保存先がない（実装計画 5 章の受け入れ条件 1） |
 | Q13 | `occurred_at`（エポックナノ秒）を DynamoDB の N 属性の有効桁（38 桁）に載せる際の問題 | 回答済み: N は 38 桁で、符号付き 64bit は 19 桁なので収まる |
-| Q14 | T-2・T-10 の必須要素の欠落の分類 | 4 章の契約違反は W-6・W-9・T-9・T-11・T-12・T-13 と W-8 の飛び番だけで、欠落は 5 分類にない。この文書は、言語の慣習（`NullPointerException`・`IllegalStateException`）で扱った（2.2・2.3）。仕様の分類があれば従う。未解決 |
-| Q15 | 設定項目の作成で、`TransactionConflict` が返ったときの扱いと、読み直しても設定項目がないときの打ち切り | 仕様（`dynamodb.md` 70〜73 行）とデータは、`ConditionalCheckFailed` による競合だけを定める。この文書は、`TransactionConflict` を 1 回の読み直しとし、読み直しでも設定項目がなければ `StorageException` で打ち切った（4.2）。未解決 |
-| Q16 | TTL の猶予が負の値のときの分類 | S-1 は保持件数だけを定める。この文書は `ConfigurationException` とした（2.8）。0 は有効とした（データのスキーマの最小値 0）。未解決 |
+| Q14 | T-2・T-10 の必須要素の欠落の分類 | 回答済み: 契約違反にする（共通契約 T-2・T-10・E-3、P-42。2026-10-06 オーナー決定）。`build()` が `ContractViolationException` を投げる（2.2・2.3） |
+| Q15 | 設定項目の作成で、`TransactionConflict` が返ったときの扱いと、読み直しても設定項目がないときの打ち切り | 回答済み: `TransactionConflict` も条件不成立と同じく読み直し、読み直しても設定項目がなければ保存先エラー（DY-8、P-44。2026-10-06 オーナー決定。4.2） |
+| Q16 | TTL の猶予が負の値のときの分類 | 回答済み: 0 は有効、負は設定エラー（4 章の生成時の不正な設定値）、上限は定めない（指揮役の回答、2026-10-06。2.8） |
