@@ -537,7 +537,7 @@ public final class DynamoDbEventStore {
 
 ### 4.5 読み取り（DY-9・DY-10・DY-11）
 
-- `getLatestSnapshotById`: ヘッドと現在のスナップショット（`skey=0`）を 1 回の `BatchGetItem`（強整合）で読む。`UnprocessedKeys` は、読み切るまで再要求する（DY-9）。ヘッドがなければ空（R-1）。あれば、スナップショット（なければなし）とヘッドの `seq_nr` の組を返す（DY-10・R-2・R-3）。
+- `getLatestSnapshotById`: ヘッドと現在のスナップショット（`skey=0`）を 1 回の `BatchGetItem`（強整合）で読む。`UnprocessedKeys` は、読み切るまで再要求する（DY-9）。再要求は、残ったキーだけを強整合のまま指数バックオフで行い、上限と待ち時間は設定読み取り（4.2）と同じ（`configurationReadRetryLimit`。既定 10 回。初回は数えない）にする。上限に達したら、未処理のキーを「ない」と判定せず、`StorageException` を投げる（設計判断。DY-9 は上限を定めないが、上限がないと呼び出しが終わらないおそれがある）。ヘッドがなければ空（R-1）。あれば、スナップショット（なければなし）とヘッドの `seq_nr` の組を返す（DY-10・R-2・R-3）。
 - 2 項目の読み取りは原子的ではない（R-8）。`TransactGetItems` は使わない（P-25）。この性質を Javadoc に書く。
 - `getEventsByIdSinceSeqNr`: journal を `aid = :aid AND seq_nr >= :seq_nr`、`ConsistentRead=true` で `Query` する。昇順。`LastEvaluatedKey` が返る間は読み切る（DY-11・R-4・R-5）。同期は `queryPaginator`、非同期は継続の再帰で実装する案（現行も同じ構造）。
 - payload・manifest の欠損など、読み取ったデータが期待の形でない場合は、`StorageException`（4 章の保存先の分類）。
