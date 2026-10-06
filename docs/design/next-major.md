@@ -548,7 +548,7 @@ public final class DynamoDbEventStore {
 
 1. 疎な GSI を `aid = :aid`・`ScanIndexForward=false` で `Query` し、読み切る（KEYS_ONLY）。
 2. 今書いた履歴を加える（GSI に見えていれば重ねない。結果整合のため）。降順の先頭 n 件を残し、それより古いものを対象にする（S-2）。
-3. 削除方式（`DELETE`）: `BatchWriteItem` を 25 件ずつ（P-18）。`UnprocessedItems` は再送する。
+3. 削除方式（`DELETE`）: `BatchWriteItem` を 25 件ずつ（P-18）。`UnprocessedItems` は、残った項目だけを指数バックオフで再送する。再送の上限と待ち時間は、設定読み取り（4.2）と同じく、初回を数えずに 10 回、初回の待ち 50 ミリ秒・倍々・上限 1 秒とする。上限に達したら、残りを削除せずに保持の失敗として手順 6 で通知し、書き込みの成功を返す。残った履歴は、次の保持処理で再び対象になる（設計判断。仕様は再送することだけを定め、上限を定めない。保持を呼び出しの中で完了するため、上限がないと呼び出しが終わらないおそれがある）。
 4. TTL 方式（`TTL`）: 1 件ずつ `UpdateItem` する。`SET #ttl = :expires REMOVE active_history_seq_nr`、条件は `attribute_exists(active_history_seq_nr)`。`#ttl` は `ExpressionAttributeNames` で渡す。`:expires` は「印付けの時刻（エポック秒）+ 猶予秒」。後の更新が条件失敗した場合は、印付け済みとして読み飛ばす。
 5. 印付き履歴は件数に数えない。期限を先送りしない（S-3）。件数を数えてから超過分を選ぶ方式は使わない（P-24）。
 6. 失敗は書き込みの結果を変えない。ログと `RetentionFailureListener` で通知する（S-4）。
