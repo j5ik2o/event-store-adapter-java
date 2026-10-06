@@ -61,6 +61,19 @@ jobs:
         env:
           TEST_JAVA_VERSION: ${{ matrix.java }}
         run: ./gradlew test -PtestJavaVersion="$TEST_JAVA_VERSION" --info
+      - name: Write conformance summary
+        if: always()
+        run: |
+          if [ -f build/reports/conformance/summary.md ]; then
+            cat build/reports/conformance/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload conformance report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: conformance-report-jdk${{ matrix.java }}
+          path: build/reports/conformance/
+          if-no-files-found: warn
   release-tools:
     name: Check release tooling
     runs-on: ubuntu-latest
