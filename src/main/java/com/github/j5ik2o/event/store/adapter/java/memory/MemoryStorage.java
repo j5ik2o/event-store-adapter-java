@@ -51,22 +51,9 @@ public final class MemoryStorage {
   }
 
   static final class AggregateState {
-    final TreeMap<Long, StoredEvent> journal;
-    final StoredEvent head;
-    final StoredSnapshot snapshot;
-    final TreeMap<Long, StoredSnapshot> history;
-
-    AggregateState(
-        AggregateState previous, StoredEvent event, StoredSnapshot snapshot, boolean keepHistory) {
-      journal = previous == null ? new TreeMap<>() : new TreeMap<>(previous.journal);
-      history = previous == null ? new TreeMap<>() : new TreeMap<>(previous.history);
-      journal.put(event.seqNr, event);
-      head = event;
-      this.snapshot = snapshot != null ? snapshot : previous == null ? null : previous.snapshot;
-      if (keepHistory && snapshot != null) {
-        history.put(snapshot.seqNr, snapshot);
-      }
-    }
+    final TreeMap<Long, StoredEvent> journal = new TreeMap<>();
+    StoredSnapshot snapshot;
+    final TreeMap<Long, StoredSnapshot> history = new TreeMap<>();
   }
 
   static final class StoredEvent {

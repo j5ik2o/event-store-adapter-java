@@ -37,25 +37,63 @@ class MemoryEventStoreTest {
   void failureImmediatelyBeforeCommitLeavesAllPreviouslyPublishedStateUnchanged() {
     CommitFailure hooks = new CommitFailure();
     MemoryStorage storage = MemoryStorage.create(RetentionPolicy.delete(2), hooks);
-    EventStore<String, String> store = store(storage);
-    store.persistEventAndSnapshot(event(1), snapshot(1));
+    EventStore<String, String> writer = store(storage);
+    EventStore<String, String> reader = store(storage);
+    writer.persistEventAndSnapshot(event(1), snapshot(1));
+    writer.persistEventAndSnapshot(event(2), snapshot(2));
     hooks.fail = true;
 
     StorageException failure =
         assertThrows(
-            StorageException.class, () -> store.persistEventAndSnapshot(event(2), snapshot(2)));
+            StorageException.class, () -> writer.persistEventAndSnapshot(event(3), snapshot(3)));
 
     assertEquals(ErrorCategory.STORAGE, failure.category());
-    assertEquals(1, store.getLatestSnapshotById(AID).get().headSeqNr());
-    assertEquals("snapshot-1", store.getLatestSnapshotById(AID).get().snapshot().get().aggregate());
-    assertEquals(List.of(1L), storage.historySeqNrs(AID));
+    SnapshotReadResult<String> unchanged = reader.getLatestSnapshotById(AID).get();
+    assertEquals(2, unchanged.headSeqNr());
+    assertEquals(2, unchanged.snapshot().get().seqNr());
+    assertEquals("snapshot-2", unchanged.snapshot().get().aggregate());
+    assertEquals(List.of(2L, 1L), storage.historySeqNrs(AID));
     assertEquals(
-        List.of(1L),
-        store.getEventsByIdSinceSeqNr(AID, 0).stream()
+        List.of(1L, 2L),
+        reader.getEventsByIdSinceSeqNr(AID, 0).stream()
             .map(EventEnvelope::seqNr)
             .collect(Collectors.toList()));
     hooks.fail = false;
-    assertDoesNotThrow(() -> store.persistEventAndSnapshot(event(2), snapshot(2)));
+    assertDoesNotThrow(() -> writer.persistEventAndSnapshot(event(3), snapshot(3)));
+    SnapshotReadResult<String> committed = reader.getLatestSnapshotById(AID).get();
+    assertEquals(3, committed.headSeqNr());
+    assertEquals(3, committed.snapshot().get().seqNr());
+    assertEquals("snapshot-3", committed.snapshot().get().aggregate());
+    assertEquals(List.of(3L, 2L), storage.historySeqNrs(AID));
+    assertEquals(
+        List.of(1L, 2L, 3L),
+        reader.getEventsByIdSinceSeqNr(AID, 0).stream()
+            .map(EventEnvelope::seqNr)
+            .collect(Collectors.toList()));
+  }
+
+  @Test
+  void failureBeforeFirstCommitDoesNotPublishAggregateAndAllowsRetry() {
+    CommitFailure hooks = new CommitFailure();
+    MemoryStorage storage = MemoryStorage.create(RetentionPolicy.delete(2), hooks);
+    EventStore<String, String> writer = store(storage);
+    EventStore<String, String> reader = store(storage);
+    hooks.fail = true;
+
+    assertThrows(
+        StorageException.class, () -> writer.persistEventAndSnapshot(event(1), snapshot(1)));
+
+    assertTrue(reader.getLatestSnapshotById(AID).isEmpty());
+    assertTrue(reader.getEventsByIdSinceSeqNr(AID, 0).isEmpty());
+    assertTrue(storage.historySeqNrs(AID).isEmpty());
+    hooks.fail = false;
+    assertDoesNotThrow(() -> writer.persistEventAndSnapshot(event(1), snapshot(1)));
+    SnapshotReadResult<String> committed = reader.getLatestSnapshotById(AID).get();
+    assertEquals(1, committed.headSeqNr());
+    assertEquals(1, committed.snapshot().get().seqNr());
+    assertEquals("snapshot-1", committed.snapshot().get().aggregate());
+    assertEquals("event-1", reader.getEventsByIdSinceSeqNr(AID, 0).get(0).payload());
+    assertEquals(List.of(1L), storage.historySeqNrs(AID));
   }
 
   @Test
@@ -155,6 +193,50 @@ class MemoryEventStoreTest {
       assertNotEquals(a.get(5, TimeUnit.SECONDS), b.get(5, TimeUnit.SECONDS));
       assertEquals(1, first.getLatestSnapshotById(AID).get().headSeqNr());
       assertEquals(1, first.getEventsByIdSinceSeqNr(AID, 0).size());
+    } finally {
+      start.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
+  void concurrentSnapshotReadsCaptureHeadAndSnapshotFromOneCommit() throws Exception {
+    MemoryStorage storage = MemoryStorage.create();
+    EventStore<String, String> writer = store(storage);
+    EventStore<String, String> reader = store(storage);
+    writer.persistEventAndSnapshot(event(1), snapshot(1));
+    CountDownLatch start = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      Future<?> writes =
+          executor.submit(
+              () -> {
+                assertTrue(start.await(5, TimeUnit.SECONDS));
+                for (long seqNr = 2; seqNr <= 101; seqNr++) {
+                  writer.persistEventAndSnapshot(event(seqNr), snapshot(seqNr));
+                }
+                return null;
+              });
+      Future<?> reads =
+          executor.submit(
+              () -> {
+                assertTrue(start.await(5, TimeUnit.SECONDS));
+                for (int i = 0; i < 100; i++) {
+                  SnapshotReadResult<String> captured = reader.getLatestSnapshotById(AID).get();
+                  assertEquals(captured.headSeqNr(), captured.snapshot().get().seqNr());
+                  assertEquals(
+                      "snapshot-" + captured.headSeqNr(), captured.snapshot().get().aggregate());
+                }
+                return null;
+              });
+
+      start.countDown();
+      writes.get(5, TimeUnit.SECONDS);
+      reads.get(5, TimeUnit.SECONDS);
+
+      assertEquals(101, reader.getLatestSnapshotById(AID).get().headSeqNr());
+      assertEquals(101, reader.getLatestSnapshotById(AID).get().snapshot().get().seqNr());
+      assertEquals(101, reader.getEventsByIdSinceSeqNr(AID, 0).size());
     } finally {
       start.countDown();
       executor.shutdownNow();

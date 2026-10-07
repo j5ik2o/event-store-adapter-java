@@ -83,7 +83,7 @@ public final class MemoryEventStore {
       storage.lock.lock();
       try {
         AggregateState previous = storage.aggregates.get(event.aggregateId().asString());
-        long head = previous == null ? 0 : previous.head.seqNr;
+        long head = previous == null ? 0 : previous.journal.lastKey();
         if (event.seqNr() <= head) {
           throw new OptimisticLockException(
               event.aggregateId(), event.seqNr(), OptionalLong.of(head), null);
@@ -94,14 +94,22 @@ public final class MemoryEventStore {
               OptionalLong.of(event.seqNr()),
               "event sequence must immediately follow the head");
         }
-        AggregateState next =
-            new AggregateState(
-                previous, storedEvent, storedSnapshot, storage.policy.keepCount().isPresent());
+        AggregateState state = previous == null ? new AggregateState() : previous;
         storage.hooks.beforeCommit(event.aggregateId());
-        storage.aggregates.put(event.aggregateId().asString(), next);
+        // 検査・直列化・確定前フックの成功後、同じロック内で必要な状態だけを更新する。
+        state.journal.put(storedEvent.seqNr, storedEvent);
+        if (storedSnapshot != null) {
+          state.snapshot = storedSnapshot;
+          if (storage.policy.keepCount().isPresent()) {
+            state.history.put(storedSnapshot.seqNr, storedSnapshot);
+          }
+        }
+        if (previous == null) {
+          storage.aggregates.put(event.aggregateId().asString(), state);
+        }
         if (storage.policy.keepCount().isPresent()) {
           try {
-            retain(event.aggregateId(), next, storedSnapshot);
+            retain(event.aggregateId(), state, storedSnapshot);
           } catch (Exception failure) {
             retentionFailure =
                 new RetentionFailure(event.aggregateId(), RetentionMode.DELETE, failure);
@@ -165,7 +173,7 @@ public final class MemoryEventStore {
         if (state == null) {
           return Optional.empty();
         }
-        head = state.head.seqNr;
+        head = state.journal.lastKey();
         snapshot = state.snapshot == null ? null : state.snapshot.copy();
       } finally {
         storage.lock.unlock();
