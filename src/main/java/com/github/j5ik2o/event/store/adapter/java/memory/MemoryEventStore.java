@@ -233,7 +233,11 @@ public final class MemoryEventStore {
 
   private static <T> T deserialize(PayloadSerializer<T> serializer, byte[] bytes) {
     try {
-      return serializer.deserialize(bytes);
+      T value = serializer.deserialize(bytes);
+      if (value == null) {
+        throw new SerializationException("failed to deserialize payload: result is null");
+      }
+      return value;
     } catch (SerializationException failure) {
       throw failure;
     } catch (Exception failure) {

@@ -6,16 +6,22 @@ import static com.github.j5ik2o.event.store.adapter.java.memory.MemoryTestFixtur
 import static com.github.j5ik2o.event.store.adapter.java.memory.MemoryTestFixtures.store;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.github.j5ik2o.event.store.adapter.java.core.ErrorCategory;
 import com.github.j5ik2o.event.store.adapter.java.core.EventEnvelope;
 import com.github.j5ik2o.event.store.adapter.java.core.EventStore;
 import com.github.j5ik2o.event.store.adapter.java.core.EventStoreConfig;
 import com.github.j5ik2o.event.store.adapter.java.core.JsonPayloadSerializer;
 import com.github.j5ik2o.event.store.adapter.java.core.PayloadSerializer;
+import com.github.j5ik2o.event.store.adapter.java.core.SerializationException;
 import com.github.j5ik2o.event.store.adapter.java.core.SnapshotEnvelope;
 import com.github.j5ik2o.event.store.adapter.java.core.SnapshotReadResult;
 import java.time.Instant;
@@ -23,10 +29,83 @@ import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 
 class MemoryReadIsolationTest {
+  @Test
+  void nullEventRestorationIsASerializationFailureWithASafeExplanation() {
+    MemoryStorage storage = MemoryStorage.create();
+    store(storage).persistEvent(event(1));
+    EventStore<String, String> reader = readerWithDeserializer(storage, () -> null);
+
+    SerializationException failure =
+        assertThrows(SerializationException.class, () -> reader.getEventsByIdSinceSeqNr(AID, 0));
+
+    assertEquals(ErrorCategory.SERIALIZATION, failure.category());
+    assertTrue(failure.getMessage().contains("deserialize"));
+    assertTrue(failure.getMessage().contains("null"));
+    assertFalse(failure.getMessage().contains("event-1"));
+    assertNull(failure.getCause());
+  }
+
+  @Test
+  void nullSnapshotRestorationIsASerializationFailureWithASafeExplanation() {
+    MemoryStorage storage = MemoryStorage.create();
+    store(storage).persistEventAndSnapshot(event(1), snapshot(1));
+    EventStore<String, String> reader = readerWithDeserializer(storage, () -> null);
+
+    SerializationException failure =
+        assertThrows(SerializationException.class, () -> reader.getLatestSnapshotById(AID));
+
+    assertEquals(ErrorCategory.SERIALIZATION, failure.category());
+    assertTrue(failure.getMessage().contains("deserialize"));
+    assertTrue(failure.getMessage().contains("null"));
+    assertFalse(failure.getMessage().contains("snapshot-1"));
+    assertNull(failure.getCause());
+  }
+
+  @Test
+  void eventRestorationWrapsUnexpectedFailureAndPreservesItsCause() {
+    MemoryStorage storage = MemoryStorage.create();
+    store(storage).persistEvent(event(1));
+    IllegalStateException cause = new IllegalStateException("decoder failure");
+    EventStore<String, String> reader =
+        readerWithDeserializer(
+            storage,
+            () -> {
+              throw cause;
+            });
+
+    SerializationException failure =
+        assertThrows(SerializationException.class, () -> reader.getEventsByIdSinceSeqNr(AID, 0));
+
+    assertEquals(ErrorCategory.SERIALIZATION, failure.category());
+    assertTrue(failure.getMessage().contains("deserialize"));
+    assertSame(cause, failure.getCause());
+  }
+
+  @Test
+  void snapshotRestorationPreservesExistingSerializationFailureAndItsCause() {
+    MemoryStorage storage = MemoryStorage.create();
+    store(storage).persistEventAndSnapshot(event(1), snapshot(1));
+    IllegalStateException cause = new IllegalStateException("decoder failure");
+    SerializationException original = new SerializationException("snapshot decoder failure", cause);
+    EventStore<String, String> reader =
+        readerWithDeserializer(
+            storage,
+            () -> {
+              throw original;
+            });
+
+    SerializationException failure =
+        assertThrows(SerializationException.class, () -> reader.getLatestSnapshotById(AID));
+
+    assertSame(original, failure);
+    assertSame(cause, failure.getCause());
+  }
+
   @Test
   void serializerOwnedBytesAndDeserializerMutationsCannotChangeStoredPayload() {
     PayloadSerializer<byte[]> serializer =
@@ -241,5 +320,25 @@ class MemoryReadIsolationTest {
 
     assertTrue(store.getEventsByIdSinceSeqNr(AID, 0).get(0).payload().isNull());
     assertTrue(store.getLatestSnapshotById(AID).get().snapshot().get().aggregate().isNull());
+  }
+
+  private static EventStore<String, String> readerWithDeserializer(
+      MemoryStorage storage, Supplier<String> restored) {
+    PayloadSerializer<String> serializer =
+        new PayloadSerializer<String>() {
+          public byte[] serialize(String value) {
+            return JsonPayloadSerializer.of(String.class).serialize(value);
+          }
+
+          public String deserialize(byte[] bytes) {
+            return restored.get();
+          }
+        };
+    return MemoryEventStore.create(
+        storage,
+        EventStoreConfig.<String, String>builder()
+            .payloadSerializer(serializer)
+            .snapshotSerializer(serializer)
+            .build());
   }
 }
