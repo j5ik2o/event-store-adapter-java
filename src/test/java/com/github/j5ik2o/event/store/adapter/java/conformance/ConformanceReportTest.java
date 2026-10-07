@@ -67,9 +67,8 @@ class ConformanceReportTest {
     for (String state : STATES) {
       assertTrue(text.contains("\"" + state + "\""), "missing state key: " + state);
     }
-    // passed が 0 件でも、キーが出ていること
-    assertTrue(findCount(json, "memory", "passed") == 0);
-    assertTrue(findCount(json, "dynamodb-local", "passed") == 0);
+    assertEquals(15, findCount(json, "memory", "passed"));
+    assertEquals(15, findCount(json, "dynamodb-local", "passed"));
     assertTrue(findCount(json, "memory", "failed") == 0);
   }
 
@@ -102,7 +101,7 @@ class ConformanceReportTest {
     assertEquals("not-applicable", notApplicable.get("status").asText());
     assertFalse(notApplicable.get("reason").asText().isBlank());
 
-    JsonNode unverified = caseEntry(cases, "seq-zero-value", "memory");
+    JsonNode unverified = caseEntry(cases, "occurred-at-min", "memory");
     assertEquals("unverified", unverified.get("status").asText());
     assertFalse(unverified.get("reason").asText().isBlank());
   }

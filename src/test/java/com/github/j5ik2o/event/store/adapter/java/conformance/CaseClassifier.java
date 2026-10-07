@@ -5,7 +5,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-/** ケースの状態を決める。この段階ではケースを実行しないので、成功にも失敗にもしない。 */
+/** ケースの状態を決める。中核だけで実行できる値の表のケースは実行し、そのほかは成功にも失敗にもしない。 */
 final class CaseClassifier {
 
   static final String REASON_HASH =
@@ -14,7 +14,7 @@ final class CaseClassifier {
   static final String REASON_LAYOUT = "DynamoDB の配置の照合であり、メモリに該当しない（設計文書 5.4）";
   static final String REASON_MILLISECONDS =
       "標準時刻型 Instant はナノ秒を表せるため、milliseconds のケースは対象外（設計文書 5.2）";
-  static final String REASON_NOT_EXECUTED = "実行器の基盤の段階であり、ケースを実行していない（設計文書 7.1 の 2・7.3）";
+  static final String REASON_NOT_EXECUTED = "中核の段階では保存先がなく、このケースを実行していない（設計文書 7.1 の 3・7.3）";
 
   private CaseClassifier() {}
 
@@ -30,6 +30,9 @@ final class CaseClassifier {
     }
     if (c.timePrecision().map("milliseconds"::equals).orElse(false)) {
       return result(c, backend, ConformanceStatus.NOT_APPLICABLE, REASON_MILLISECONDS);
+    }
+    if (ValueCaseRunner.supports(c)) {
+      return ValueCaseRunner.run(c, backend);
     }
     return result(c, backend, ConformanceStatus.UNVERIFIED, REASON_NOT_EXECUTED);
   }
