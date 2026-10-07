@@ -67,9 +67,16 @@ class ConformanceReportTest {
     for (String state : STATES) {
       assertTrue(text.contains("\"" + state + "\""), "missing state key: " + state);
     }
-    assertEquals(15, findCount(json, "memory", "passed"));
+    assertEquals(60, findCount(json, "memory", "passed"));
     assertEquals(15, findCount(json, "dynamodb-local", "passed"));
-    assertTrue(findCount(json, "memory", "failed") == 0);
+    assertEquals(0, findCount(json, "memory", "failed"));
+    assertEquals(56, findCount(json, "memory", "not-applicable"));
+    assertEquals(0, findCount(json, "memory", "unverified"));
+    assertEquals(0, findCount(json, "memory", "unrepresentable"));
+    assertEquals(0, findCount(json, "dynamodb-local", "failed"));
+    assertEquals(12, findCount(json, "dynamodb-local", "not-applicable"));
+    assertEquals(89, findCount(json, "dynamodb-local", "unverified"));
+    assertEquals(0, findCount(json, "dynamodb-local", "unrepresentable"));
   }
 
   @Test
@@ -101,7 +108,7 @@ class ConformanceReportTest {
     assertEquals("not-applicable", notApplicable.get("status").asText());
     assertFalse(notApplicable.get("reason").asText().isBlank());
 
-    JsonNode unverified = caseEntry(cases, "occurred-at-min", "memory");
+    JsonNode unverified = caseEntry(cases, "occurred-at-min", "dynamodb-local");
     assertEquals("unverified", unverified.get("status").asText());
     assertFalse(unverified.get("reason").asText().isBlank());
   }

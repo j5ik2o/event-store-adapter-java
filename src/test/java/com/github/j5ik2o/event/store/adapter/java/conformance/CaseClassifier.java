@@ -5,7 +5,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-/** ケースの状態を決める。中核だけで実行できる値の表のケースは実行し、そのほかは成功にも失敗にもしない。 */
+/** 中核の値のケースと接続済みのメモリケースを実行し、保存先と表現能力に応じてケースの状態を分類する。 */
 final class CaseClassifier {
 
   static final String REASON_HASH =
@@ -33,6 +33,9 @@ final class CaseClassifier {
     }
     if (ValueCaseRunner.supports(c)) {
       return ValueCaseRunner.run(c, backend);
+    }
+    if (backend == Backend.MEMORY && MemoryCaseRunner.supports(c)) {
+      return MemoryCaseRunner.run(c);
     }
     return result(c, backend, ConformanceStatus.UNVERIFIED, REASON_NOT_EXECUTED);
   }

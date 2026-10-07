@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -46,11 +47,11 @@ class CaseClassifierTest {
   }
 
   @Test
-  void onlyCoreExecutableCasesArePassedAndNoCaseFailsOrIsUnrepresentable() {
+  void implementedMemoryCasesAndExistingCoreCasesPassWithoutPromotingDynamoDbCases() {
     for (ConformanceCase c : data.cases()) {
       for (Backend b : Backend.values()) {
         CaseResult r = CaseClassifier.classify(c, b);
-        if (EXECUTABLE_CASE_IDS.contains(c.id())) {
+        if (EXECUTABLE_CASE_IDS.contains(c.id()) || (b == Backend.MEMORY && memoryExecutable(c))) {
           assertEquals(ConformanceStatus.PASSED, r.status(), c.id() + "/" + b);
         } else {
           assertTrue(
@@ -90,24 +91,29 @@ class CaseClassifierTest {
   }
 
   @Test
-  void requiredListHoldsTheFifteenCoreExecutableCasesOnBothBackends() throws IOException {
+  void requiredListAddsOnlyExecutableMemoryCasesAndKeepsDynamoDbFifteen() throws IOException {
     Map<Backend, Set<String>> required = RequiredCases.load();
 
-    for (Backend b : Backend.values()) {
-      assertEquals(EXECUTABLE_CASE_IDS, required.get(b), b.toString());
-    }
+    Set<String> memory =
+        data.cases().stream()
+            .filter(c -> EXECUTABLE_CASE_IDS.contains(c.id()) || memoryExecutable(c))
+            .map(ConformanceCase::id)
+            .collect(Collectors.toSet());
+    assertEquals(60, memory.size());
+    assertEquals(memory, required.get(Backend.MEMORY));
+    assertEquals(EXECUTABLE_CASE_IDS, required.get(Backend.DYNAMODB));
   }
 
   @Test
   void unverifiedCaseViolatesRequirementOnlyWhenListed() {
-    CaseResult r = CaseClassifier.classify(find("occurred-at-min"), Backend.MEMORY);
+    CaseResult r = CaseClassifier.classify(find("occurred-at-min"), Backend.DYNAMODB);
     assertEquals(ConformanceStatus.UNVERIFIED, r.status());
 
-    assertFalse(CaseClassifier.violatesRequirement(r, Map.of(Backend.MEMORY, Set.of())));
+    assertFalse(CaseClassifier.violatesRequirement(r, Map.of(Backend.DYNAMODB, Set.of())));
     assertTrue(
-        CaseClassifier.violatesRequirement(r, Map.of(Backend.MEMORY, Set.of("occurred-at-min"))));
+        CaseClassifier.violatesRequirement(r, Map.of(Backend.DYNAMODB, Set.of("occurred-at-min"))));
     assertFalse(
-        CaseClassifier.violatesRequirement(r, Map.of(Backend.MEMORY, Set.of("other-case"))));
+        CaseClassifier.violatesRequirement(r, Map.of(Backend.DYNAMODB, Set.of("other-case"))));
   }
 
   @Test
@@ -121,11 +127,17 @@ class CaseClassifierTest {
   @Test
   void requirementIsDecidedPerCaseIdAndBackendPair() {
     Map<Backend, Set<String>> required =
-        Map.of(Backend.MEMORY, Set.of("occurred-at-min"), Backend.DYNAMODB, Set.of());
+        Map.of(Backend.MEMORY, Set.of(), Backend.DYNAMODB, Set.of("occurred-at-min"));
     CaseResult memory = CaseClassifier.classify(find("occurred-at-min"), Backend.MEMORY);
     CaseResult dynamo = CaseClassifier.classify(find("occurred-at-min"), Backend.DYNAMODB);
 
-    assertTrue(CaseClassifier.violatesRequirement(memory, required));
-    assertFalse(CaseClassifier.violatesRequirement(dynamo, required));
+    assertFalse(CaseClassifier.violatesRequirement(memory, required));
+    assertTrue(CaseClassifier.violatesRequirement(dynamo, required));
+  }
+
+  private static boolean memoryExecutable(ConformanceCase c) {
+    return !c.timePrecision().map("milliseconds"::equals).orElse(false)
+        && (c.file().startsWith("scenarios/core/")
+            || c.operation().map("validateOccurredAt"::equals).orElse(false));
   }
 }
