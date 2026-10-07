@@ -12,6 +12,15 @@ import org.junit.jupiter.api.Test;
 class JsonPayloadSerializerTest {
 
   @Test
+  void jsonRootNullDeserializesWithoutBeingRejected() {
+    PayloadSerializer<String> serializer = JsonPayloadSerializer.of(String.class);
+
+    String result = serializer.deserialize("null".getBytes(StandardCharsets.UTF_8));
+
+    org.junit.jupiter.api.Assertions.assertNull(result);
+  }
+
+  @Test
   void roundTripWithClass() {
     PayloadSerializer<List> s = JsonPayloadSerializer.of(List.class);
 

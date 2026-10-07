@@ -34,6 +34,9 @@ final class CaseClassifier {
     if (ValueCaseRunner.supports(c)) {
       return ValueCaseRunner.run(c, backend);
     }
+    if (backend == Backend.MEMORY && MemoryCaseRunner.supports(c)) {
+      return MemoryCaseRunner.run(c);
+    }
     return result(c, backend, ConformanceStatus.UNVERIFIED, REASON_NOT_EXECUTED);
   }
 

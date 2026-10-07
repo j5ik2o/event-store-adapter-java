@@ -1,6 +1,7 @@
 package com.github.j5ik2o.event.store.adapter.java.core;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 
 /** Serializes payloads only. / payload だけを直列化する。 */
 public interface PayloadSerializer<T> {
@@ -22,6 +23,6 @@ public interface PayloadSerializer<T> {
    * @return value / 値
    * @throws SerializationException on failure / 失敗したとき
    */
-  @Nonnull
+  @Nullable
   T deserialize(@Nonnull byte[] bytes) throws SerializationException;
 }

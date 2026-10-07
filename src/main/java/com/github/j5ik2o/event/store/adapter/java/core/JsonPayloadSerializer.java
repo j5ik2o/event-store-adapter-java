@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectReader;
 import java.io.IOException;
 import java.util.Objects;
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 
 /** JSON payload serializer. / JSON の payload シリアライザ。 */
 public final class JsonPayloadSerializer {
@@ -77,7 +78,7 @@ public final class JsonPayloadSerializer {
     }
 
     @Override
-    @Nonnull
+    @Nullable
     public T deserialize(@Nonnull byte[] bytes) {
       try {
         return reader.readValue(bytes);
