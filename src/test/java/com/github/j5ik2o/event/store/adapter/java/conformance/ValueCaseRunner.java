@@ -83,8 +83,7 @@ final class ValueCaseRunner {
     if (expect.has("value")) {
       if (!actual.has("value")) {
         problems.add("値を期待したがエラーになった");
-      } else if (!expect.get("value").decimalValue().equals(actual.get("value").decimalValue())
-          && !expect.get("value").asText().equals(actual.get("value").asText())) {
+      } else if (!valuesEqual(expect.get("value"), actual.get("value"))) {
         problems.add("値が違う");
       }
       return problems;
@@ -114,6 +113,17 @@ final class ValueCaseRunner {
       }
     }
     return problems;
+  }
+
+  /** 期待値と実際値を型に応じて比較する。文字列は文字列として、数値は値として比べる。 */
+  private static boolean valuesEqual(JsonNode expected, JsonNode actual) {
+    if (expected.isTextual() && actual.isTextual()) {
+      return expected.asText().equals(actual.asText());
+    }
+    if (expected.isNumber() && actual.isNumber()) {
+      return expected.decimalValue().compareTo(actual.decimalValue()) == 0;
+    }
+    return false;
   }
 
   private static String categoryName(ErrorCategory category) {
