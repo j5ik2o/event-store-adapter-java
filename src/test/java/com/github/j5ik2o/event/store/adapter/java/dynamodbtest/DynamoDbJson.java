@@ -69,6 +69,8 @@ final class DynamoDbJson {
       return MAPPER
           .getNodeFactory()
           .textNode(java.util.Base64.getEncoder().encodeToString(((SdkBytes) value).asByteArray()));
+    if (value instanceof java.time.Instant)
+      return MAPPER.getNodeFactory().textNode(value.toString());
     return MAPPER.valueToTree(value);
   }
 }

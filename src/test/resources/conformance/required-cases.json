@@ -76,6 +76,20 @@
     "seq-one-event",
     "seq-zero-event",
     "seq-negative-value",
-    "seq-above-max-value"
+    "seq-above-max-value",
+    "dynamodb-config-new",
+    "dynamodb-config-matching",
+    "dynamodb-config-store-mismatch",
+    "dynamodb-config-partial",
+    "dynamodb-config-layout-unsupported",
+    "dynamodb-config-layout-mismatch",
+    "dynamodb-config-unprocessed-keys",
+    "dynamodb-config-retry-exhausted",
+    "dynamodb-config-create-race",
+    "dynamodb-config-partial-snapshot",
+    "dynamodb-config-partial-head",
+    "dynamodb-config-partial-journal-snapshot",
+    "dynamodb-config-partial-journal-head",
+    "dynamodb-config-partial-snapshot-head"
   ]
 }

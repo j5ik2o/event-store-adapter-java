@@ -12,6 +12,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import software.amazon.awssdk.core.interceptor.ExecutionInterceptor;
 import software.amazon.awssdk.http.apache5.Apache5HttpClient;
+import software.amazon.awssdk.http.nio.netty.SdkEventLoopGroup;
 import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.*;
@@ -47,6 +48,14 @@ final class DynamoDbTestContext implements AutoCloseable {
   private boolean closed;
 
   DynamoDbTestContext(URI endpoint, ExecutionInterceptor... acquisitionInterceptors) {
+    this(endpoint, null, acquisitionInterceptors);
+  }
+
+  /** The caller owns a supplied event loop; this context still owns every client and HTTP pool. */
+  DynamoDbTestContext(
+      URI endpoint,
+      SdkEventLoopGroup borrowedEventLoop,
+      ExecutionInterceptor... acquisitionInterceptors) {
     String prefix = "fault-test-" + UUID.randomUUID();
     journal = prefix + "-journal";
     snapshot = prefix + "-snapshot";
@@ -58,11 +67,17 @@ final class DynamoDbTestContext implements AutoCloseable {
     try {
       admin = DynamoDbTestClients.admin(endpoint);
       acquired.add(admin);
-      adminAsync = DynamoDbTestClients.adminAsync(endpoint, acquisitionInterceptors);
+      adminAsync =
+          borrowedEventLoop == null
+              ? DynamoDbTestClients.adminAsync(endpoint, acquisitionInterceptors)
+              : DynamoDbTestClients.adminAsync(
+                  endpoint, borrowedEventLoop, acquisitionInterceptors);
       acquired.add(adminAsync);
       http = new FaultHttpClient(Apache5HttpClient.builder().build(), recorder);
       acquired.add(http);
-      asyncHttp = new FaultAsyncHttpClient(DynamoDbTestClients.asyncHttp().build(), recorder);
+      asyncHttp =
+          new FaultAsyncHttpClient(
+              DynamoDbTestClients.asyncHttp(borrowedEventLoop).build(), recorder);
       acquired.add(asyncHttp);
       client = DynamoDbTestClients.observed(endpoint, recorder, http);
       acquired.add(client);
