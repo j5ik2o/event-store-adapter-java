@@ -90,6 +90,9 @@
     "dynamodb-config-partial-head",
     "dynamodb-config-partial-journal-snapshot",
     "dynamodb-config-partial-journal-head",
-    "dynamodb-config-partial-snapshot-head"
+    "dynamodb-config-partial-snapshot-head",
+    "core-time-roundtrip-min",
+    "core-time-roundtrip-max",
+    "core-json-root-values"
   ]
 }

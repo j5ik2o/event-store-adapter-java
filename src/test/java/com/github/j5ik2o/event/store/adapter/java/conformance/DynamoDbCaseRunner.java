@@ -2,14 +2,20 @@ package com.github.j5ik2o.event.store.adapter.java.conformance;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.j5ik2o.event.store.adapter.java.dynamodbtest.DynamoDbConfigurationFixture;
+import com.github.j5ik2o.event.store.adapter.java.dynamodbtest.DynamoDbEventReadFixture;
+import java.util.Set;
 
-/** Connects only configuration and partial layout verification to the real Local fixture. */
+/** Connects configuration, partial layout and the verified event-read cases to real Local. */
 final class DynamoDbCaseRunner {
   private DynamoDbCaseRunner() {}
 
+  private static final Set<String> READ_CASE_IDS =
+      Set.of("core-time-roundtrip-min", "core-time-roundtrip-max", "core-json-root-values");
+
   static boolean supports(ConformanceCase c) {
     return c.file().equals("dynamodb/configuration.json")
-        || c.file().equals("dynamodb/layout.json");
+        || c.file().equals("dynamodb/layout.json")
+        || READ_CASE_IDS.contains(c.id());
   }
 
   static CaseResult run(ConformanceCase c, DynamoDbConfigurationFixture fixture) {
@@ -17,7 +23,20 @@ final class DynamoDbCaseRunner {
     ObjectNode actual = ConformanceJson.mapper().createObjectNode();
     try {
       boolean layout = c.format().equals("layout");
-      if (layout) fixture.layout(c.materialized(), actual);
+      if (READ_CASE_IDS.contains(c.id())) {
+        new DynamoDbEventReadFixture(fixture).execute(c.materialized(), actual);
+        if (actual.has("unsupported"))
+          return new CaseResult(
+              c.id(),
+              c.file(),
+              c.rules(),
+              Backend.DYNAMODB,
+              ConformanceStatus.UNVERIFIED,
+              actual.path("unsupported").asText(),
+              null,
+              null,
+              actual);
+      } else if (layout) fixture.layout(c.materialized(), actual);
       else fixture.configuration(c.materialized(), actual);
       return new CaseResult(
           c.id(),
@@ -37,7 +56,7 @@ final class DynamoDbCaseRunner {
           Backend.DYNAMODB,
           ConformanceStatus.FAILED,
           failure.toString(),
-          0,
+          actual.has("failed_operation") ? actual.path("failed_operation").intValue() : 0,
           c.materialized(),
           actual);
     }
