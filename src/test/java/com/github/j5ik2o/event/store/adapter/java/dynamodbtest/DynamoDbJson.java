@@ -10,6 +10,8 @@ import java.util.Map;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.core.SdkField;
 import software.amazon.awssdk.core.SdkPojo;
+import software.amazon.awssdk.core.util.SdkAutoConstructList;
+import software.amazon.awssdk.core.util.SdkAutoConstructMap;
 
 final class DynamoDbJson {
   private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -47,8 +49,8 @@ final class DynamoDbJson {
       for (SdkField<?> field : ((SdkPojo) value).sdkFields()) {
         Object member = field.getValueOrDefault(value);
         if (member == null
-            || member instanceof Collection && ((Collection<?>) member).isEmpty()
-            || member instanceof Map && ((Map<?, ?>) member).isEmpty()) continue;
+            || member instanceof SdkAutoConstructList
+            || member instanceof SdkAutoConstructMap) continue;
         result.set(field.locationName(), sdk(member));
       }
       return result;

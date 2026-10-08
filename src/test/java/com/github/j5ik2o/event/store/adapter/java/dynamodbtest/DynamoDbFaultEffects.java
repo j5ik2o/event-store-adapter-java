@@ -6,8 +6,10 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import software.amazon.awssdk.core.SdkRequest;
 import software.amazon.awssdk.core.SdkResponse;
@@ -88,9 +90,21 @@ final class DynamoDbFaultEffects {
   }
 
   private static HttpReply error(String code, ObjectNode body) {
+    int status;
+    switch (code) {
+      case "InternalServerError":
+        status = 500;
+        break;
+      case "ProvisionedThroughputExceededException":
+      case "TransactionCanceledException":
+        status = 400;
+        break;
+      default:
+        throw new IllegalArgumentException("Unsupported SDK error code: " + code);
+    }
     body.put("__type", "com.amazonaws.dynamodb.v20120810#" + code);
     body.put("Message", "Injected DynamoDB test failure");
-    return new HttpReply(400, body);
+    return new HttpReply(status, body);
   }
 
   static FaultRegistry.Effect response(Function<SdkResponse, SdkResponse> transform) {
@@ -109,7 +123,7 @@ final class DynamoDbFaultEffects {
       private boolean empty;
 
       @Override
-      public SdkRequest prepare(SdkRequest request) {
+      public SdkRequest prepare(SdkRequest request, FaultRegistry.Injection injection) {
         BatchWriteItemRequest batch = (BatchWriteItemRequest) request;
         excluded = new LinkedHashMap<>();
         Map<String, List<WriteRequest>> remainder = new LinkedHashMap<>();
@@ -167,23 +181,113 @@ final class DynamoDbFaultEffects {
           keys.forEach(key -> copy.add(Map.copyOf(key)));
           plan.put(table, List.copyOf(copy));
         });
-    return new RequestEffect() {
+    return new FaultRegistry.Effect() {
       private BatchGetItemRequest original;
+      private Map<String, List<String>> addedAttributes;
 
       @Override
-      public SdkRequest prepare(SdkRequest request) {
-        original = (BatchGetItemRequest) request;
-        return request;
+      public boolean supports(FaultRegistry.Injection injection) {
+        return true;
       }
 
       @Override
-      public HttpReply reply(DynamoDbRequestRecorder.Request request) {
+      public SdkRequest prepare(SdkRequest request, FaultRegistry.Injection injection) {
+        original = (BatchGetItemRequest) request;
+        addedAttributes = new LinkedHashMap<>();
         for (Map.Entry<String, List<Map<String, AttributeValue>>> entry : plan.entrySet()) {
           KeysAndAttributes actual = original.requestItems().get(entry.getKey());
           if (actual == null || !actual.keys().containsAll(entry.getValue())) {
             throw new IllegalArgumentException("Unprocessed key was not requested");
           }
         }
+        if (injection == FaultRegistry.Injection.REPLACE_REQUEST) return request;
+        Map<String, KeysAndAttributes> supplemented = new LinkedHashMap<>(original.requestItems());
+        plan.forEach(
+            (table, omitted) -> {
+              KeysAndAttributes keys = original.requestItems().get(table);
+              if (omitted.isEmpty() || keys.projectionExpression() == null) return;
+              Set<String> projected = new LinkedHashSet<>();
+              for (String term : keys.projectionExpression().split(",", -1)) {
+                String attribute = term.trim();
+                if (attribute.matches("#[A-Za-z0-9_]+")) {
+                  String bound = keys.expressionAttributeNames().get(attribute);
+                  if (bound == null)
+                    throw new IllegalArgumentException("Unbound projection attribute");
+                  attribute = bound;
+                }
+                projected.add(attribute);
+              }
+              List<String> added = new ArrayList<>();
+              Map<String, String> names = new LinkedHashMap<>(keys.expressionAttributeNames());
+              String projection = keys.projectionExpression();
+              int aliasNumber = 0;
+              for (String attribute : keys.keys().get(0).keySet()) {
+                if (projected.contains(attribute)) continue;
+                String alias;
+                do {
+                  alias = "#partialKey" + aliasNumber++;
+                } while (names.containsKey(alias));
+                names.put(alias, attribute);
+                projection += ", " + alias;
+                added.add(attribute);
+              }
+              if (!added.isEmpty()) {
+                addedAttributes.put(table, List.copyOf(added));
+                supplemented.put(
+                    table,
+                    keys.toBuilder()
+                        .projectionExpression(projection)
+                        .expressionAttributeNames(names)
+                        .build());
+              }
+            });
+        return original.toBuilder().requestItems(supplemented).build();
+      }
+
+      @Override
+      public SdkResponse response(DynamoDbRequestRecorder.Request request, SdkResponse response) {
+        BatchGetItemResponse batch = (BatchGetItemResponse) response;
+        Map<String, List<Map<String, AttributeValue>>> responses =
+            new LinkedHashMap<>(batch.responses());
+        Map<String, KeysAndAttributes> pending = new LinkedHashMap<>(batch.unprocessedKeys());
+        plan.forEach(
+            (table, omitted) -> {
+              if (omitted.isEmpty()) return;
+              KeysAndAttributes originalKeys = original.requestItems().get(table);
+              responses.computeIfPresent(
+                  table,
+                  (name, items) -> {
+                    List<Map<String, AttributeValue>> processed = new ArrayList<>();
+                    for (Map<String, AttributeValue> item : items) {
+                      Map<String, AttributeValue> itemKey =
+                          originalKeys.keys().stream()
+                              .filter(key -> item.entrySet().containsAll(key.entrySet()))
+                              .findFirst()
+                              .orElseThrow(
+                                  () ->
+                                      new IllegalStateException(
+                                          "Cannot identify BatchGet response item"));
+                      if (omitted.contains(itemKey)) continue;
+                      Map<String, AttributeValue> projected = new LinkedHashMap<>(item);
+                      addedAttributes.getOrDefault(table, List.of()).forEach(projected::remove);
+                      processed.add(projected);
+                    }
+                    return processed;
+                  });
+              KeysAndAttributes servicePending = pending.get(table);
+              List<Map<String, AttributeValue>> keys =
+                  servicePending == null
+                      ? new ArrayList<>()
+                      : new ArrayList<>(servicePending.keys());
+              for (Map<String, AttributeValue> key : omitted)
+                if (!keys.contains(key)) keys.add(key);
+              pending.put(table, originalKeys.toBuilder().keys(keys).build());
+            });
+        return batch.toBuilder().responses(responses).unprocessedKeys(pending).build();
+      }
+
+      @Override
+      public HttpReply reply(DynamoDbRequestRecorder.Request request) {
         Map<String, List<Map<String, AttributeValue>>> responses = new LinkedHashMap<>();
         Map<String, KeysAndAttributes> pending = new LinkedHashMap<>();
         original
@@ -201,6 +305,8 @@ final class DynamoDbFaultEffects {
                                     .tableName(table)
                                     .key(key)
                                     .consistentRead(true)
+                                    .projectionExpression(keys.projectionExpression())
+                                    .expressionAttributeNames(keys.expressionAttributeNames())
                                     .build())
                             .item();
                     if (!stored.isEmpty()) items.add(stored);

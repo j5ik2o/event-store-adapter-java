@@ -20,7 +20,7 @@ final class FaultRegistry {
       return false;
     }
 
-    default SdkRequest prepare(SdkRequest request) {
+    default SdkRequest prepare(SdkRequest request, Injection injection) {
       return request;
     }
 
@@ -205,6 +205,14 @@ final class FaultRegistry {
       if (fault.unsupportedReason != null)
         unsupported.add(fault.phase + ": " + fault.unsupportedReason);
       else if (fault.applications.isEmpty()) failures.add("Fault did not fire: " + fault.phase);
+      else if (fault.count != -1 && fault.applications.size() != fault.count)
+        failures.add(
+            "Fault applied "
+                + fault.applications.size()
+                + " of "
+                + fault.count
+                + " times: "
+                + fault.phase);
     }
     completed.add(operation.number);
     current = null;

@@ -123,6 +123,8 @@ class DynamoDbFaultFoundationTest {
             unwrap(assertThrows(RuntimeException.class, () -> transact(context, request, async)));
         assertInstanceOf(TransactionCanceledException.class, error);
         TransactionCanceledException canceled = (TransactionCanceledException) error;
+        assertEquals(400, canceled.statusCode());
+        assertEquals("TransactionCanceledException", canceled.awsErrorDetails().errorCode());
         assertEquals(
             List.of("ConditionalCheckFailed", "None"),
             canceled.cancellationReasons().stream()
@@ -160,6 +162,118 @@ class DynamoDbFaultFoundationTest {
         assertEquals("passed", context.faults.finish(operation).status);
       }
     }
+  }
+
+  @Test
+  void syncSdkRestoresErrorTypeStatusAndCodeWithoutRetry() {
+    assertSdkErrors(false);
+  }
+
+  @Test
+  void asyncSdkRestoresErrorTypeStatusAndCodeWithoutRetry() {
+    assertSdkErrors(true);
+  }
+
+  private static void assertSdkErrors(boolean async) {
+    try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+      context.createMinimalTables();
+      String[] codes = {"InternalServerError", "ProvisionedThroughputExceededException"};
+      for (int i = 0; i < codes.length; i++) {
+        String code = codes[i];
+        FaultRegistry.Fault fault =
+            context.faults.register(
+                i + 1,
+                "read-events",
+                1,
+                FaultRegistry.Injection.REPLACE_REQUEST,
+                DynamoDbFaultEffects.sdkError(code));
+        FaultRegistry.Operation operation = context.faults.begin(i + 1, false);
+        Throwable failure =
+            unwrap(
+                assertThrows(RuntimeException.class, () -> query(context, events(context), async)));
+        Class<? extends DynamoDbException> expectedType =
+            i == 0
+                ? InternalServerErrorException.class
+                : ProvisionedThroughputExceededException.class;
+        assertInstanceOf(expectedType, failure);
+        DynamoDbException error = (DynamoDbException) failure;
+        assertEquals(i == 0 ? 500 : 400, error.statusCode());
+        assertEquals(code, error.awsErrorDetails().errorCode());
+        assertEquals(1, context.faults.applications(fault));
+        DynamoDbRequestRecorder.Request observed = context.recorder.requests().get(i);
+        assertEquals(1, observed.httpAttempts);
+        assertEquals(0, observed.transmissions);
+        assertNull(observed.transmitted);
+        assertEquals("passed", context.faults.finish(operation).status);
+      }
+    }
+  }
+
+  @Test
+  void syncSdkFiniteCountRequiresEveryApplicationAndStopsAtTheLimit() {
+    assertFiniteCount(false);
+  }
+
+  @Test
+  void asyncSdkFiniteCountRequiresEveryApplicationAndStopsAtTheLimit() {
+    assertFiniteCount(true);
+  }
+
+  private static void assertFiniteCount(boolean async) {
+    for (FaultRegistry.Injection injection : FaultRegistry.Injection.values()) {
+      try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+        context.createMinimalTables();
+        context.admin.putItem(
+            PutItemRequest.builder().tableName(context.journal).item(item("seq_nr", 1)).build());
+        FaultRegistry.Effect effect =
+            injection == FaultRegistry.Injection.REPLACE_REQUEST
+                ? DynamoDbFaultEffects.sdkError("InternalServerError")
+                : DynamoDbFaultEffects.response(
+                    response ->
+                        ((QueryResponse) response).toBuilder().items(List.of()).count(0).build());
+        FaultRegistry.Fault shortfall =
+            context.faults.register(1, "read-events", 2, injection, effect);
+        FaultRegistry.Operation one = context.faults.begin(1, false);
+        assertFaultedQuery(context, injection, async);
+        assertEquals(1, context.faults.applications(shortfall));
+        assertEquals("failed", context.faults.finish(one).status);
+
+        FaultRegistry.Operation next = context.faults.begin(2, false);
+        assertEquals(List.of(item("seq_nr", 1)), query(context, events(context), async).items());
+        assertEquals(1, context.faults.applications(shortfall));
+        assertEquals("passed", context.faults.finish(next).status);
+
+        FaultRegistry.Fault complete =
+            context.faults.register(3, "read-events", 2, injection, effect);
+        FaultRegistry.Operation three = context.faults.begin(3, false);
+        assertFaultedQuery(context, injection, async);
+        assertFaultedQuery(context, injection, async);
+        assertEquals(List.of(item("seq_nr", 1)), query(context, events(context), async).items());
+        assertEquals(2, context.faults.applications(complete));
+        assertEquals("passed", context.faults.finish(three).status);
+        List<DynamoDbRequestRecorder.Request> requests = context.recorder.requests();
+        assertEquals(5, requests.size());
+        for (DynamoDbRequestRecorder.Request request : requests)
+          assertEquals(1, request.httpAttempts);
+        for (int index : new int[] {0, 2, 3})
+          assertEquals(
+              injection == FaultRegistry.Injection.REPLACE_REQUEST ? 0 : 1,
+              requests.get(index).transmissions);
+        assertEquals(1, requests.get(1).transmissions);
+        assertEquals(1, requests.get(4).transmissions);
+        assertEquals(2, requests.get(1).operation);
+      }
+    }
+  }
+
+  private static void assertFaultedQuery(
+      DynamoDbTestContext context, FaultRegistry.Injection injection, boolean async) {
+    if (injection == FaultRegistry.Injection.REPLACE_REQUEST) {
+      assertInstanceOf(
+          InternalServerErrorException.class,
+          unwrap(
+              assertThrows(RuntimeException.class, () -> query(context, events(context), async))));
+    } else assertTrue(query(context, events(context), async).items().isEmpty());
   }
 
   @Test
@@ -303,6 +417,9 @@ class DynamoDbFaultFoundationTest {
         FaultRegistry.Operation two = context.faults.begin(2, false);
         assertEquals(1, query(context, events(context), async).items().size());
         assertEquals(2, context.recorder.requests().get(3).operation);
+        assertEquals(1, context.recorder.requests().get(3).transmissions);
+        assertEquals(1, context.faults.applications(first));
+        assertEquals(2, context.faults.applications(continuous));
         assertEquals("passed", context.faults.finish(two).status);
       }
     }

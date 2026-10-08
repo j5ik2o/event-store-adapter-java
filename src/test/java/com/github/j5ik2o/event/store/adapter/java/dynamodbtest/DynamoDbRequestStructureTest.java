@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.core.SdkBytes;
@@ -104,6 +105,18 @@ class DynamoDbRequestStructureTest {
     ((com.fasterxml.jackson.databind.node.ObjectNode) copy.get("M")).removeAll();
     assertEquals("AQI=", captured.at("/M/payload/B").asText());
     assertEquals(captured, DynamoDbJson.read(DynamoDbJson.bytes(captured)));
+  }
+
+  @Test
+  void sdkJsonPreservesExplicitEmptyListsAndMapsAndOmitsUnsetCollections() {
+    assertEquals(json("{}"), DynamoDbJson.sdk(AttributeValue.builder().build()));
+    assertEquals(json("{\"S\":\"value\"}"), DynamoDbJson.sdk(AttributeValue.fromS("value")));
+    assertEquals(json("{\"L\":[]}"), DynamoDbJson.sdk(AttributeValue.fromL(List.of())));
+    assertEquals(json("{\"M\":{}}"), DynamoDbJson.sdk(AttributeValue.fromM(Map.of())));
+    AttributeValue nested =
+        AttributeValue.fromM(
+            Map.of("values", AttributeValue.fromL(List.of(AttributeValue.fromM(Map.of())))));
+    assertEquals(json("{\"M\":{\"values\":{\"L\":[{\"M\":{}}]}}}"), DynamoDbJson.sdk(nested));
   }
 
   @Test

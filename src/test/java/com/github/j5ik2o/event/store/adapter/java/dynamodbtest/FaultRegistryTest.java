@@ -6,6 +6,75 @@ import org.junit.jupiter.api.Test;
 
 class FaultRegistryTest {
   @Test
+  void finiteCountShortfallFailsEvenWithAnUnappliedReservationAndUnsupportedFault() {
+    FaultRegistry registry = new FaultRegistry();
+    FaultRegistry.Fault fault =
+        registry.register(
+            1,
+            "read-events",
+            2,
+            FaultRegistry.Injection.REPLACE_RESPONSE,
+            DynamoDbFaultEffects.response(value -> value));
+    registry.unsupported(1, "deserialize-event", "Serializer hook is not connected");
+    FaultRegistry.Operation operation = registry.begin(1, false);
+    registry.applied(registry.select(operation, "read-events"), 11);
+    FaultRegistry.Selection reserved = registry.select(operation, "read-events");
+    assertEquals(1, registry.applications(fault));
+    registry.release(reserved);
+    assertEquals(1, registry.applications(fault));
+    FaultRegistry.Result result = registry.finish(operation);
+    assertEquals("failed", result.status);
+    assertEquals(1, result.reasons.size());
+  }
+
+  @Test
+  void reservationsEnforceTheFiniteLimitWithoutBecomingApplications() {
+    FaultRegistry registry = new FaultRegistry();
+    FaultRegistry.Fault fault =
+        registry.register(
+            1,
+            "read-events",
+            2,
+            FaultRegistry.Injection.REPLACE_RESPONSE,
+            DynamoDbFaultEffects.response(value -> value));
+    FaultRegistry.Operation operation = registry.begin(1, false);
+    FaultRegistry.Selection first = registry.select(operation, "read-events");
+    FaultRegistry.Selection second = registry.select(operation, "read-events");
+    assertNull(registry.select(operation, "read-events"));
+    assertEquals(0, registry.applications(fault));
+    registry.applied(first, 11);
+    registry.release(second);
+    FaultRegistry.Selection replacement = registry.select(operation, "read-events");
+    assertNotNull(replacement);
+    assertEquals(1, registry.applications(fault));
+    registry.applied(replacement, 12);
+    assertNull(registry.select(operation, "read-events"));
+    assertEquals(2, registry.applications(fault));
+    assertEquals("passed", registry.finish(operation).status);
+  }
+
+  @Test
+  void continuousFaultWithNoApplicationsFails() {
+    FaultRegistry registry = new FaultRegistry();
+    FaultRegistry.Fault fault =
+        registry.register(
+            1,
+            "read-events",
+            -1,
+            FaultRegistry.Injection.REPLACE_REQUEST,
+            DynamoDbFaultEffects.sdkError("InternalServerError"));
+    assertEquals("failed", registry.finish(registry.begin(1, false)).status);
+    assertEquals(0, registry.applications(fault));
+  }
+
+  @Test
+  void unknownSdkErrorCodeHasNoAssumedHttpStatus() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> DynamoDbFaultEffects.sdkError("UnconfirmedError").reply(null));
+  }
+
+  @Test
   void selectionDoesNotFabricateApplicationsAndCountUsesArrayOrder() {
     FaultRegistry registry = new FaultRegistry();
     FaultRegistry.Fault first =

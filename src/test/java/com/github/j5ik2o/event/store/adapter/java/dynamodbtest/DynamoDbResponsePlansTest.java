@@ -15,6 +15,573 @@ class DynamoDbResponsePlansTest {
   private static final String AID = "User-A";
 
   @Test
+  void syncRequestReplacementPreservesKeylessAliasedProjection() {
+    assertKeylessAliasedProjection(false, FaultRegistry.Injection.REPLACE_REQUEST);
+  }
+
+  @Test
+  void asyncRequestReplacementPreservesKeylessAliasedProjection() {
+    assertKeylessAliasedProjection(true, FaultRegistry.Injection.REPLACE_REQUEST);
+  }
+
+  @Test
+  void syncResponseReplacementPreservesKeylessAliasedProjection() {
+    assertKeylessAliasedProjection(false, FaultRegistry.Injection.REPLACE_RESPONSE);
+  }
+
+  @Test
+  void asyncResponseReplacementPreservesKeylessAliasedProjection() {
+    assertKeylessAliasedProjection(true, FaultRegistry.Injection.REPLACE_RESPONSE);
+  }
+
+  private static void assertKeylessAliasedProjection(
+      boolean async, FaultRegistry.Injection injection) {
+    try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+      context.createMinimalTables();
+      Map<String, AttributeValue> processedKey = key("skey", 1);
+      Map<String, AttributeValue> pendingKey = key("skey", 2);
+      Map<String, AttributeValue> processedProjection =
+          Map.of("store_id", AttributeValue.fromS("processed-owner"));
+      Map<String, AttributeValue> pendingProjection =
+          Map.of("store_id", AttributeValue.fromS("pending-owner"));
+      for (Map.Entry<Map<String, AttributeValue>, Map<String, AttributeValue>> entry :
+          Map.of(processedKey, processedProjection, pendingKey, pendingProjection).entrySet()) {
+        java.util.HashMap<String, AttributeValue> stored = new java.util.HashMap<>(entry.getKey());
+        stored.putAll(entry.getValue());
+        stored.put("extra", AttributeValue.fromS("outside-projection"));
+        context.admin.putItem(
+            PutItemRequest.builder().tableName(context.snapshot).item(stored).build());
+      }
+      KeysAndAttributes keys =
+          KeysAndAttributes.builder()
+              .keys(processedKey, pendingKey)
+              .consistentRead(true)
+              .projectionExpression("#owner")
+              .expressionAttributeNames(Map.of("#owner", "store_id"))
+              .build();
+      BatchGetItemRequest request =
+          BatchGetItemRequest.builder().requestItems(Map.of(context.snapshot, keys)).build();
+      FaultRegistry.Fault fault =
+          context.faults.register(
+              1,
+              "read-snapshot",
+              1,
+              injection,
+              DynamoDbFaultEffects.partialBatchGet(
+                  injection == FaultRegistry.Injection.REPLACE_REQUEST ? context.admin : null,
+                  Map.of(context.snapshot, List.of(pendingKey))));
+      FaultRegistry.Operation operation = context.faults.begin(1, false);
+      BatchGetItemResponse first = batchGet(context, request, async);
+      int firstApplications = context.faults.applications(fault);
+      BatchGetItemResponse retry =
+          batchGet(
+              context, request.toBuilder().requestItems(first.unprocessedKeys()).build(), async);
+      List<Map<String, AttributeValue>> combined =
+          new ArrayList<>(first.responses().get(context.snapshot));
+      combined.addAll(retry.responses().get(context.snapshot));
+      List<DynamoDbRequestRecorder.Request> observed = context.recorder.requests();
+      int applications = context.faults.applications(fault);
+      String status = context.faults.finish(operation).status;
+      // Preserve all boundary observations even when a projection assertion fails.
+      System.out.println(
+          "projection " + async + " " + injection + " first=" + first + " retry=" + retry);
+      for (DynamoDbRequestRecorder.Request sent : observed)
+        System.out.println(
+            "original="
+                + sent.original
+                + " marshalled="
+                + sent.marshalled
+                + " transmitted="
+                + sent.transmitted
+                + " attempts="
+                + sent.httpAttempts
+                + " transmissions="
+                + sent.transmissions);
+      System.out.println(
+          "applications=" + firstApplications + "->" + applications + " status=" + status);
+      assertAll(
+          () ->
+              assertEquals(
+                  List.of(processedProjection),
+                  first.responses().get(context.snapshot),
+                  "initial projection and exclusion"),
+          () ->
+              assertFalse(
+                  first.responses().get(context.snapshot).contains(pendingProjection),
+                  "processed/unprocessed exclusivity"),
+          () ->
+              assertEquals(
+                  Map.of(context.snapshot, keys.toBuilder().keys(pendingKey).build()),
+                  first.unprocessedKeys()),
+          () -> assertEquals(List.of(pendingProjection), retry.responses().get(context.snapshot)),
+          () -> assertTrue(retry.unprocessedKeys().isEmpty()),
+          () -> assertEquals(2, combined.size(), "no duplicate after retry"),
+          () -> assertEquals(2, combined.stream().distinct().count()),
+          () -> assertEquals(2, observed.size()),
+          () -> assertEquals(DynamoDbJson.sdk(request), observed.get(0).original),
+          () -> assertEquals(keys, request.requestItems().get(context.snapshot)),
+          () -> assertEquals(1, observed.get(0).httpAttempts),
+          () ->
+              assertEquals(
+                  injection == FaultRegistry.Injection.REPLACE_REQUEST ? 0 : 1,
+                  observed.get(0).transmissions),
+          () -> {
+            if (injection == FaultRegistry.Injection.REPLACE_REQUEST) {
+              assertNull(observed.get(0).transmitted);
+              assertEquals(observed.get(0).original, observed.get(0).marshalled);
+            } else {
+              assertEquals(observed.get(0).marshalled, observed.get(0).transmitted);
+              com.fasterxml.jackson.databind.JsonNode sent =
+                  observed.get(0).transmitted.path("RequestItems").path(context.snapshot);
+              java.util.Set<String> projectedAttributes = new java.util.HashSet<>();
+              for (String term : sent.path("ProjectionExpression").asText().split(","))
+                projectedAttributes.add(
+                    sent.path("ExpressionAttributeNames").path(term.trim()).asText());
+              assertEquals(java.util.Set.of("aid", "skey", "store_id"), projectedAttributes);
+              assertEquals(
+                  "store_id", sent.path("ExpressionAttributeNames").path("#owner").asText());
+            }
+          },
+          () -> assertEquals(1, observed.get(1).httpAttempts),
+          () -> assertEquals(1, observed.get(1).transmissions),
+          () -> assertEquals(observed.get(1).marshalled, observed.get(1).transmitted),
+          () ->
+              assertEquals(
+                  DynamoDbJson.sdk(first.unprocessedKeys()),
+                  observed.get(1).transmitted.path("RequestItems")),
+          () -> assertEquals(1, firstApplications),
+          () -> assertEquals(1, applications),
+          () -> assertEquals("passed", status));
+    }
+  }
+
+  @Test
+  void syncPartialBatchGetReplacesTheRealProjectedResponseAndRetriesOnlyPendingKeys() {
+    assertPartialBatchGetResponse(false);
+  }
+
+  @Test
+  void asyncPartialBatchGetReplacesTheRealProjectedResponseAndRetriesOnlyPendingKeys() {
+    assertPartialBatchGetResponse(true);
+  }
+
+  private static void assertPartialBatchGetResponse(boolean async) {
+    try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+      context.createMinimalTables();
+      Map<String, AttributeValue> journalKey =
+          Map.of("aid", AttributeValue.fromS("__config__"), "seq_nr", AttributeValue.fromN("0"));
+      Map<String, AttributeValue> headKey = Map.of("aid", AttributeValue.fromS("__config__"));
+      Map<String, AttributeValue> processedKey =
+          Map.of("aid", AttributeValue.fromS("__config__"), "skey", AttributeValue.fromN("0"));
+      Map<String, AttributeValue> pendingKey =
+          Map.of("aid", AttributeValue.fromS("__config__"), "skey", AttributeValue.fromN("1"));
+      Map<String, AttributeValue> missingKey =
+          Map.of("aid", AttributeValue.fromS("__config__"), "skey", AttributeValue.fromN("99"));
+      for (Map.Entry<String, List<Map<String, AttributeValue>>> table :
+          Map.of(
+                  context.journal,
+                  List.of(journalKey),
+                  context.head,
+                  List.of(headKey),
+                  context.snapshot,
+                  List.of(processedKey, pendingKey))
+              .entrySet()) {
+        for (Map<String, AttributeValue> key : table.getValue()) {
+          java.util.HashMap<String, AttributeValue> stored = new java.util.HashMap<>(key);
+          stored.put("store_id", AttributeValue.fromS("actual-owner"));
+          stored.put("extra", AttributeValue.fromS("outside-projection"));
+          context.admin.putItem(
+              PutItemRequest.builder().tableName(table.getKey()).item(stored).build());
+        }
+      }
+      KeysAndAttributes snapshotKeys =
+          KeysAndAttributes.builder()
+              .keys(processedKey, pendingKey, missingKey)
+              .consistentRead(true)
+              .projectionExpression("aid, skey, #owner")
+              .expressionAttributeNames(Map.of("#owner", "store_id"))
+              .build();
+      KeysAndAttributes journalKeys =
+          snapshotKeys.toBuilder()
+              .keys(journalKey)
+              .projectionExpression("aid, seq_nr, #owner")
+              .build();
+      FaultRegistry.Fault fault =
+          context.faults.register(
+              0,
+              "configuration-read",
+              1,
+              FaultRegistry.Injection.REPLACE_RESPONSE,
+              DynamoDbFaultEffects.partialBatchGet(
+                  context.admin,
+                  Map.of(
+                      context.snapshot,
+                      List.of(pendingKey),
+                      context.journal,
+                      List.of(journalKey))));
+      FaultRegistry.Operation operation = context.faults.begin(0, false);
+      BatchGetItemRequest request =
+          BatchGetItemRequest.builder()
+              .requestItems(
+                  Map.of(
+                      context.snapshot,
+                      snapshotKeys,
+                      context.journal,
+                      journalKeys,
+                      context.head,
+                      KeysAndAttributes.builder().keys(headKey).consistentRead(true).build()))
+              .returnConsumedCapacity(ReturnConsumedCapacity.TOTAL)
+              .build();
+      BatchGetItemResponse first = batchGet(context, request, async);
+      java.util.HashMap<String, AttributeValue> projected = new java.util.HashMap<>(processedKey);
+      projected.put("store_id", AttributeValue.fromS("actual-owner"));
+      assertEquals(List.of(projected), first.responses().get(context.snapshot));
+      assertTrue(first.responses().getOrDefault(context.journal, List.of()).isEmpty());
+      assertEquals("actual-owner", first.responses().get(context.head).get(0).get("store_id").s());
+      assertEquals(
+          Map.of(
+              context.snapshot,
+              snapshotKeys.toBuilder().keys(pendingKey).build(),
+              context.journal,
+              journalKeys),
+          first.unprocessedKeys());
+      assertFalse(first.consumedCapacity().isEmpty());
+      assertEquals(200, first.sdkHttpResponse().statusCode());
+      BatchGetItemResponse retry =
+          batchGet(
+              context, request.toBuilder().requestItems(first.unprocessedKeys()).build(), async);
+      projected.putAll(pendingKey);
+      assertEquals(List.of(projected), retry.responses().get(context.snapshot));
+      assertEquals(
+          "actual-owner", retry.responses().get(context.journal).get(0).get("store_id").s());
+      assertFalse(retry.responses().get(context.journal).get(0).containsKey("extra"));
+      assertTrue(retry.unprocessedKeys().isEmpty());
+      List<DynamoDbRequestRecorder.Request> observed = context.recorder.requests();
+      assertEquals(2, observed.size());
+      for (DynamoDbRequestRecorder.Request sent : observed) {
+        assertEquals(1, sent.httpAttempts);
+        assertEquals(1, sent.transmissions);
+        assertEquals(sent.marshalled, sent.transmitted);
+      }
+      assertEquals(
+          3,
+          observed
+              .get(0)
+              .transmitted
+              .path("RequestItems")
+              .path(context.snapshot)
+              .path("Keys")
+              .size());
+      assertEquals(
+          DynamoDbJson.sdk(first.unprocessedKeys()),
+          observed.get(1).transmitted.path("RequestItems"));
+      assertEquals(1, context.faults.applications(fault));
+      assertEquals("passed", context.faults.finish(operation).status);
+    }
+  }
+
+  @Test
+  void allKeysCanBeUnprocessedTwiceBeforeARealSuccessfulRetry() {
+    for (boolean async : new boolean[] {false, true}) {
+      try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+        context.createMinimalTables();
+        context.admin.putItem(
+            PutItemRequest.builder().tableName(context.snapshot).item(item("skey", 1)).build());
+        KeysAndAttributes keys =
+            KeysAndAttributes.builder().keys(key("skey", 1)).consistentRead(true).build();
+        FaultRegistry.Fault fault =
+            context.faults.register(
+                1,
+                "read-snapshot",
+                2,
+                FaultRegistry.Injection.REPLACE_RESPONSE,
+                DynamoDbFaultEffects.partialBatchGet(
+                    context.admin, Map.of(context.snapshot, keys.keys())));
+        FaultRegistry.Operation operation = context.faults.begin(1, false);
+        BatchGetItemRequest request =
+            BatchGetItemRequest.builder().requestItems(Map.of(context.snapshot, keys)).build();
+        for (int i = 0; i < 2; i++) {
+          BatchGetItemResponse response = batchGet(context, request, async);
+          assertTrue(response.responses().get(context.snapshot).isEmpty());
+          assertEquals(Map.of(context.snapshot, keys), response.unprocessedKeys());
+          request = request.toBuilder().requestItems(response.unprocessedKeys()).build();
+        }
+        BatchGetItemResponse last = batchGet(context, request, async);
+        assertEquals(List.of(item("skey", 1)), last.responses().get(context.snapshot));
+        assertTrue(last.unprocessedKeys().isEmpty());
+        assertEquals(3, context.recorder.requests().size());
+        for (DynamoDbRequestRecorder.Request sent : context.recorder.requests()) {
+          assertEquals(1, sent.transmissions);
+          assertEquals(1, sent.httpAttempts);
+        }
+        assertEquals(2, context.faults.applications(fault));
+        assertEquals("passed", context.faults.finish(operation).status);
+      }
+    }
+  }
+
+  @Test
+  void partialResponsePreservesServicePendingKeysAndMetadataWithoutReadingAdmin() {
+    Map<String, AttributeValue> first = key("skey", 1);
+    Map<String, AttributeValue> second = key("skey", 2);
+    Map<String, AttributeValue> third = key("skey", 3);
+    KeysAndAttributes keys =
+        KeysAndAttributes.builder()
+            .keys(first, second, third)
+            .consistentRead(true)
+            .projectionExpression("aid, skey, payload")
+            .build();
+    FaultRegistry.Effect effect =
+        DynamoDbFaultEffects.partialBatchGet(null, Map.of("snapshot", List.of(second, third)));
+    effect.prepare(
+        BatchGetItemRequest.builder().requestItems(Map.of("snapshot", keys)).build(),
+        FaultRegistry.Injection.REPLACE_RESPONSE);
+    BatchGetItemResponse actual =
+        BatchGetItemResponse.builder()
+            .responses(Map.of("snapshot", List.of(item("skey", 1), item("skey", 2))))
+            .unprocessedKeys(Map.of("snapshot", keys.toBuilder().keys(third).build()))
+            .consumedCapacity(
+                ConsumedCapacity.builder().tableName("snapshot").capacityUnits(3.0).build())
+            .build();
+    BatchGetItemResponse replaced = (BatchGetItemResponse) effect.response(null, actual);
+    assertEquals(List.of(item("skey", 1)), replaced.responses().get("snapshot"));
+    List<Map<String, AttributeValue>> pendingKeys =
+        replaced.unprocessedKeys().get("snapshot").keys();
+    assertEquals(2, pendingKeys.size());
+    assertTrue(pendingKeys.containsAll(List.of(second, third)));
+    assertEquals(
+        keys.projectionExpression(),
+        replaced.unprocessedKeys().get("snapshot").projectionExpression());
+    assertEquals(actual.consumedCapacity(), replaced.consumedCapacity());
+    assertEquals(2, actual.responses().get("snapshot").size());
+    assertEquals(List.of(third), actual.unprocessedKeys().get("snapshot").keys());
+  }
+
+  @Test
+  void partialResponseRestoresServicePendingProjectionAndAvoidsAliasCollision() {
+    Map<String, AttributeValue> first = key("skey", 1);
+    Map<String, AttributeValue> second = key("skey", 2);
+    Map<String, AttributeValue> third = key("skey", 3);
+    KeysAndAttributes keys =
+        KeysAndAttributes.builder()
+            .keys(first, second, third)
+            .consistentRead(true)
+            .projectionExpression("#partialKey0")
+            .expressionAttributeNames(Map.of("#partialKey0", "store_id"))
+            .build();
+    FaultRegistry.Effect effect =
+        DynamoDbFaultEffects.partialBatchGet(null, Map.of("snapshot", List.of(second, third)));
+    BatchGetItemRequest request =
+        BatchGetItemRequest.builder().requestItems(Map.of("snapshot", keys)).build();
+    BatchGetItemRequest supplemented =
+        (BatchGetItemRequest) effect.prepare(request, FaultRegistry.Injection.REPLACE_RESPONSE);
+    KeysAndAttributes sent = supplemented.requestItems().get("snapshot");
+    assertEquals("store_id", sent.expressionAttributeNames().get("#partialKey0"));
+    assertEquals(
+        java.util.Set.of("aid", "skey", "store_id"),
+        java.util.Set.copyOf(sent.expressionAttributeNames().values()));
+    assertEquals(keys, request.requestItems().get("snapshot"));
+    List<Map<String, AttributeValue>> items = new ArrayList<>();
+    for (Map<String, AttributeValue> key : List.of(first, second)) {
+      java.util.HashMap<String, AttributeValue> stored = new java.util.HashMap<>(key);
+      stored.put("store_id", AttributeValue.fromS("same-projected-value"));
+      items.add(stored);
+    }
+    BatchGetItemResponse.Builder actualBuilder =
+        BatchGetItemResponse.builder()
+            .responses(Map.of("snapshot", items))
+            .unprocessedKeys(Map.of("snapshot", sent.toBuilder().keys(third).build()))
+            .consumedCapacity(
+                ConsumedCapacity.builder().tableName("snapshot").capacityUnits(3.0).build());
+    actualBuilder.sdkHttpResponse(
+        software.amazon.awssdk.http.SdkHttpResponse.builder()
+            .statusCode(200)
+            .putHeader("x-amzn-RequestId", "actual-request-id")
+            .build());
+    BatchGetItemResponse actual = actualBuilder.build();
+    BatchGetItemResponse replaced = (BatchGetItemResponse) effect.response(null, actual);
+    assertEquals(
+        List.of(Map.of("store_id", AttributeValue.fromS("same-projected-value"))),
+        replaced.responses().get("snapshot"));
+    assertEquals(
+        keys.toBuilder().keys(third, second).build(), replaced.unprocessedKeys().get("snapshot"));
+    assertEquals(actual.consumedCapacity(), replaced.consumedCapacity());
+    assertEquals(actual.sdkHttpResponse().statusCode(), replaced.sdkHttpResponse().statusCode());
+    assertEquals(actual.sdkHttpResponse().headers(), replaced.sdkHttpResponse().headers());
+    assertEquals(items, actual.responses().get("snapshot"));
+    assertEquals(sent.toBuilder().keys(third).build(), actual.unprocessedKeys().get("snapshot"));
+  }
+
+  @Test
+  void partialProjectionKeepsExistingDirectAndAliasedPrimaryKeys() {
+    for (String projection : List.of("aid, skey, #owner", "#id, #sort, #owner", "#id, #owner")) {
+      Map<String, String> names = new java.util.HashMap<>(Map.of("#owner", "store_id"));
+      if (projection.contains("#id")) names.put("#id", "aid");
+      if (projection.contains("#sort")) names.put("#sort", "skey");
+      KeysAndAttributes keys =
+          KeysAndAttributes.builder()
+              .keys(key("skey", 1), key("skey", 2))
+              .projectionExpression(projection)
+              .expressionAttributeNames(names)
+              .build();
+      BatchGetItemRequest request =
+          BatchGetItemRequest.builder().requestItems(Map.of("snapshot", keys)).build();
+      FaultRegistry.Effect effect =
+          DynamoDbFaultEffects.partialBatchGet(null, Map.of("snapshot", List.of(key("skey", 2))));
+      BatchGetItemRequest prepared =
+          (BatchGetItemRequest) effect.prepare(request, FaultRegistry.Injection.REPLACE_RESPONSE);
+      if (projection.equals("#id, #owner")) {
+        assertEquals(
+            names.size() + 1,
+            prepared.requestItems().get("snapshot").expressionAttributeNames().size());
+      } else assertEquals(request, prepared);
+      java.util.HashMap<String, AttributeValue> actualItem =
+          new java.util.HashMap<>(key("skey", 1));
+      actualItem.put("store_id", AttributeValue.fromS("owner"));
+      BatchGetItemResponse actual =
+          BatchGetItemResponse.builder().responses(Map.of("snapshot", List.of(actualItem))).build();
+      BatchGetItemResponse replaced = (BatchGetItemResponse) effect.response(null, actual);
+      java.util.HashMap<String, AttributeValue> expected = new java.util.HashMap<>(actualItem);
+      if (projection.equals("#id, #owner")) expected.remove("skey");
+      assertEquals(List.of(expected), replaced.responses().get("snapshot"));
+      assertEquals(
+          keys.toBuilder().keys(key("skey", 2)).build(),
+          replaced.unprocessedKeys().get("snapshot"));
+      assertEquals(request, effect.prepare(request, FaultRegistry.Injection.REPLACE_REQUEST));
+    }
+  }
+
+  @Test
+  void partialResponseRejectsItemsWithoutCompleteRequestedKeys() {
+    KeysAndAttributes keys =
+        KeysAndAttributes.builder()
+            .keys(key("skey", 1), key("skey", 2))
+            .projectionExpression("#owner")
+            .expressionAttributeNames(Map.of("#owner", "store_id"))
+            .build();
+    FaultRegistry.Effect effect =
+        DynamoDbFaultEffects.partialBatchGet(null, Map.of("snapshot", List.of(key("skey", 2))));
+    effect.prepare(
+        BatchGetItemRequest.builder().requestItems(Map.of("snapshot", keys)).build(),
+        FaultRegistry.Injection.REPLACE_RESPONSE);
+    for (Map<String, AttributeValue> item :
+        List.of(Map.of("store_id", AttributeValue.fromS("owner")), key("skey", 99))) {
+      BatchGetItemResponse actual =
+          BatchGetItemResponse.builder().responses(Map.of("snapshot", List.of(item))).build();
+      assertThrows(IllegalStateException.class, () -> effect.response(null, actual));
+      assertEquals(List.of(item), actual.responses().get("snapshot"));
+      assertTrue(actual.unprocessedKeys().isEmpty());
+    }
+  }
+
+  @Test
+  void partialBatchGetRejectsUnrequestedKeysInBothModes() {
+    for (FaultRegistry.Injection injection : FaultRegistry.Injection.values()) {
+      FaultRegistry.Effect effect =
+          DynamoDbFaultEffects.partialBatchGet(null, Map.of("snapshot", List.of(key("skey", 2))));
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> {
+            effect.prepare(
+                BatchGetItemRequest.builder()
+                    .requestItems(
+                        Map.of(
+                            "snapshot", KeysAndAttributes.builder().keys(key("skey", 1)).build()))
+                    .build(),
+                injection);
+            if (injection == FaultRegistry.Injection.REPLACE_REQUEST) effect.reply(null);
+            else effect.response(null, BatchGetItemResponse.builder().build());
+          });
+    }
+  }
+
+  @Test
+  void syncEmptyAttributeValuesSurviveRequestRecordingStorageAndPartialHttpResponse() {
+    assertEmptyAttributeValues(false);
+  }
+
+  @Test
+  void asyncEmptyAttributeValuesSurviveRequestRecordingStorageAndPartialHttpResponse() {
+    assertEmptyAttributeValues(true);
+  }
+
+  private static void assertEmptyAttributeValues(boolean async) {
+    try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+      context.createMinimalTables();
+      java.util.HashMap<String, AttributeValue> values = new java.util.HashMap<>(key("skey", 1));
+      values.put("empty_list", AttributeValue.fromL(List.of()));
+      values.put("empty_map", AttributeValue.fromM(Map.of()));
+      values.put("nested", AttributeValue.fromL(List.of(AttributeValue.fromM(Map.of()))));
+      FaultRegistry.Operation write = context.faults.begin(1, true);
+      transact(
+          context,
+          TransactWriteItemsRequest.builder()
+              .transactItems(
+                  TransactWriteItem.builder()
+                      .put(Put.builder().tableName(context.snapshot).item(values).build())
+                      .build())
+              .build(),
+          async);
+      assertEquals("passed", context.faults.finish(write).status);
+      DynamoDbRequestRecorder.Request recorded = context.recorder.requests().get(0);
+      com.fasterxml.jackson.databind.JsonNode expected =
+          DynamoDbRequestStructureTest.json("{\"L\":[]}");
+      assertEquals(expected, recorded.original.at("/TransactItems/0/Put/Item/empty_list"));
+      assertEquals(expected, recorded.marshalled.at("/TransactItems/0/Put/Item/empty_list"));
+      expected = DynamoDbRequestStructureTest.json("{\"M\":{}}");
+      assertEquals(expected, recorded.original.at("/TransactItems/0/Put/Item/empty_map"));
+      assertEquals(expected, recorded.marshalled.at("/TransactItems/0/Put/Item/empty_map"));
+      assertFalse(recorded.marshalled.path("ClientRequestToken").asText().isEmpty());
+      assertEquals(recorded.marshalled, recorded.transmitted);
+      assertEquals(values, stored(context, 1));
+      context.admin.putItem(
+          PutItemRequest.builder().tableName(context.snapshot).item(item("skey", 2)).build());
+      FaultRegistry.Fault fault =
+          context.faults.register(
+              2,
+              "read-snapshot",
+              1,
+              FaultRegistry.Injection.REPLACE_REQUEST,
+              DynamoDbFaultEffects.partialBatchGet(
+                  context.admin, Map.of(context.snapshot, List.of(key("skey", 2)))));
+      FaultRegistry.Operation read = context.faults.begin(2, false);
+      BatchGetItemRequest request =
+          BatchGetItemRequest.builder()
+              .requestItems(
+                  Map.of(
+                      context.snapshot,
+                      KeysAndAttributes.builder()
+                          .keys(key("skey", 1), key("skey", 2))
+                          .consistentRead(true)
+                          .build()))
+              .build();
+      BatchGetItemResponse response = batchGet(context, request, async);
+      assertEquals(List.of(values), response.responses().get(context.snapshot));
+      Map<String, AttributeValue> restored = response.responses().get(context.snapshot).get(0);
+      assertTrue(restored.get("empty_list").hasL());
+      assertTrue(restored.get("empty_list").l().isEmpty());
+      assertTrue(restored.get("empty_map").hasM());
+      assertTrue(restored.get("empty_map").m().isEmpty());
+      assertTrue(restored.get("nested").l().get(0).hasM());
+      BatchGetItemResponse retry =
+          batchGet(
+              context, request.toBuilder().requestItems(response.unprocessedKeys()).build(), async);
+      assertEquals(List.of(item("skey", 2)), retry.responses().get(context.snapshot));
+      assertEquals(0, context.recorder.requests().get(1).transmissions);
+      assertEquals(1, context.recorder.requests().get(2).transmissions);
+      assertEquals(1, context.faults.applications(fault));
+      assertEquals("passed", context.faults.finish(read).status);
+    }
+  }
+
+  private static BatchGetItemResponse batchGet(
+      DynamoDbTestContext context, BatchGetItemRequest request, boolean async) {
+    return async
+        ? context.async.batchGetItem(request).join()
+        : context.client.batchGetItem(request);
+  }
+
+  @Test
   void partialConfigurationBatchReturnsOnlyRequestedStoredItemsAndRetriesActualRemainingKeys() {
     for (boolean async : new boolean[] {false, true}) {
       try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {

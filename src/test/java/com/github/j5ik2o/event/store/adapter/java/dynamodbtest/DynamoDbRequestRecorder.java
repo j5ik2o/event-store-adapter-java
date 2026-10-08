@@ -104,7 +104,7 @@ final class DynamoDbRequestRecorder implements ExecutionInterceptor {
     }
     return state.selection == null
         ? context.request()
-        : state.selection.fault.effect.prepare(context.request());
+        : state.selection.fault.effect.prepare(context.request(), state.selection.fault.injection);
   }
 
   @Override
