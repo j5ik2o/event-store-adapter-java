@@ -28,8 +28,9 @@ final class FaultHttpClient implements SdkHttpClient {
         if (aborted.get()) throw new IOException("Request aborted");
         HttpReply replacement = recorder.replacement(request.httpRequest());
         if (replacement != null) return replacement.sync();
+        byte[] bytes;
         try (InputStream body = request.contentStreamProvider().orElseThrow().newStream()) {
-          recorder.transmitted(request.httpRequest(), body.readAllBytes());
+          bytes = body.readAllBytes();
         }
         ExecutableHttpRequest actual = delegate.prepareRequest(request);
         pending.set(actual);
@@ -37,6 +38,7 @@ final class FaultHttpClient implements SdkHttpClient {
           actual.abort();
           throw new IOException("Request aborted");
         }
+        recorder.transmitted(request.httpRequest(), bytes);
         return actual.call();
       }
 

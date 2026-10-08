@@ -95,6 +95,314 @@ class FaultTransportTest {
   }
 
   @Test
+  void syncPrepareFailureDoesNotRecordTransmissionAndKeepsOriginalError() {
+    Fixture fixture = new Fixture();
+    RuntimeException original = new IllegalStateException("SPI prepare failed");
+    AtomicBoolean bodyClosed = new AtomicBoolean();
+    AtomicBoolean closed = new AtomicBoolean();
+    SdkHttpClient delegate =
+        new SdkHttpClient() {
+          @Override
+          public ExecutableHttpRequest prepareRequest(HttpExecuteRequest request) {
+            assertTrue(bodyClosed.get(), "Observed request body is closed before prepare");
+            throw original;
+          }
+
+          @Override
+          public void close() {
+            closed.set(true);
+          }
+        };
+    RuntimeException thrown;
+    try (FaultHttpClient wrapper = new FaultHttpClient(delegate, fixture.recorder)) {
+      ExecutableHttpRequest request =
+          wrapper.prepareRequest(
+              HttpExecuteRequest.builder()
+                  .request(fixture.http)
+                  .contentStreamProvider(
+                      () ->
+                          new java.io.ByteArrayInputStream(fixture.body) {
+                            @Override
+                            public void close() throws IOException {
+                              super.close();
+                              bodyClosed.set(true);
+                            }
+                          })
+                  .build());
+      thrown = assertThrows(RuntimeException.class, request::call);
+      fixture.recorder.onExecutionFailure(
+          DefaultFailedExecutionContext.builder()
+              .interceptorContext(fixture.context)
+              .exception(thrown)
+              .build(),
+          fixture.attributes);
+    }
+    DynamoDbRequestRecorder.Request observed = fixture.recorder.requests().get(0);
+    boolean terminated = fixture.recorder.requestsFinished(fixture.operation).isDone();
+    int pending = fixture.faults.pending(fixture.operation);
+    String status = fixture.faults.finish(fixture.operation).status;
+    System.out.println(
+        "Sync prepare rejection attempts="
+            + observed.httpAttempts
+            + " transmissions="
+            + observed.transmissions
+            + " payload="
+            + observed.transmitted
+            + " originalSame="
+            + (original == thrown)
+            + " terminated="
+            + terminated
+            + " pending="
+            + pending
+            + " finish="
+            + status
+            + " closed="
+            + closed.get()
+            + " bodyClosed="
+            + bodyClosed.get());
+    assertAll(
+        () -> assertEquals(1, observed.httpAttempts),
+        () -> assertEquals(0, observed.transmissions),
+        () -> assertNull(observed.transmitted),
+        () -> assertSame(original, thrown),
+        () -> assertTrue(terminated),
+        () -> assertEquals(0, pending),
+        () -> assertEquals("passed", status),
+        () -> assertTrue(closed.get()),
+        () -> assertTrue(bodyClosed.get()));
+  }
+
+  @Test
+  void syncAcceptedCallFailureKeepsTransmissionAndOriginalError() {
+    Fixture fixture = new Fixture();
+    IOException original = new IOException("accepted transport failed");
+    AtomicBoolean closed = new AtomicBoolean();
+    SdkHttpClient delegate =
+        new SdkHttpClient() {
+          @Override
+          public ExecutableHttpRequest prepareRequest(HttpExecuteRequest request) {
+            return new ExecutableHttpRequest() {
+              @Override
+              public HttpExecuteResponse call() throws IOException {
+                throw original;
+              }
+
+              @Override
+              public void abort() {
+                fail("Unexpected abort");
+              }
+            };
+          }
+
+          @Override
+          public void close() {
+            closed.set(true);
+          }
+        };
+    IOException thrown;
+    try (FaultHttpClient wrapper = new FaultHttpClient(delegate, fixture.recorder)) {
+      ExecutableHttpRequest request =
+          wrapper.prepareRequest(
+              HttpExecuteRequest.builder()
+                  .request(fixture.http)
+                  .contentStreamProvider(() -> new java.io.ByteArrayInputStream(fixture.body))
+                  .build());
+      thrown = assertThrows(IOException.class, request::call);
+      fixture.recorder.onExecutionFailure(
+          DefaultFailedExecutionContext.builder()
+              .interceptorContext(fixture.context)
+              .exception(thrown)
+              .build(),
+          fixture.attributes);
+    }
+    DynamoDbRequestRecorder.Request observed = fixture.recorder.requests().get(0);
+    boolean terminated = fixture.recorder.requestsFinished(fixture.operation).isDone();
+    int pending = fixture.faults.pending(fixture.operation);
+    String status = fixture.faults.finish(fixture.operation).status;
+    System.out.println(
+        "Sync accepted call failure attempts="
+            + observed.httpAttempts
+            + " transmissions="
+            + observed.transmissions
+            + " payload="
+            + observed.transmitted
+            + " originalSame="
+            + (original == thrown)
+            + " terminated="
+            + terminated
+            + " pending="
+            + pending
+            + " finish="
+            + status
+            + " closed="
+            + closed.get());
+    assertAll(
+        () -> assertEquals(1, observed.httpAttempts),
+        () -> assertEquals(1, observed.transmissions),
+        () -> assertEquals(DynamoDbJson.read(fixture.body), observed.transmitted),
+        () -> assertSame(original, thrown),
+        () -> assertTrue(terminated),
+        () -> assertEquals(0, pending),
+        () -> assertEquals("passed", status),
+        () -> assertTrue(closed.get()));
+  }
+
+  @Test
+  void syncSuccessfulCallKeepsTransmissionAndResponse() throws IOException {
+    Fixture fixture = new Fixture();
+    HttpExecuteResponse response =
+        HttpExecuteResponse.builder()
+            .response(SdkHttpResponse.builder().statusCode(200).build())
+            .build();
+    AtomicBoolean closed = new AtomicBoolean();
+    SdkHttpClient delegate =
+        new SdkHttpClient() {
+          @Override
+          public ExecutableHttpRequest prepareRequest(HttpExecuteRequest request) {
+            return new ExecutableHttpRequest() {
+              @Override
+              public HttpExecuteResponse call() {
+                return response;
+              }
+
+              @Override
+              public void abort() {
+                fail("Unexpected abort");
+              }
+            };
+          }
+
+          @Override
+          public void close() {
+            closed.set(true);
+          }
+        };
+    HttpExecuteResponse returned;
+    try (FaultHttpClient wrapper = new FaultHttpClient(delegate, fixture.recorder)) {
+      ExecutableHttpRequest request =
+          wrapper.prepareRequest(
+              HttpExecuteRequest.builder()
+                  .request(fixture.http)
+                  .contentStreamProvider(() -> new java.io.ByteArrayInputStream(fixture.body))
+                  .build());
+      returned = request.call();
+      fixture.recorder.afterExecution(fixture.context, fixture.attributes);
+    }
+    DynamoDbRequestRecorder.Request observed = fixture.recorder.requests().get(0);
+    boolean terminated = fixture.recorder.requestsFinished(fixture.operation).isDone();
+    int pending = fixture.faults.pending(fixture.operation);
+    String status = fixture.faults.finish(fixture.operation).status;
+    System.out.println(
+        "Sync successful call attempts="
+            + observed.httpAttempts
+            + " transmissions="
+            + observed.transmissions
+            + " payload="
+            + observed.transmitted
+            + " statusCode="
+            + returned.httpResponse().statusCode()
+            + " terminated="
+            + terminated
+            + " pending="
+            + pending
+            + " finish="
+            + status
+            + " closed="
+            + closed.get());
+    assertAll(
+        () -> assertEquals(1, observed.httpAttempts),
+        () -> assertEquals(1, observed.transmissions),
+        () -> assertEquals(DynamoDbJson.read(fixture.body), observed.transmitted),
+        () -> assertEquals(response.httpResponse(), returned.httpResponse()),
+        () -> assertTrue(terminated),
+        () -> assertEquals(0, pending),
+        () -> assertEquals("passed", status),
+        () -> assertTrue(closed.get()));
+  }
+
+  @Test
+  void syncAbortDuringPrepareAbortsAcceptedRequestWithoutTransmission() {
+    Fixture fixture = new Fixture();
+    AtomicReference<ExecutableHttpRequest> pendingRequest = new AtomicReference<>();
+    AtomicBoolean actualAborted = new AtomicBoolean();
+    AtomicBoolean actualCalled = new AtomicBoolean();
+    AtomicBoolean closed = new AtomicBoolean();
+    SdkHttpClient delegate =
+        new SdkHttpClient() {
+          @Override
+          public ExecutableHttpRequest prepareRequest(HttpExecuteRequest request) {
+            pendingRequest.get().abort();
+            return new ExecutableHttpRequest() {
+              @Override
+              public HttpExecuteResponse call() {
+                actualCalled.set(true);
+                throw new AssertionError("Aborted request must not be called");
+              }
+
+              @Override
+              public void abort() {
+                actualAborted.set(true);
+              }
+            };
+          }
+
+          @Override
+          public void close() {
+            closed.set(true);
+          }
+        };
+    try (FaultHttpClient wrapper = new FaultHttpClient(delegate, fixture.recorder)) {
+      ExecutableHttpRequest request =
+          wrapper.prepareRequest(
+              HttpExecuteRequest.builder()
+                  .request(fixture.http)
+                  .contentStreamProvider(() -> new java.io.ByteArrayInputStream(fixture.body))
+                  .build());
+      pendingRequest.set(request);
+      IOException thrown = assertThrows(IOException.class, request::call);
+      fixture.recorder.onExecutionFailure(
+          DefaultFailedExecutionContext.builder()
+              .interceptorContext(fixture.context)
+              .exception(thrown)
+              .build(),
+          fixture.attributes);
+    }
+    DynamoDbRequestRecorder.Request observed = fixture.recorder.requests().get(0);
+    boolean terminated = fixture.recorder.requestsFinished(fixture.operation).isDone();
+    int pending = fixture.faults.pending(fixture.operation);
+    String status = fixture.faults.finish(fixture.operation).status;
+    System.out.println(
+        "Sync abort during prepare attempts="
+            + observed.httpAttempts
+            + " transmissions="
+            + observed.transmissions
+            + " payload="
+            + observed.transmitted
+            + " actualAborted="
+            + actualAborted.get()
+            + " actualCalled="
+            + actualCalled.get()
+            + " terminated="
+            + terminated
+            + " pending="
+            + pending
+            + " finish="
+            + status
+            + " closed="
+            + closed.get());
+    assertAll(
+        () -> assertEquals(1, observed.httpAttempts),
+        () -> assertEquals(0, observed.transmissions),
+        () -> assertNull(observed.transmitted),
+        () -> assertTrue(actualAborted.get()),
+        () -> assertFalse(actualCalled.get()),
+        () -> assertTrue(terminated),
+        () -> assertEquals(0, pending),
+        () -> assertEquals("passed", status),
+        () -> assertTrue(closed.get()));
+  }
+
+  @Test
   void syncAbortBeforeCallSkipsDelegateAndClosingClosesOwnedTransport() {
     Fixture fixture = new Fixture();
     AtomicBoolean closed = new AtomicBoolean();
@@ -120,9 +428,13 @@ class FaultTransportTest {
       request.abort();
       assertThrows(IOException.class, request::call);
       assertEquals(0, fixture.recorder.requests().get(0).httpAttempts);
+      assertEquals(0, fixture.recorder.requests().get(0).transmissions);
+      assertNull(fixture.recorder.requests().get(0).transmitted);
     }
     assertTrue(closed.get());
     fixture.finish();
+    assertTrue(fixture.recorder.requestsFinished(fixture.operation).isDone());
+    assertEquals(0, fixture.faults.pending(fixture.operation));
   }
 
   @Test
