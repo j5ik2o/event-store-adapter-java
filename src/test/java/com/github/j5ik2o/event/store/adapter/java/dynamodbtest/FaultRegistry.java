@@ -225,6 +225,9 @@ final class FaultRegistry {
                 + fault.count
                 + " times: "
                 + fault.phase);
+      else if (fault.effect instanceof DynamoDbFaultEffects.HistoryPages
+          && ((DynamoDbFaultEffects.HistoryPages) fault.effect).hasNext())
+        failures.add("History plan has unconsumed pages: " + fault.phase);
     }
     completed.add(operation.number);
     current = null;

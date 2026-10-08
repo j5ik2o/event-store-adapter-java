@@ -17,11 +17,324 @@ import software.amazon.awssdk.core.interceptor.Context;
 import software.amazon.awssdk.core.interceptor.ExecutionAttributes;
 import software.amazon.awssdk.core.interceptor.ExecutionInterceptor;
 import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
+import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.*;
 
 class DynamoDbResponsePlansTest {
   @RegisterExtension static final DynamoDbLocalExtension local = new DynamoDbLocalExtension();
   private static final String AID = "User-A";
+
+  @Test
+  void syncHistoryPlanResolvesItemsWrittenByItsOperation() throws Exception {
+    assertHistoryPlanResolvesItemsWrittenByItsOperation(false);
+  }
+
+  @Test
+  void asyncHistoryPlanResolvesItemsWrittenByItsOperation() throws Exception {
+    assertHistoryPlanResolvesItemsWrittenByItsOperation(true);
+  }
+
+  private static void assertHistoryPlanResolvesItemsWrittenByItsOperation(boolean async)
+      throws Exception {
+    for (FaultRegistry.Injection injection : FaultRegistry.Injection.values()) {
+      try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+        createHistoryTable(context);
+        Map<String, AttributeValue> first = new java.util.HashMap<>(item("skey", 1));
+        first.put("active_history_seq_nr", AttributeValue.fromN("1"));
+        context.admin.putItem(
+            PutItemRequest.builder().tableName(context.snapshot).item(first).build());
+        assertTrue(stored(context, 2).isEmpty());
+        System.out.println(
+            "History before registration async="
+                + async
+                + " injection="
+                + injection
+                + " snapshot2=absent");
+        List<GetItemRequest> reads = new java.util.concurrent.CopyOnWriteArrayList<>();
+        try (DynamoDbClient admin = historyAdmin(reads)) {
+          DynamoDbFaultEffects.HistoryPages plan =
+              DynamoDbFaultEffects.historyPages(
+                  admin, context.snapshot, AID, List.of(List.of(2L, 1L)), 2L, false);
+          FaultRegistry.Fault fault =
+              context.faults.register(1, "retention-query", 1, injection, plan);
+          assertTrue(reads.isEmpty(), "registration must not read history items");
+          FaultRegistry.Operation operation = context.faults.begin(1, true);
+          Map<String, AttributeValue> second = new java.util.HashMap<>(item("skey", 2));
+          second.put("active_history_seq_nr", AttributeValue.fromN("2"));
+          TransactWriteItemsRequest commit =
+              TransactWriteItemsRequest.builder()
+                  .transactItems(
+                      TransactWriteItem.builder()
+                          .put(Put.builder().tableName(context.snapshot).item(second).build())
+                          .build())
+                  .build();
+          if (async) context.async.transactWriteItems(commit).get(10, TimeUnit.SECONDS);
+          else context.client.transactWriteItems(commit);
+          context.recorder.requestsFinished(operation).get(10, TimeUnit.SECONDS);
+          assertEquals(second, stored(context, 2));
+          assertTrue(reads.isEmpty(), "history is resolved at the query boundary");
+          QueryResponse response = query(context, historyQuery(context), async);
+          context.recorder.requestsFinished(operation).get(10, TimeUnit.SECONDS);
+          assertEquals(
+              List.of(historyProjection(stored(context, 2)), historyProjection(stored(context, 1))),
+              response.items());
+          assertEquals(
+              List.of(key("skey", 2), key("skey", 1)),
+              reads.stream()
+                  .map(GetItemRequest::key)
+                  .collect(java.util.stream.Collectors.toList()));
+          assertTrue(
+              reads.stream()
+                  .allMatch(r -> r.consistentRead() && r.tableName().equals(context.snapshot)));
+          assertTrue(response.lastEvaluatedKey().isEmpty());
+          assertFalse(plan.hasNext());
+          assertEquals(1, context.faults.applications(fault));
+          assertEquals(0, context.faults.reservations(fault));
+          assertEquals(0, context.faults.pending(operation));
+          List<DynamoDbRequestRecorder.Request> observed = context.recorder.requests();
+          assertEquals(2, observed.size());
+          assertEquals("commit", observed.get(0).phase);
+          assertEquals("TransactWriteItems", observed.get(0).api);
+          assertEquals(1, observed.get(0).transmissions);
+          assertEquals(
+              DynamoDbJson.sdk(commit.transactItems()),
+              observed.get(0).transmitted.path("TransactItems"));
+          assertEquals("retention-query", observed.get(1).phase);
+          assertEquals(
+              injection == FaultRegistry.Injection.REPLACE_REQUEST ? 0 : 1,
+              observed.get(1).transmissions);
+          assertEquals("passed", context.faults.finish(operation).status);
+          System.out.println(
+              "History after transaction async="
+                  + async
+                  + " injection="
+                  + injection
+                  + " reads="
+                  + reads
+                  + " response="
+                  + response
+                  + " finish=passed");
+        }
+      }
+    }
+  }
+
+  @Test
+  void syncHistoryPlanRequiresAllPagesBeforeFinish() throws Exception {
+    assertHistoryPlanRequiresAllPagesBeforeFinish(false);
+  }
+
+  @Test
+  void asyncHistoryPlanRequiresAllPagesBeforeFinish() throws Exception {
+    assertHistoryPlanRequiresAllPagesBeforeFinish(true);
+  }
+
+  private static void assertHistoryPlanRequiresAllPagesBeforeFinish(boolean async)
+      throws Exception {
+    for (FaultRegistry.Injection injection : FaultRegistry.Injection.values()) {
+      try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+        createHistoryTable(context);
+        for (int seq = 1; seq <= 2; seq++) {
+          Map<String, AttributeValue> history = new java.util.HashMap<>(item("skey", seq));
+          history.put("active_history_seq_nr", AttributeValue.fromN(Integer.toString(seq)));
+          context.admin.putItem(
+              PutItemRequest.builder().tableName(context.snapshot).item(history).build());
+        }
+        for (int number = 1; number <= 3; number++) {
+          boolean consumeAll = number == 2;
+          DynamoDbFaultEffects.HistoryPages plan =
+              DynamoDbFaultEffects.historyPages(
+                  context.admin,
+                  context.snapshot,
+                  AID,
+                  List.of(List.of(2L), List.of(1L)),
+                  null,
+                  false);
+          FaultRegistry.Fault fault =
+              context.faults.register(number, "retention-query", 1, injection, plan);
+          if (number == 3) context.faults.unsupported(number, "retention-mark", "not implemented");
+          FaultRegistry.Operation operation = context.faults.begin(number, true);
+          QueryRequest request = historyQuery(context);
+          QueryResponse first = query(context, request, async);
+          context.recorder.requestsFinished(operation).get(10, TimeUnit.SECONDS);
+          assertEquals(List.of(historyProjection(stored(context, 2))), first.items());
+          assertEquals(first.items().get(0), first.lastEvaluatedKey());
+          assertTrue(plan.hasNext());
+          assertEquals(1, context.faults.applications(fault));
+          assertEquals(0, context.faults.reservations(fault));
+          assertEquals(0, context.faults.pending(operation));
+          if (consumeAll) {
+            QueryResponse last =
+                query(
+                    context,
+                    request.toBuilder().exclusiveStartKey(first.lastEvaluatedKey()).build(),
+                    async);
+            context.recorder.requestsFinished(operation).get(10, TimeUnit.SECONDS);
+            assertEquals(List.of(historyProjection(stored(context, 1))), last.items());
+            assertTrue(last.lastEvaluatedKey().isEmpty());
+            assertFalse(plan.hasNext());
+            DynamoDbRequestRecorder.Request continuation = context.recorder.requests().get(2);
+            assertEquals(
+                DynamoDbJson.sdk(first.lastEvaluatedKey()),
+                continuation.marshalled.path("ExclusiveStartKey"));
+          }
+          assertEquals(1, context.faults.applications(fault));
+          assertEquals(0, context.faults.reservations(fault));
+          assertEquals(0, context.faults.pending(operation));
+          FaultRegistry.Result result = context.faults.finish(operation);
+          System.out.println(
+              "History finish async="
+                  + async
+                  + " injection="
+                  + injection
+                  + " operation="
+                  + number
+                  + " applications=1 reservations=0 pending=0 remaining="
+                  + plan.hasNext()
+                  + " status="
+                  + result.status
+                  + " reasons="
+                  + result.reasons);
+          assertEquals(consumeAll ? "passed" : "failed", result.status);
+          if (!consumeAll)
+            assertTrue(result.reasons.stream().anyMatch(r -> r.contains("retention-query")));
+        }
+      }
+    }
+  }
+
+  private static DynamoDbClient historyAdmin(List<GetItemRequest> reads) {
+    ExecutionInterceptor observer =
+        new ExecutionInterceptor() {
+          @Override
+          public void beforeExecution(Context.BeforeExecution actual, ExecutionAttributes attrs) {
+            if (actual.request() instanceof GetItemRequest)
+              reads.add((GetItemRequest) actual.request());
+          }
+        };
+    return DynamoDbClient.builder()
+        .endpointOverride(local.endpoint())
+        .region(DynamoDbTestClients.REGION)
+        .credentialsProvider(
+            software.amazon.awssdk.auth.credentials.StaticCredentialsProvider.create(
+                software.amazon.awssdk.auth.credentials.AwsBasicCredentials.create(
+                    DynamoDbTestClients.ACCESS_KEY, "DynamoDbLocalDummySecret")))
+        .overrideConfiguration(
+            DynamoDbTestClients.overrides().addExecutionInterceptor(observer).build())
+        .httpClientBuilder(software.amazon.awssdk.http.apache5.Apache5HttpClient.builder())
+        .build();
+  }
+
+  private static QueryRequest historyQuery(DynamoDbTestContext context) {
+    return QueryRequest.builder()
+        .tableName(context.snapshot)
+        .indexName(context.historyIndex)
+        .keyConditionExpression("aid=:aid")
+        .expressionAttributeValues(Map.of(":aid", AttributeValue.fromS(AID)))
+        .scanIndexForward(false)
+        .build();
+  }
+
+  private static Map<String, AttributeValue> historyProjection(Map<String, AttributeValue> stored) {
+    return Map.of(
+        "aid",
+        stored.get("aid"),
+        "skey",
+        stored.get("skey"),
+        "active_history_seq_nr",
+        stored.get("active_history_seq_nr"));
+  }
+
+  @Test
+  void historyPlanRejectsInvalidStructureWithoutReadingStoredItems() {
+    List<GetItemRequest> reads = new java.util.concurrent.CopyOnWriteArrayList<>();
+    try (DynamoDbClient admin = historyAdmin(reads)) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> DynamoDbFaultEffects.historyPages(admin, "snapshot", AID, List.of(), null, false));
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              DynamoDbFaultEffects.historyPages(
+                  admin, "snapshot", AID, List.of(List.of(), List.of(1L)), null, false));
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              DynamoDbFaultEffects.historyPages(
+                  admin, "snapshot", AID, List.of(List.of(2L)), 2L, true));
+      assertNotNull(
+          DynamoDbFaultEffects.historyPages(
+              admin, "snapshot", AID, List.of(List.of(1L), List.of()), null, false));
+      assertTrue(reads.isEmpty(), "pure plan validation must not read stored items");
+    }
+  }
+
+  @Test
+  void historyPlanChecksCurrentActiveItemsAtQueryAndDoesNotAdvanceOnRejection() throws Exception {
+    for (boolean async : new boolean[] {false, true}) {
+      for (FaultRegistry.Injection injection : FaultRegistry.Injection.values()) {
+        try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+          createHistoryTable(context);
+          Map<String, AttributeValue> history = new java.util.HashMap<>(item("skey", 1));
+          history.put("active_history_seq_nr", AttributeValue.fromN("1"));
+          context.admin.putItem(
+              PutItemRequest.builder().tableName(context.snapshot).item(history).build());
+          List<GetItemRequest> reads = new java.util.concurrent.CopyOnWriteArrayList<>();
+          try (DynamoDbClient admin = historyAdmin(reads)) {
+            DynamoDbFaultEffects.HistoryPages plan =
+                DynamoDbFaultEffects.historyPages(
+                    admin, context.snapshot, AID, List.of(List.of(1L)), null, false);
+            FaultRegistry.Fault fault =
+                context.faults.register(1, "retention-query", 1, injection, plan);
+            assertTrue(reads.isEmpty());
+            FaultRegistry.Operation operation = context.faults.begin(1, true);
+            for (boolean missingActive : new boolean[] {true, false}) {
+              if (missingActive) history.remove("active_history_seq_nr");
+              else history.put("active_history_seq_nr", AttributeValue.fromN("2"));
+              context.admin.putItem(
+                  PutItemRequest.builder().tableName(context.snapshot).item(history).build());
+              assertFalse(stored(context, 1).isEmpty());
+              RuntimeException failure =
+                  assertThrows(
+                      RuntimeException.class, () -> query(context, historyQuery(context), async));
+              context.recorder.requestsFinished(operation).get(10, TimeUnit.SECONDS);
+              Throwable cause = failure;
+              while (cause.getCause() != null) cause = cause.getCause();
+              assertInstanceOf(IllegalArgumentException.class, cause);
+              assertTrue(plan.hasNext());
+              assertEquals(
+                  injection == FaultRegistry.Injection.REPLACE_REQUEST ? 0 : 1,
+                  context.faults.applications(fault));
+              assertEquals(0, context.faults.reservations(fault));
+              assertEquals(0, context.faults.pending(operation));
+              System.out.println(
+                  "History query rejected async="
+                      + async
+                      + " injection="
+                      + injection
+                      + " missingActive="
+                      + missingActive
+                      + " cause="
+                      + cause);
+            }
+            assertEquals(2, reads.size());
+            history.put("active_history_seq_nr", AttributeValue.fromN("1"));
+            context.admin.putItem(
+                PutItemRequest.builder().tableName(context.snapshot).item(history).build());
+            QueryResponse response = query(context, historyQuery(context), async);
+            context.recorder.requestsFinished(operation).get(10, TimeUnit.SECONDS);
+            assertEquals(List.of(historyProjection(stored(context, 1))), response.items());
+            assertEquals(3, reads.size());
+            assertFalse(plan.hasNext());
+            assertEquals(1, context.faults.applications(fault));
+            assertEquals(0, context.faults.reservations(fault));
+            assertEquals(0, context.faults.pending(operation));
+            assertEquals("passed", context.faults.finish(operation).status);
+          }
+        }
+      }
+    }
+  }
 
   @Test
   void unprocessedBatchWritePreparationsKeepTheirOwnExclusionsAndEmptyState() {
@@ -1604,7 +1917,7 @@ class DynamoDbResponsePlansTest {
   }
 
   @Test
-  void historyPagesUseStoredItemsAndRealCursorsButConsumeOnlyOnce() {
+  void historyPagesUseStoredItemsAndRealCursorsButConsumeOnlyOnce() throws Exception {
     for (boolean async : new boolean[] {false, true}) {
       try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
         context.acquire(
@@ -1716,11 +2029,37 @@ class DynamoDbResponsePlansTest {
           assertFalse(stored(context, 4).isEmpty());
           assertEquals("passed", context.faults.finish(operation).status);
         }
-        assertThrows(
-            IllegalArgumentException.class,
-            () ->
-                DynamoDbFaultEffects.historyPages(
-                    context.admin, context.snapshot, AID, List.of(List.of(99L)), null, false));
+        for (FaultRegistry.Injection injection : FaultRegistry.Injection.values()) {
+          DynamoDbFaultEffects.HistoryPages missing =
+              DynamoDbFaultEffects.historyPages(
+                  context.admin, context.snapshot, AID, List.of(List.of(99L)), null, false);
+          FaultRegistry.Fault fault =
+              context.faults.register(
+                  injection.ordinal() + 3, "retention-query", 1, injection, missing);
+          FaultRegistry.Operation operation = context.faults.begin(injection.ordinal() + 3, true);
+          RuntimeException failure =
+              assertThrows(
+                  RuntimeException.class, () -> query(context, historyQuery(context), async));
+          context.recorder.requestsFinished(operation).get(10, TimeUnit.SECONDS);
+          Throwable cause = failure;
+          while (cause.getCause() != null) cause = cause.getCause();
+          assertInstanceOf(IllegalArgumentException.class, cause);
+          assertTrue(missing.hasNext());
+          assertEquals(
+              injection == FaultRegistry.Injection.REPLACE_REQUEST ? 0 : 1,
+              context.faults.applications(fault));
+          assertEquals(0, context.faults.reservations(fault));
+          assertEquals(0, context.faults.pending(operation));
+          assertEquals("failed", context.faults.finish(operation).status);
+          System.out.println(
+              "History missing item async="
+                  + async
+                  + " injection="
+                  + injection
+                  + " query cause="
+                  + cause
+                  + " finish=failed");
+        }
         assertThrows(
             IllegalArgumentException.class,
             () ->

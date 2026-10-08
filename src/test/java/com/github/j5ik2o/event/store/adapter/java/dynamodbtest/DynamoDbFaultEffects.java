@@ -396,10 +396,12 @@ final class DynamoDbFaultEffects {
       return true;
     }
 
-    private final List<List<Map<String, AttributeValue>>> pages = new ArrayList<>();
+    private final DynamoDbClient admin;
+    private final List<List<Long>> pages;
     private final String snapshot;
     private final String aid;
     private int next;
+    private Map<String, AttributeValue> lastEvaluatedKey = Map.of();
 
     private HistoryPages(
         DynamoDbClient admin,
@@ -409,39 +411,20 @@ final class DynamoDbFaultEffects {
         Long justWritten,
         boolean omitJustWritten) {
       if (plan.isEmpty()) throw new IllegalArgumentException("Page plan is empty");
+      this.admin = admin;
       this.snapshot = snapshot;
       this.aid = aid;
+      List<List<Long>> copied = new ArrayList<>();
       for (int i = 0; i < plan.size(); i++) {
-        List<Map<String, AttributeValue>> page = new ArrayList<>();
         if (i + 1 < plan.size() && plan.get(i).isEmpty())
           throw new IllegalArgumentException("Non-final page has no cursor");
         for (Long seq : plan.get(i)) {
           if (omitJustWritten && seq.equals(justWritten))
             throw new IllegalArgumentException("Omitted history occurs in plan");
-          Map<String, AttributeValue> key =
-              Map.of(
-                  "aid", AttributeValue.fromS(aid), "skey", AttributeValue.fromN(seq.toString()));
-          Map<String, AttributeValue> stored =
-              admin
-                  .getItem(
-                      GetItemRequest.builder()
-                          .tableName(snapshot)
-                          .key(key)
-                          .consistentRead(true)
-                          .build())
-                  .item();
-          if (!stored.containsKey("active_history_seq_nr")
-              || new BigDecimal(stored.get("active_history_seq_nr").n())
-                      .compareTo(BigDecimal.valueOf(seq))
-                  != 0) {
-            throw new IllegalArgumentException("History page item is not stored and active");
-          }
-          Map<String, AttributeValue> projected = new LinkedHashMap<>(key);
-          projected.put("active_history_seq_nr", stored.get("active_history_seq_nr"));
-          page.add(Map.copyOf(projected));
         }
-        pages.add(List.copyOf(page));
+        copied.add(List.copyOf(plan.get(i)));
       }
+      pages = List.copyOf(copied);
     }
 
     @Override
@@ -471,7 +454,7 @@ final class DynamoDbFaultEffects {
       }
       JsonNode cursor = request.marshalled.path("ExclusiveStartKey");
       if (next >= pages.size()) throw new IllegalStateException("History plan exhausted");
-      Map<String, AttributeValue> expectedCursor = cursor();
+      Map<String, AttributeValue> expectedCursor = lastEvaluatedKey;
       JsonNode expected = DynamoDbJson.sdk(expectedCursor);
       if (!(expectedCursor.isEmpty() && cursor.isMissingNode()) && !cursor.equals(expected)) {
         throw new IllegalArgumentException("History cursor does not match previous page");
@@ -480,23 +463,51 @@ final class DynamoDbFaultEffects {
 
     private QueryResponse nextResponse(DynamoDbRequestRecorder.Request request) {
       validate(request);
-      List<Map<String, AttributeValue>> items = pages.get(next++);
-      return QueryResponse.builder()
-          .items(items)
-          .count(items.size())
-          .scannedCount(items.size())
-          .lastEvaluatedKey(cursor())
-          .build();
+      List<Map<String, AttributeValue>> items = new ArrayList<>();
+      for (Long seq : pages.get(next)) {
+        Map<String, AttributeValue> stored =
+            admin
+                .getItem(
+                    GetItemRequest.builder()
+                        .tableName(snapshot)
+                        .key(
+                            Map.of(
+                                "aid",
+                                AttributeValue.fromS(aid),
+                                "skey",
+                                AttributeValue.fromN(seq.toString())))
+                        .consistentRead(true)
+                        .build())
+                .item();
+        if (!stored.containsKey("active_history_seq_nr")
+            || new BigDecimal(stored.get("active_history_seq_nr").n())
+                    .compareTo(BigDecimal.valueOf(seq))
+                != 0) {
+          throw new IllegalArgumentException("History page item is not stored and active");
+        }
+        items.add(
+            Map.of(
+                "aid",
+                stored.get("aid"),
+                "skey",
+                stored.get("skey"),
+                "active_history_seq_nr",
+                stored.get("active_history_seq_nr")));
+      }
+      QueryResponse response =
+          QueryResponse.builder()
+              .items(items)
+              .count(items.size())
+              .scannedCount(items.size())
+              .lastEvaluatedKey(next + 1 == pages.size() ? Map.of() : items.get(items.size() - 1))
+              .build();
+      lastEvaluatedKey = response.lastEvaluatedKey();
+      next++;
+      return response;
     }
 
     boolean hasNext() {
       return next < pages.size();
-    }
-
-    private Map<String, AttributeValue> cursor() {
-      if (next == 0 || next == pages.size()) return Map.of();
-      List<Map<String, AttributeValue>> previous = pages.get(next - 1);
-      return previous.get(previous.size() - 1);
     }
   }
 }
