@@ -2,6 +2,7 @@ package com.github.j5ik2o.event.store.adapter.java.dynamodb;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -75,6 +76,30 @@ class DynamoDbItemSizeTest {
         AttributeValue.fromS(""),
         "payload",
         AttributeValue.fromB(SdkBytes.fromByteArray(new byte[payloadBytes])));
+  }
+
+  @Test
+  void currentAndHistoryHaveIndependentExactBoundaryEstimates() {
+    for (int size : List.of(409600, 409601)) {
+      // Names: aid(3), skey(4), seq_nr(6), manifest(8), payload(7), last_updated_at(15).
+      // Values: A-x(3), three one-digit numbers(2 each), empty manifest(0), raw binary.
+      assertEquals(size, DynamoDbItemSize.estimate(snapshot(size - 52, false)));
+      // History adds active_history_seq_nr(21) and its number(2); skey has the same width.
+      assertEquals(size, DynamoDbItemSize.estimate(snapshot(size - 75, true)));
+      assertEquals(size - 23, DynamoDbItemSize.estimate(snapshot(size - 75, false)));
+    }
+  }
+
+  static Map<String, AttributeValue> snapshot(int payloadBytes, boolean history) {
+    Map<String, AttributeValue> item = new LinkedHashMap<>();
+    item.put("aid", AttributeValue.fromS("A-x"));
+    item.put("skey", AttributeValue.fromN(history ? "1" : "0"));
+    item.put("seq_nr", AttributeValue.fromN("1"));
+    item.put("manifest", AttributeValue.fromS(""));
+    item.put("payload", AttributeValue.fromB(SdkBytes.fromByteArray(new byte[payloadBytes])));
+    item.put("last_updated_at", AttributeValue.fromN("0"));
+    if (history) item.put("active_history_seq_nr", AttributeValue.fromN("1"));
+    return item;
   }
 
   private static Map<String, AttributeValue> head(int payloadBytes) {

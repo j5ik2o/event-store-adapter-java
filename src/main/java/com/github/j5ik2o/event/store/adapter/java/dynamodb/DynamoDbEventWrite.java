@@ -3,6 +3,7 @@ package com.github.j5ik2o.event.store.adapter.java.dynamodb;
 import com.github.j5ik2o.event.store.adapter.java.core.*;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -16,11 +17,63 @@ final class DynamoDbEventWrite {
 
   static <P> TransactWriteItemsRequest prepare(
       EventEnvelope<P> event, DynamoDbTableConfig tables, PayloadSerializer<P> serializer) {
+    requireEvent(event);
+    EventStoreInputValidation.checkEvent(event);
+    return TransactWriteItemsRequest.builder()
+        .transactItems(eventWrites(event, tables, serialize(serializer, event.payload())))
+        .build();
+  }
+
+  static <P, A> TransactWriteItemsRequest prepare(
+      EventEnvelope<P> event,
+      SnapshotEnvelope<A> snapshot,
+      DynamoDbTableConfig tables,
+      PayloadSerializer<P> serializer,
+      PayloadSerializer<A> snapshotSerializer) {
+    requireEvent(event);
+    if (snapshot == null) {
+      throw new ContractViolationException(
+          "T-10", OptionalLong.of(event.seqNr()), "snapshot is required");
+    }
+    EventStoreInputValidation.checkEventAndSnapshot(event, snapshot);
+    SdkBytes eventPayload = serialize(serializer, event.payload());
+    SdkBytes snapshotPayload = serialize(snapshotSerializer, snapshot.aggregate());
+    List<TransactWriteItem> actions = new ArrayList<>(eventWrites(event, tables, eventPayload));
+    Map<String, AttributeValue> current = new LinkedHashMap<>();
+    current.put("aid", AttributeValue.fromS(event.aggregateId().asString()));
+    current.put("skey", AttributeValue.fromN("0"));
+    current.put("seq_nr", AttributeValue.fromN(Long.toString(snapshot.seqNr())));
+    current.put("manifest", AttributeValue.fromS(snapshot.manifest()));
+    current.put("payload", AttributeValue.fromB(snapshotPayload));
+    current.put(
+        "last_updated_at", AttributeValue.fromN(Long.toString(event.occurredAt().toEpochMilli())));
+    actions.add(snapshotPut(current, tables, event.seqNr()));
+    if (tables.retentionPolicy().keepCount().isPresent()) {
+      Map<String, AttributeValue> history = new LinkedHashMap<>(current);
+      history.put("skey", current.get("seq_nr"));
+      history.put("active_history_seq_nr", current.get("seq_nr"));
+      actions.add(snapshotPut(history, tables, event.seqNr()));
+    }
+    return TransactWriteItemsRequest.builder().transactItems(actions).build();
+  }
+
+  private static void requireEvent(EventEnvelope<?> event) {
     if (event == null) {
       throw new ContractViolationException("T-2", OptionalLong.empty(), "event is required");
     }
-    EventStoreInputValidation.checkEvent(event);
-    AttributeValue payload = AttributeValue.fromB(serialize(serializer, event.payload()));
+  }
+
+  private static TransactWriteItem snapshotPut(
+      Map<String, AttributeValue> item, DynamoDbTableConfig tables, long seqNr) {
+    checkSize(item, seqNr);
+    return TransactWriteItem.builder()
+        .put(Put.builder().tableName(tables.snapshotTableName()).item(item).build())
+        .build();
+  }
+
+  private static List<TransactWriteItem> eventWrites(
+      EventEnvelope<?> event, DynamoDbTableConfig tables, SdkBytes serializedPayload) {
+    AttributeValue payload = AttributeValue.fromB(serializedPayload);
     AttributeValue seqNr = AttributeValue.fromN(Long.toString(event.seqNr()));
     Map<String, AttributeValue> envelope = new LinkedHashMap<>();
     envelope.put("seq_nr", seqNr);
@@ -86,7 +139,7 @@ final class DynamoDbEventWrite {
                       .build())
               .build();
     }
-    return TransactWriteItemsRequest.builder().transactItems(journalPut, headWrite).build();
+    return List.of(journalPut, headWrite);
   }
 
   private static <P> SdkBytes serialize(PayloadSerializer<P> serializer, P payload) {

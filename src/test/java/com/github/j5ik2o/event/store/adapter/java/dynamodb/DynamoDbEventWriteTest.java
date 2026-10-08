@@ -36,6 +36,250 @@ class DynamoDbEventWriteTest {
     };
   }
 
+  static SnapshotEnvelope<String> snapshot(long seqNr) {
+    return SnapshotEnvelope.<String>builder()
+        .aggregate("state")
+        .seqNr(seqNr)
+        .manifest("snapshot書式")
+        .build();
+  }
+
+  @Test
+  void snapshotPreparationUsesSeparateSerializersAndCopiesBothPayloads() {
+    byte[] eventBytes = {1, 2};
+    byte[] snapshotBytes = {3, 4};
+    AtomicInteger eventCalls = new AtomicInteger();
+    AtomicInteger snapshotCalls = new AtomicInteger();
+    PayloadSerializer<String> eventSerializer =
+        countingSerializer("payload", eventBytes, eventCalls);
+    PayloadSerializer<String> snapshotSerializer =
+        countingSerializer("state", snapshotBytes, snapshotCalls);
+    TransactWriteItemsRequest request =
+        DynamoDbEventWrite.prepare(
+            event(1, -1), snapshot(1), TABLES, eventSerializer, snapshotSerializer);
+    eventBytes[0] = 9;
+    snapshotBytes[0] = 9;
+    assertEquals(1, eventCalls.get());
+    assertEquals(1, snapshotCalls.get());
+    assertEquals(3, request.transactItems().size());
+    assertArrayEquals(
+        new byte[] {1, 2},
+        request.transactItems().get(0).put().item().get("payload").b().asByteArray());
+    Put current = request.transactItems().get(2).put();
+    assertEquals("snapshot", current.tableName());
+    assertNull(current.conditionExpression());
+    assertEquals(
+        Set.of("aid", "skey", "seq_nr", "manifest", "payload", "last_updated_at"),
+        current.item().keySet());
+    assertEquals("snapshot書式", current.item().get("manifest").s());
+    assertEquals("0", current.item().get("skey").n());
+    assertEquals("1", current.item().get("seq_nr").n());
+    assertEquals("-1", current.item().get("last_updated_at").n());
+    assertArrayEquals(new byte[] {3, 4}, current.item().get("payload").b().asByteArray());
+  }
+
+  private static PayloadSerializer<String> countingSerializer(
+      String expected, byte[] bytes, AtomicInteger calls) {
+    return new PayloadSerializer<String>() {
+      public byte[] serialize(String value) {
+        assertEquals(expected, value);
+        calls.incrementAndGet();
+        return bytes;
+      }
+
+      public String deserialize(byte[] value) {
+        throw new AssertionError("Write must not deserialize");
+      }
+    };
+  }
+
+  @Test
+  void retentionCreatesUnmarkedHistoryWithoutChangingCurrentForPutAndUpdate() {
+    for (RetentionPolicy policy :
+        List.of(RetentionPolicy.none(), RetentionPolicy.delete(2), RetentionPolicy.ttl(2, 60))) {
+      DynamoDbTableConfig tables = DynamoDbTableConfigTest.names().retentionPolicy(policy).build();
+      for (long seq : List.of(1L, 2L, (1L << 53) - 1)) {
+        TransactWriteItemsRequest request =
+            DynamoDbEventWrite.prepare(
+                event(seq, 1),
+                snapshot(seq),
+                tables,
+                serializer(new byte[0]),
+                serializer(new byte[] {7}));
+        assertEquals(policy.keepCount().isPresent() ? 4 : 3, request.transactItems().size());
+        Map<String, AttributeValue> current = request.transactItems().get(2).put().item();
+        assertFalse(current.containsKey("ttl"));
+        assertFalse(current.containsKey("active_history_seq_nr"));
+        if (policy.keepCount().isPresent()) {
+          Put history = request.transactItems().get(3).put();
+          Map<String, AttributeValue> expected = new LinkedHashMap<>(current);
+          expected.put("skey", AttributeValue.fromN(Long.toString(seq)));
+          expected.put("active_history_seq_nr", AttributeValue.fromN(Long.toString(seq)));
+          assertEquals(expected, history.item());
+          assertEquals("snapshot", history.tableName());
+          assertNull(history.conditionExpression());
+        }
+        if (seq == 1)
+          assertEquals(
+              ReturnValuesOnConditionCheckFailure.ALL_OLD,
+              request.transactItems().get(1).put().returnValuesOnConditionCheckFailure());
+        else
+          assertEquals(
+              ReturnValuesOnConditionCheckFailure.ALL_OLD,
+              request.transactItems().get(1).update().returnValuesOnConditionCheckFailure());
+      }
+    }
+  }
+
+  @Test
+  void snapshotTimestampsUseIntegerMillisecondsAcrossSignedNanosecondBoundaries() {
+    long[] nanos = {Long.MIN_VALUE, -1, 0, 1, Long.MAX_VALUE};
+    long[] millis = {-9223372036855L, -1, 0, 0, 9223372036854L};
+    for (int i = 0; i < nanos.length; i++) {
+      Map<String, AttributeValue> current =
+          DynamoDbEventWrite.prepare(
+                  event(1, nanos[i]),
+                  snapshot(1),
+                  TABLES,
+                  serializer(new byte[0]),
+                  serializer(new byte[0]))
+              .transactItems()
+              .get(2)
+              .put()
+              .item();
+      assertEquals(Long.toString(millis[i]), current.get("last_updated_at").n());
+    }
+  }
+
+  @Test
+  void snapshotInputsAreValidatedBeforeEitherSerializer() throws Exception {
+    PayloadSerializer<String> forbidden =
+        countingSerializer("unused", new byte[0], new AtomicInteger());
+    assertEquals(
+        "T-2",
+        assertThrows(
+                ContractViolationException.class,
+                () -> DynamoDbEventWrite.prepare(null, snapshot(1), TABLES, forbidden, forbidden))
+            .rule());
+    assertEquals(
+        "T-10",
+        assertThrows(
+                ContractViolationException.class,
+                () -> DynamoDbEventWrite.prepare(event(1, 1), null, TABLES, forbidden, forbidden))
+            .rule());
+    for (long seq : List.of(0L, 2L)) {
+      ContractViolationException failure =
+          assertThrows(
+              ContractViolationException.class,
+              () ->
+                  DynamoDbEventWrite.prepare(
+                      event(1, 1), snapshot(seq), TABLES, forbidden, forbidden));
+      assertEquals("W-9", failure.rule());
+      assertEquals(1, failure.seqNr().getAsLong());
+      assertTrue(failure.getMessage().contains(Long.toString(seq)));
+      assertTrue(failure.getMessage().contains("1"));
+    }
+    for (long seq : List.of(-1L, 1L << 53)) {
+      SnapshotEnvelope<String> invalid = snapshot(1);
+      set(invalid, "seqNr", seq);
+      assertEquals(
+          "T-9",
+          assertThrows(
+                  ContractViolationException.class,
+                  () ->
+                      DynamoDbEventWrite.prepare(
+                          event(1, 1), invalid, TABLES, forbidden, forbidden))
+              .rule());
+    }
+    EventEnvelope<String> invalid = event(1, 1);
+    set(invalid, "seqNr", 0L);
+    assertEquals(
+        "W-6",
+        assertThrows(
+                ContractViolationException.class,
+                () ->
+                    DynamoDbEventWrite.prepare(invalid, snapshot(0), TABLES, forbidden, forbidden))
+            .rule());
+  }
+
+  @Test
+  void eachSerializerFailureIsClassifiedBeforeARequestIsPrepared() {
+    SerializationException classified = new SerializationException("serializer failure");
+    for (boolean snapshotFails : List.of(false, true)) {
+      for (RuntimeException error :
+          List.of(classified, new IllegalStateException("serializer failure"))) {
+        PayloadSerializer<String> failing =
+            new PayloadSerializer<String>() {
+              public byte[] serialize(String value) {
+                throw error;
+              }
+
+              public String deserialize(byte[] value) {
+                throw new AssertionError();
+              }
+            };
+        SerializationException failure =
+            assertThrows(
+                SerializationException.class,
+                () ->
+                    DynamoDbEventWrite.prepare(
+                        event(1, 1),
+                        snapshot(1),
+                        TABLES,
+                        snapshotFails ? serializer(new byte[0]) : failing,
+                        snapshotFails ? failing : serializer(new byte[0])));
+        if (error == classified) assertSame(classified, failure);
+        else assertSame(error, failure.getCause());
+      }
+      assertThrows(
+          SerializationException.class,
+          () ->
+              DynamoDbEventWrite.prepare(
+                  event(1, 1),
+                  snapshot(1),
+                  TABLES,
+                  serializer(snapshotFails ? new byte[0] : null),
+                  serializer(snapshotFails ? null : new byte[0])));
+    }
+  }
+
+  @Test
+  void snapshotSizeDeterminesTheExactLimitBeforeTheTransactionForPutAndUpdate() {
+    for (boolean history : List.of(false, true)) {
+      DynamoDbTableConfig tables =
+          DynamoDbTableConfigTest.names()
+              .retentionPolicy(history ? RetentionPolicy.delete(2) : RetentionPolicy.none())
+              .build();
+      int overhead = history ? 75 : 52;
+      for (long seq : List.of(1L, 2L)) {
+        SnapshotEnvelope<String> snapshot =
+            SnapshotEnvelope.<String>builder().aggregate("state").seqNr(seq).build();
+        TransactWriteItemsRequest request =
+            DynamoDbEventWrite.prepare(
+                event(seq, 1),
+                snapshot,
+                tables,
+                serializer(new byte[0]),
+                serializer(new byte[409600 - overhead]));
+        assertEquals(
+            409600,
+            DynamoDbItemSize.estimate(request.transactItems().get(history ? 3 : 2).put().item()));
+        assertEquals(
+            "D-7",
+            assertThrows(
+                    ContractViolationException.class,
+                    () ->
+                        DynamoDbEventWrite.prepare(
+                            event(seq, 1),
+                            snapshot,
+                            tables,
+                            serializer(new byte[0]),
+                            serializer(new byte[409601 - overhead])))
+                .rule());
+      }
+    }
+  }
+
   @Test
   void preparationSerializesOnlyPayloadOnceAndCopiesItForBothItems() {
     byte[] bytes = new byte[] {1, 2, 3};
@@ -243,6 +487,26 @@ class DynamoDbEventWriteTest {
         StorageException.class,
         classify(3, reason("ThrottlingError", Map.of()), reason("None", Map.of())));
     assertInstanceOf(StorageException.class, classify(3));
+  }
+
+  @Test
+  void cancellationPriorityIncludesCurrentAndHistoryReasons() {
+    CancellationReason none = reason("None", Map.of());
+    CancellationReason gap =
+        reason("ConditionalCheckFailed", Map.of("seq_nr", AttributeValue.fromN("1")));
+    CancellationReason conflict = reason("TransactionConflict", Map.of());
+    CancellationReason throttled = reason("ThrottlingError", Map.of());
+    CancellationReason journal = reason("ConditionalCheckFailed", Map.of());
+    assertInstanceOf(OptimisticLockException.class, classify(3, journal, gap, conflict, throttled));
+    assertInstanceOf(OptimisticLockException.class, classify(3, journal, gap, throttled, conflict));
+    assertEquals(
+        "W-8", ((ContractViolationException) classify(3, journal, gap, throttled, none)).rule());
+    assertEquals(
+        "W-8", ((ContractViolationException) classify(3, journal, gap, none, throttled)).rule());
+    assertInstanceOf(OptimisticLockException.class, classify(3, journal, none, throttled, none));
+    assertInstanceOf(OptimisticLockException.class, classify(3, journal, none, none, throttled));
+    assertInstanceOf(StorageException.class, classify(3, none, none, throttled, none));
+    assertInstanceOf(StorageException.class, classify(3, none, none, none, throttled));
   }
 
   @Test

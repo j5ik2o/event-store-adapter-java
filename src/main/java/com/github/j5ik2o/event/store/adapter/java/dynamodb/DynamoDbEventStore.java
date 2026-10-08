@@ -12,8 +12,8 @@ import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsRequest;
 
 /**
- * Validates configuration, writes and reads events using caller-owned SDK clients. /
- * 呼出し側が所有するSDKで生成時照合とイベントの書込み・読取りを行います。
+ * Validates configuration, writes events and snapshots, and reads events using caller-owned SDK
+ * clients. / 呼出し側が所有するSDKで生成時照合、イベントとsnapshotの書込み、イベントの読取りを行います。
  */
 public final class DynamoDbEventStore {
   private DynamoDbEventStore() {}
@@ -37,7 +37,8 @@ public final class DynamoDbEventStore {
       Sleeper sleeper) {
     requireSettings(client, tables, config);
     new DynamoDbConfigurationInitializer(tables, sleeper).initialize(client);
-    return new Synchronous<>(client, tables, config.payloadSerializer());
+    return new Synchronous<>(
+        client, tables, config.payloadSerializer(), config.snapshotSerializer());
   }
 
   static <P, A> CompletableFuture<AsyncEventStore<P, A>> createAsync(
@@ -49,7 +50,10 @@ public final class DynamoDbEventStore {
       requireSettings(client, tables, config);
       return new DynamoDbConfigurationInitializer(tables, sleeper)
           .initializeAsync(client)
-          .thenApply(ignored -> new Asynchronous<>(client, tables, config.payloadSerializer()));
+          .thenApply(
+              ignored ->
+                  new Asynchronous<>(
+                      client, tables, config.payloadSerializer(), config.snapshotSerializer()));
     } catch (ConfigurationException failure) {
       return CompletableFuture.failedFuture(failure);
     }
@@ -70,12 +74,17 @@ public final class DynamoDbEventStore {
     private final DynamoDbClient client;
     private final DynamoDbTableConfig tables;
     private final PayloadSerializer<P> serializer;
+    private final PayloadSerializer<A> snapshotSerializer;
 
     Synchronous(
-        DynamoDbClient client, DynamoDbTableConfig tables, PayloadSerializer<P> serializer) {
+        DynamoDbClient client,
+        DynamoDbTableConfig tables,
+        PayloadSerializer<P> serializer,
+        PayloadSerializer<A> snapshotSerializer) {
       this.client = client;
       this.tables = tables;
       this.serializer = serializer;
+      this.snapshotSerializer = snapshotSerializer;
     }
 
     public void persistEvent(EventEnvelope<P> event) {
@@ -88,7 +97,13 @@ public final class DynamoDbEventStore {
     }
 
     public void persistEventAndSnapshot(EventEnvelope<P> event, SnapshotEnvelope<A> snapshot) {
-      throw unavailable();
+      TransactWriteItemsRequest request =
+          DynamoDbEventWrite.prepare(event, snapshot, tables, serializer, snapshotSerializer);
+      try {
+        client.transactWriteItems(request);
+      } catch (RuntimeException failure) {
+        throw DynamoDbEventWrite.classify(event, failure);
+      }
     }
 
     public Optional<SnapshotReadResult<A>> getLatestSnapshotById(AggregateId id) {
@@ -115,12 +130,17 @@ public final class DynamoDbEventStore {
     private final DynamoDbAsyncClient client;
     private final DynamoDbTableConfig tables;
     private final PayloadSerializer<P> serializer;
+    private final PayloadSerializer<A> snapshotSerializer;
 
     Asynchronous(
-        DynamoDbAsyncClient client, DynamoDbTableConfig tables, PayloadSerializer<P> serializer) {
+        DynamoDbAsyncClient client,
+        DynamoDbTableConfig tables,
+        PayloadSerializer<P> serializer,
+        PayloadSerializer<A> snapshotSerializer) {
       this.client = client;
       this.tables = tables;
       this.serializer = serializer;
+      this.snapshotSerializer = snapshotSerializer;
     }
 
     public CompletableFuture<Void> persistEvent(EventEnvelope<P> event) {
@@ -142,7 +162,21 @@ public final class DynamoDbEventStore {
 
     public CompletableFuture<Void> persistEventAndSnapshot(
         EventEnvelope<P> event, SnapshotEnvelope<A> snapshot) {
-      return CompletableFuture.failedFuture(unavailable());
+      CompletableFuture<Void> result = new CompletableFuture<>();
+      try {
+        TransactWriteItemsRequest request =
+            DynamoDbEventWrite.prepare(event, snapshot, tables, serializer, snapshotSerializer);
+        client
+            .transactWriteItems(request)
+            .whenComplete(
+                (response, failure) -> {
+                  if (failure == null) result.complete(null);
+                  else result.completeExceptionally(DynamoDbEventWrite.classify(event, failure));
+                });
+      } catch (RuntimeException failure) {
+        result.completeExceptionally(DynamoDbEventWrite.classify(event, failure));
+      }
+      return result;
     }
 
     public CompletableFuture<Optional<SnapshotReadResult<A>>> getLatestSnapshotById(

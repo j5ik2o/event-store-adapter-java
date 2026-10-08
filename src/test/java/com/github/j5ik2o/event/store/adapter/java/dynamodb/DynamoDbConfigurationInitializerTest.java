@@ -78,7 +78,7 @@ class DynamoDbConfigurationInitializerTest {
   }
 
   @Test
-  void numbersAreComparedNumericallyAndAllUnprovidedOperationsFailExplicitly() {
+  void generationAcceptsEquivalentNumbersAndKeepsOperationContracts() {
     BatchGetItemResponse response =
         BatchGetItemResponse.builder().responses(configurations()).build();
     DynamoDbTableConfig tables = DynamoDbTableConfigTest.names().build();
@@ -90,18 +90,22 @@ class DynamoDbConfigurationInitializerTest {
         ContractViolationException.class,
         EventStoreExceptions.unwrap(
             assertThrows(CompletionException.class, () -> async.persistEvent(null).join())));
-    assertThrows(
-        UnsupportedOperationException.class, () -> sync.persistEventAndSnapshot(null, null));
+    assertThrows(ContractViolationException.class, () -> sync.persistEventAndSnapshot(null, null));
+    assertInstanceOf(
+        ContractViolationException.class,
+        EventStoreExceptions.unwrap(
+            assertThrows(
+                CompletionException.class,
+                () -> async.persistEventAndSnapshot(null, null).join())));
     assertThrows(UnsupportedOperationException.class, () -> sync.getLatestSnapshotById(null));
     AggregateId id = AggregateId.of("A", "empty");
     assertTrue(sync.getEventsByIdSinceSeqNr(id, 0).isEmpty());
     assertTrue(async.getEventsByIdSinceSeqNr(id, 0).join().isEmpty());
-    for (CompletableFuture<?> future :
-        List.of(async.persistEventAndSnapshot(null, null), async.getLatestSnapshotById(null))) {
-      assertInstanceOf(
-          UnsupportedOperationException.class,
-          EventStoreExceptions.unwrap(assertThrows(CompletionException.class, future::join)));
-    }
+    assertInstanceOf(
+        UnsupportedOperationException.class,
+        EventStoreExceptions.unwrap(
+            assertThrows(
+                CompletionException.class, () -> async.getLatestSnapshotById(null).join())));
   }
 
   @Test
