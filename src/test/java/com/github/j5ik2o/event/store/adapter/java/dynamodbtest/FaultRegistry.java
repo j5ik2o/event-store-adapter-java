@@ -190,6 +190,10 @@ final class FaultRegistry {
     }
   }
 
+  synchronized boolean isApplied(Selection selection) {
+    return selection.applied;
+  }
+
   synchronized int applications(Fault fault) {
     return fault.applications.size();
   }

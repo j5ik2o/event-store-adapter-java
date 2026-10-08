@@ -24,6 +24,507 @@ class DynamoDbResponsePlansTest {
   private static final String AID = "User-A";
 
   @Test
+  void unprocessedBatchWritePreparationsKeepTheirOwnExclusionsAndEmptyState() {
+    WriteRequest firstWrite =
+        WriteRequest.builder()
+            .deleteRequest(DeleteRequest.builder().key(key("skey", 1)).build())
+            .build();
+    WriteRequest secondWrite =
+        WriteRequest.builder()
+            .deleteRequest(DeleteRequest.builder().key(key("skey", 2)).build())
+            .build();
+    DynamoDbFaultEffects.UnprocessedBatchWrite plan =
+        (DynamoDbFaultEffects.UnprocessedBatchWrite) DynamoDbFaultEffects.unprocessedFirst(1);
+    DynamoDbFaultEffects.UnprocessedBatchWrite first = plan.forRequest();
+    DynamoDbFaultEffects.UnprocessedBatchWrite second = plan.forRequest();
+    BatchWriteItemRequest firstRequest =
+        BatchWriteItemRequest.builder()
+            .requestItems(Map.of("snapshot", List.of(firstWrite)))
+            .build();
+    BatchWriteItemRequest secondRequest =
+        BatchWriteItemRequest.builder()
+            .requestItems(Map.of("snapshot", List.of(secondWrite, firstWrite)))
+            .build();
+    assertEquals(
+        firstRequest, first.prepare(firstRequest, FaultRegistry.Injection.REPLACE_REQUEST));
+    assertEquals(
+        Map.of("snapshot", List.of(firstWrite)),
+        ((BatchWriteItemRequest)
+                second.prepare(secondRequest, FaultRegistry.Injection.REPLACE_REQUEST))
+            .requestItems());
+    assertEquals(
+        DynamoDbJson.sdk(Map.of("snapshot", List.of(firstWrite))),
+        DynamoDbJson.read(first.reply(null).body()).path("UnprocessedItems"));
+    assertNull(second.reply(null));
+    BatchWriteItemResponse service = BatchWriteItemResponse.builder().build();
+    assertEquals(
+        Map.of("snapshot", List.of(secondWrite)),
+        ((BatchWriteItemResponse) second.afterResponse(null, service)).unprocessedItems());
+    BatchWriteItemResponse skipped =
+        BatchWriteItemResponse.builder()
+            .unprocessedItems(Map.of("snapshot", List.of(firstWrite)))
+            .build();
+    assertEquals(skipped, first.afterResponse(null, skipped));
+    assertTrue(service.unprocessedItems().isEmpty());
+  }
+
+  @Test
+  void asyncAllThenPartialBatchWriteKeepsEachRequestsUnprocessedItems() throws Exception {
+    assertOverlappingBatchWrite(true);
+  }
+
+  @Test
+  void asyncPartialThenAllBatchWriteKeepsEachRequestsUnprocessedItems() throws Exception {
+    assertOverlappingBatchWrite(false);
+  }
+
+  private static void assertOverlappingBatchWrite(boolean firstAll) throws Exception {
+    try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+      context.createMinimalTables();
+      for (int seq = 1; seq <= 4; seq++)
+        context.admin.putItem(
+            PutItemRequest.builder().tableName(context.snapshot).item(item("skey", seq)).build());
+      BatchWriteItemRequest firstRequest = firstAll ? deletes(context, 1) : deletes(context, 1, 2);
+      BatchWriteItemRequest secondRequest = firstAll ? deletes(context, 3, 4) : deletes(context, 3);
+      FaultRegistry.Fault fault =
+          context.faults.register(
+              1,
+              "retention-delete",
+              2,
+              FaultRegistry.Injection.REPLACE_REQUEST,
+              DynamoDbFaultEffects.unprocessedFirst(1));
+      CountDownLatch firstPrepared = new CountDownLatch(1);
+      CountDownLatch secondPrepared = new CountDownLatch(1);
+      CountDownLatch releaseFirst = new CountDownLatch(1);
+      CountDownLatch releaseSecond = new CountDownLatch(1);
+      java.util.concurrent.atomic.AtomicInteger prepared =
+          new java.util.concurrent.atomic.AtomicInteger();
+      ExecutionInterceptor gate =
+          new ExecutionInterceptor() {
+            @Override
+            public void beforeTransmission(
+                Context.BeforeTransmission actual, ExecutionAttributes attrs) {
+              int index = prepared.getAndIncrement();
+              if (index > 1) return;
+              System.out.println("BatchWrite prepared " + index + " " + actual.request());
+              (index == 0 ? firstPrepared : secondPrepared).countDown();
+              await(index == 0 ? releaseFirst : releaseSecond);
+            }
+          };
+      ExecutorService callers = Executors.newFixedThreadPool(2);
+      FaultRegistry.Operation operation = context.faults.begin(1, true);
+      try (FaultAsyncHttpClient http =
+              new FaultAsyncHttpClient(DynamoDbTestClients.asyncHttp().build(), context.recorder);
+          DynamoDbAsyncClient client =
+              DynamoDbTestClients.observedAsync(local.endpoint(), context.recorder, http, gate)) {
+        try {
+          CompletableFuture<BatchWriteItemResponse> first =
+              CompletableFuture.supplyAsync(
+                  () -> client.batchWriteItem(firstRequest).join(), callers);
+          assertTrue(firstPrepared.await(10, TimeUnit.SECONDS), "first prepare completed");
+          CompletableFuture<BatchWriteItemResponse> second =
+              CompletableFuture.supplyAsync(
+                  () -> client.batchWriteItem(secondRequest).join(), callers);
+          assertTrue(secondPrepared.await(10, TimeUnit.SECONDS), "second prepare completed");
+          assertEquals(2, context.faults.reservations(fault));
+          assertEquals(2, context.faults.pending(operation));
+          assertEquals(0, context.faults.applications(fault));
+          releaseFirst.countDown();
+          BatchWriteItemResponse firstResponse = first.get(10, TimeUnit.SECONDS);
+          releaseSecond.countDown();
+          BatchWriteItemResponse secondResponse = second.get(10, TimeUnit.SECONDS);
+          context.recorder.requestsFinished(operation).get(10, TimeUnit.SECONDS);
+          System.out.println("BatchWrite first=" + firstResponse + " second=" + secondResponse);
+          printOverlapObservations(context, fault, operation);
+          for (int seq : new int[] {1, 2, 3, 4})
+            System.out.println("stored " + seq + "=" + stored(context, seq));
+          assertAll(
+              () ->
+                  assertEquals(
+                      Map.of(
+                          context.snapshot,
+                          firstRequest.requestItems().get(context.snapshot).subList(0, 1)),
+                      firstResponse.unprocessedItems()),
+              () ->
+                  assertEquals(
+                      Map.of(
+                          context.snapshot,
+                          secondRequest.requestItems().get(context.snapshot).subList(0, 1)),
+                      secondResponse.unprocessedItems()),
+              () -> assertFalse(stored(context, 1).isEmpty()),
+              () -> assertFalse(stored(context, 3).isEmpty()),
+              () -> assertEquals(!firstAll, stored(context, 2).isEmpty()),
+              () -> assertEquals(firstAll, stored(context, 4).isEmpty()));
+          assertTrue(
+              client
+                  .batchWriteItem(
+                      firstRequest.toBuilder()
+                          .requestItems(firstResponse.unprocessedItems())
+                          .build())
+                  .get(10, TimeUnit.SECONDS)
+                  .unprocessedItems()
+                  .isEmpty());
+          assertTrue(stored(context, 1).isEmpty());
+          assertFalse(stored(context, 3).isEmpty());
+          assertTrue(
+              client
+                  .batchWriteItem(
+                      secondRequest.toBuilder()
+                          .requestItems(secondResponse.unprocessedItems())
+                          .build())
+                  .get(10, TimeUnit.SECONDS)
+                  .unprocessedItems()
+                  .isEmpty());
+          context.recorder.requestsFinished(operation).get(10, TimeUnit.SECONDS);
+          List<DynamoDbRequestRecorder.Request> observed = context.recorder.requests();
+          assertEquals(4, observed.size());
+          for (int i = 0; i < 2; i++) {
+            BatchWriteItemRequest original = i == 0 ? firstRequest : secondRequest;
+            DynamoDbRequestRecorder.Request initial = observed.get(i);
+            DynamoDbRequestRecorder.Request retry = observed.get(i + 2);
+            List<WriteRequest> writes = original.requestItems().get(context.snapshot);
+            assertEquals(DynamoDbJson.sdk(original), initial.original);
+            assertEquals(1, initial.httpAttempts);
+            assertEquals(writes.size() == 1 ? 0 : 1, initial.transmissions);
+            List<com.fasterxml.jackson.databind.JsonNode> processed = new ArrayList<>();
+            if (writes.size() == 1) assertNull(initial.transmitted);
+            else {
+              assertEquals(
+                  DynamoDbJson.sdk(writes.subList(1, writes.size())),
+                  initial.transmitted.path("RequestItems").path(context.snapshot));
+              assertEquals(initial.marshalled, initial.transmitted);
+              initial
+                  .transmitted
+                  .path("RequestItems")
+                  .path(context.snapshot)
+                  .forEach(processed::add);
+            }
+            assertEquals(1, retry.httpAttempts);
+            assertEquals(1, retry.transmissions);
+            assertEquals(retry.original, retry.transmitted);
+            assertEquals(retry.marshalled, retry.transmitted);
+            assertEquals(
+                DynamoDbJson.sdk(
+                    i == 0 ? firstResponse.unprocessedItems() : secondResponse.unprocessedItems()),
+                retry.transmitted.path("RequestItems"));
+            retry.transmitted.path("RequestItems").path(context.snapshot).forEach(processed::add);
+            assertEquals(writes.size(), processed.size());
+            assertEquals(
+                writes.size(), processed.stream().distinct().count(), "no repeated delete");
+            assertEquals(
+                java.util.Set.copyOf(DynamoDbJson.sdk(writes).findParents("DeleteRequest")),
+                java.util.Set.copyOf(processed));
+          }
+          assertTrue(stored(context, 1).isEmpty());
+          assertTrue(stored(context, 3).isEmpty());
+          assertEquals(!firstAll, stored(context, 2).isEmpty());
+          assertEquals(firstAll, stored(context, 4).isEmpty());
+          assertEquals(2, context.faults.applications(fault));
+          assertEquals(0, context.faults.reservations(fault));
+          assertEquals(0, context.faults.pending(operation));
+          assertEquals("passed", context.faults.finish(operation).status);
+          FaultRegistry.Operation next = context.faults.begin(2, true);
+          assertTrue(
+              client
+                  .batchWriteItem(deletes(context, 2, 4))
+                  .get(10, TimeUnit.SECONDS)
+                  .unprocessedItems()
+                  .isEmpty());
+          context.recorder.requestsFinished(next).get(10, TimeUnit.SECONDS);
+          assertTrue(stored(context, 2).isEmpty());
+          assertTrue(stored(context, 4).isEmpty());
+          DynamoDbRequestRecorder.Request nextRequest = context.recorder.requests().get(4);
+          assertEquals(2, nextRequest.operation);
+          assertEquals(1, nextRequest.httpAttempts);
+          assertEquals(1, nextRequest.transmissions);
+          assertEquals(DynamoDbJson.sdk(deletes(context, 2, 4)), nextRequest.transmitted);
+          assertEquals(2, context.faults.applications(fault));
+          assertEquals(0, context.faults.reservations(fault));
+          assertEquals(0, context.faults.pending(next));
+          assertEquals("passed", context.faults.finish(next).status);
+          printOverlapObservations(context, fault, next);
+        } finally {
+          releaseFirst.countDown();
+          releaseSecond.countDown();
+          try {
+            callers.shutdown();
+            assertTrue(callers.awaitTermination(30, TimeUnit.SECONDS));
+            context.recorder.requestsFinished(operation).get(10, TimeUnit.SECONDS);
+          } finally {
+            callers.shutdownNow();
+          }
+        }
+      } finally {
+        callers.shutdownNow();
+      }
+    }
+  }
+
+  @Test
+  void historyRequestReplacementRetriesAfterUnappliedFailure() throws Exception {
+    assertHistoryRetryAfterUnappliedTerminal(FaultRegistry.Injection.REPLACE_REQUEST, false);
+  }
+
+  @Test
+  void historyResponseReplacementRetriesAfterUnappliedFailure() throws Exception {
+    assertHistoryRetryAfterUnappliedTerminal(FaultRegistry.Injection.REPLACE_RESPONSE, false);
+  }
+
+  @Test
+  void historyResponseReplacementRetriesAfterUnappliedCancellation() throws Exception {
+    assertHistoryRetryAfterUnappliedTerminal(FaultRegistry.Injection.REPLACE_RESPONSE, true);
+  }
+
+  private static void assertHistoryRetryAfterUnappliedTerminal(
+      FaultRegistry.Injection injection, boolean cancel) throws Exception {
+    try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+      createHistoryTable(context);
+      for (int seq = 1; seq <= 2; seq++) {
+        java.util.HashMap<String, AttributeValue> history =
+            new java.util.HashMap<>(item("skey", seq));
+        history.put("active_history_seq_nr", AttributeValue.fromN(Integer.toString(seq)));
+        context.admin.putItem(
+            PutItemRequest.builder().tableName(context.snapshot).item(history).build());
+      }
+      DynamoDbFaultEffects.HistoryPages plan =
+          DynamoDbFaultEffects.historyPages(
+              context.admin, context.snapshot, AID, List.of(List.of(2L), List.of(1L)), null, false);
+      FaultRegistry.Fault fault = context.faults.register(1, "retention-query", 1, injection, plan);
+      java.util.concurrent.atomic.AtomicBoolean first =
+          new java.util.concurrent.atomic.AtomicBoolean(true);
+      CountDownLatch responseReached = new CountDownLatch(1);
+      CountDownLatch release = new CountDownLatch(1);
+      RuntimeException stop =
+          cancel
+              ? new java.util.concurrent.CancellationException(
+                  "history request cancelled before application")
+              : new IllegalStateException("history request failed before application");
+      CompletableFuture<Throwable> pipelineFailure = new CompletableFuture<>();
+      ExecutionInterceptor gate =
+          new ExecutionInterceptor() {
+            @Override
+            public void beforeTransmission(
+                Context.BeforeTransmission actual, ExecutionAttributes attrs) {
+              if (!cancel && first.compareAndSet(true, false)) throw stop;
+            }
+
+            @Override
+            public void afterUnmarshalling(
+                Context.AfterUnmarshalling actual, ExecutionAttributes attrs) {
+              if (cancel && first.compareAndSet(true, false)) {
+                assertEquals(200, actual.httpResponse().statusCode());
+                responseReached.countDown();
+                await(release);
+                throw stop;
+              }
+            }
+
+            @Override
+            public void onExecutionFailure(
+                Context.FailedExecution actual, ExecutionAttributes attrs) {
+              pipelineFailure.complete(actual.exception());
+            }
+          };
+      FaultRegistry.Operation operation = context.faults.begin(1, true);
+      QueryRequest request =
+          QueryRequest.builder()
+              .tableName(context.snapshot)
+              .indexName(context.historyIndex)
+              .keyConditionExpression("aid=:aid")
+              .expressionAttributeValues(Map.of(":aid", AttributeValue.fromS(AID)))
+              .scanIndexForward(false)
+              .limit(1)
+              .build();
+      try (FaultAsyncHttpClient http =
+              new FaultAsyncHttpClient(DynamoDbTestClients.asyncHttp().build(), context.recorder);
+          DynamoDbAsyncClient client =
+              DynamoDbTestClients.observedAsync(local.endpoint(), context.recorder, http, gate)) {
+        CompletableFuture<QueryResponse> initial = client.query(request);
+        CompletableFuture<Void> initialTermination = context.recorder.requestsFinished(operation);
+        try {
+          if (cancel) {
+            assertTrue(responseReached.await(10, TimeUnit.SECONDS));
+            assertEquals(0, context.faults.applications(fault));
+            assertEquals(1, context.faults.reservations(fault));
+            assertEquals(1, context.faults.pending(operation));
+            assertTrue(initial.cancel(true));
+            release.countDown();
+            assertTrue(initial.isCancelled());
+          } else assertNotNull(initial.handle((value, error) -> error).get(10, TimeUnit.SECONDS));
+          Throwable failure = pipelineFailure.get(10, TimeUnit.SECONDS);
+          while (failure.getCause() != null && failure != stop) failure = failure.getCause();
+          assertSame(stop, failure);
+          context.recorder.requestsFinished(operation).get(10, TimeUnit.SECONDS);
+          assertEquals(0, context.faults.applications(fault));
+          assertEquals(0, context.faults.reservations(fault));
+          assertEquals(0, context.faults.pending(operation));
+          DynamoDbRequestRecorder.Request failed = context.recorder.requests().get(0);
+          assertEquals(cancel ? 1 : 0, failed.httpAttempts);
+          assertEquals(cancel ? 1 : 0, failed.transmissions);
+          System.out.println(
+              "History terminated cancel="
+                  + cancel
+                  + " injection="
+                  + injection
+                  + " failure="
+                  + failure);
+          printOverlapObservations(context, fault, operation);
+          CompletableFuture<QueryResponse> retry = client.query(request);
+          Throwable retryFailure = retry.handle((value, error) -> error).get(10, TimeUnit.SECONDS);
+          System.out.println("History retry failure=" + retryFailure);
+          assertNull(retryFailure, "the same unconsumed history fault can be retried");
+          QueryResponse page = retry.join();
+          context.recorder.requestsFinished(operation).get(10, TimeUnit.SECONDS);
+          java.util.HashMap<String, AttributeValue> newest =
+              new java.util.HashMap<>(key("skey", 2));
+          newest.put("active_history_seq_nr", stored(context, 2).get("active_history_seq_nr"));
+          assertEquals(List.of(newest), page.items());
+          assertEquals(newest, page.lastEvaluatedKey());
+          assertEquals(1, context.faults.applications(fault));
+          assertEquals(0, context.faults.reservations(fault));
+          assertEquals(0, context.faults.pending(operation));
+          QueryResponse last =
+              client
+                  .query(request.toBuilder().exclusiveStartKey(page.lastEvaluatedKey()).build())
+                  .get(10, TimeUnit.SECONDS);
+          context.recorder.requestsFinished(operation).get(10, TimeUnit.SECONDS);
+          java.util.HashMap<String, AttributeValue> oldest =
+              new java.util.HashMap<>(key("skey", 1));
+          oldest.put("active_history_seq_nr", stored(context, 1).get("active_history_seq_nr"));
+          assertEquals(List.of(oldest), last.items());
+          assertTrue(last.lastEvaluatedKey().isEmpty());
+          assertFalse(plan.hasNext());
+          assertEquals(3, context.recorder.requests().size());
+          List<DynamoDbRequestRecorder.Request> observed = context.recorder.requests();
+          assertEquals(
+              DynamoDbJson.sdk(page.lastEvaluatedKey()),
+              observed.get(2).marshalled.path("ExclusiveStartKey"));
+          for (DynamoDbRequestRecorder.Request query : observed.subList(1, 3)) {
+            assertEquals("retention-query", query.phase);
+            assertEquals(1, query.httpAttempts);
+            assertEquals(
+                injection == FaultRegistry.Injection.REPLACE_REQUEST ? 0 : 1, query.transmissions);
+          }
+          assertEquals(1, context.faults.applications(fault));
+          assertEquals(0, context.faults.reservations(fault));
+          assertEquals(0, context.faults.pending(operation));
+          assertEquals("passed", context.faults.finish(operation).status);
+          System.out.println("History retry=" + page + " continuation=" + last + " finish=passed");
+          printOverlapObservations(context, fault, operation);
+        } finally {
+          release.countDown();
+          initialTermination.get(10, TimeUnit.SECONDS);
+        }
+      }
+    }
+  }
+
+  private static void createHistoryTable(DynamoDbTestContext context) {
+    context.acquire(
+        DynamoDbTestContext.table(context.snapshot, "skey").toBuilder()
+            .attributeDefinitions(
+                AttributeDefinition.builder()
+                    .attributeName("aid")
+                    .attributeType(ScalarAttributeType.S)
+                    .build(),
+                AttributeDefinition.builder()
+                    .attributeName("skey")
+                    .attributeType(ScalarAttributeType.N)
+                    .build(),
+                AttributeDefinition.builder()
+                    .attributeName("active_history_seq_nr")
+                    .attributeType(ScalarAttributeType.N)
+                    .build())
+            .globalSecondaryIndexes(
+                GlobalSecondaryIndex.builder()
+                    .indexName(context.historyIndex)
+                    .keySchema(
+                        KeySchemaElement.builder()
+                            .attributeName("aid")
+                            .keyType(KeyType.HASH)
+                            .build(),
+                        KeySchemaElement.builder()
+                            .attributeName("active_history_seq_nr")
+                            .keyType(KeyType.RANGE)
+                            .build())
+                    .projection(
+                        Projection.builder().projectionType(ProjectionType.KEYS_ONLY).build())
+                    .build())
+            .build());
+  }
+
+  @Test
+  void syncZeroUnprocessedPlanSendsAndProcessesTheWholeBatch() throws Exception {
+    assertZeroUnprocessedPlan(false);
+  }
+
+  @Test
+  void asyncZeroUnprocessedPlanSendsAndProcessesTheWholeBatch() throws Exception {
+    assertZeroUnprocessedPlan(true);
+  }
+
+  private static void assertZeroUnprocessedPlan(boolean async) throws Exception {
+    try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+      context.createMinimalTables();
+      for (int seq = 1; seq <= 2; seq++)
+        context.admin.putItem(
+            PutItemRequest.builder().tableName(context.snapshot).item(item("skey", seq)).build());
+      FaultRegistry.Fault fault =
+          context.faults.register(
+              1,
+              "retention-delete",
+              1,
+              FaultRegistry.Injection.REPLACE_REQUEST,
+              DynamoDbFaultEffects.unprocessedFirst(0));
+      FaultRegistry.Operation operation = context.faults.begin(1, true);
+      BatchWriteItemRequest request = deletes(context, 1, 2);
+      BatchWriteItemResponse response =
+          async
+              ? context.async.batchWriteItem(request).join()
+              : context.client.batchWriteItem(request);
+      context.recorder.requestsFinished(operation).get(10, TimeUnit.SECONDS);
+      assertTrue(response.unprocessedItems().isEmpty());
+      assertTrue(stored(context, 1).isEmpty());
+      assertTrue(stored(context, 2).isEmpty());
+      assertEquals(1, context.recorder.requests().size());
+      DynamoDbRequestRecorder.Request observed = context.recorder.requests().get(0);
+      assertEquals(1, observed.httpAttempts);
+      assertEquals(1, observed.transmissions);
+      assertEquals(DynamoDbJson.sdk(request), observed.original);
+      assertEquals(observed.original, observed.marshalled);
+      assertEquals(observed.marshalled, observed.transmitted);
+      assertEquals(1, context.faults.applications(fault));
+      assertEquals(0, context.faults.reservations(fault));
+      assertEquals(0, context.faults.pending(operation));
+      assertEquals("passed", context.faults.finish(operation).status);
+      System.out.println(
+          "Zero unprocessed async=" + async + " response=" + response + " finish=passed");
+      printOverlapObservations(context, fault, operation);
+    }
+  }
+
+  @Test
+  void unprocessedPlanRejectsNegativeAndExcessCounts() {
+    assertThrows(IllegalArgumentException.class, () -> DynamoDbFaultEffects.unprocessedFirst(-1));
+    BatchWriteItemRequest request =
+        BatchWriteItemRequest.builder()
+            .requestItems(
+                Map.of(
+                    "snapshot",
+                    List.of(
+                        WriteRequest.builder()
+                            .deleteRequest(DeleteRequest.builder().key(key("skey", 1)).build())
+                            .build())))
+            .build();
+    FaultRegistry.Effect effect = DynamoDbFaultEffects.unprocessedFirst(2);
+    assertTrue(effect.supports(FaultRegistry.Injection.REPLACE_REQUEST));
+    assertFalse(effect.supports(FaultRegistry.Injection.REPLACE_RESPONSE));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> effect.prepare(request, FaultRegistry.Injection.REPLACE_REQUEST));
+  }
+
+  @Test
   void partialBatchGetPreparationsKeepEachRequestsKeyAndSupplementedAttributes() {
     KeysAndAttributes firstKeys =
         KeysAndAttributes.builder()

@@ -117,59 +117,67 @@ final class DynamoDbFaultEffects {
   }
 
   static FaultRegistry.Effect unprocessedFirst(int count) {
-    if (count < 1) throw new IllegalArgumentException("Unprocessed count must be positive");
-    return new RequestEffect() {
-      private Map<String, List<WriteRequest>> excluded;
-      private boolean empty;
+    if (count < 0) throw new IllegalArgumentException("Unprocessed count must be non-negative");
+    return new UnprocessedBatchWrite(count);
+  }
 
-      @Override
-      public SdkRequest prepare(SdkRequest request, FaultRegistry.Injection injection) {
-        BatchWriteItemRequest batch = (BatchWriteItemRequest) request;
-        excluded = new LinkedHashMap<>();
-        Map<String, List<WriteRequest>> remainder = new LinkedHashMap<>();
-        int left = count;
-        for (Map.Entry<String, List<WriteRequest>> entry : batch.requestItems().entrySet()) {
-          int take = Math.min(left, entry.getValue().size());
-          if (take > 0)
-            excluded.put(entry.getKey(), List.copyOf(entry.getValue().subList(0, take)));
-          if (take < entry.getValue().size())
-            remainder.put(
-                entry.getKey(),
-                List.copyOf(entry.getValue().subList(take, entry.getValue().size())));
-          left -= take;
-        }
-        if (left != 0)
-          throw new IllegalArgumentException("Unprocessed count exceeds actual batch size");
-        empty = remainder.isEmpty();
-        // SDK validates empty batches; the HTTP layer skips the original full batch instead.
-        return empty ? request : batch.toBuilder().requestItems(remainder).build();
-      }
+  static final class UnprocessedBatchWrite extends RequestEffect {
+    private final int count;
+    private Map<String, List<WriteRequest>> excluded;
+    private boolean empty;
 
-      @Override
-      public HttpReply reply(DynamoDbRequestRecorder.Request request) {
-        return empty
-            ? new HttpReply(
-                200,
-                DynamoDbJson.sdk(
-                    BatchWriteItemResponse.builder().unprocessedItems(excluded).build()))
-            : null;
-      }
+    private UnprocessedBatchWrite(int count) {
+      this.count = count;
+    }
 
-      @Override
-      public SdkResponse afterResponse(
-          DynamoDbRequestRecorder.Request request, SdkResponse response) {
-        BatchWriteItemResponse batch = (BatchWriteItemResponse) response;
-        Map<String, List<WriteRequest>> combined = new LinkedHashMap<>();
-        batch
-            .unprocessedItems()
-            .forEach((table, writes) -> combined.put(table, new ArrayList<>(writes)));
-        excluded.forEach(
-            (table, writes) ->
-                combined.computeIfAbsent(table, key -> new ArrayList<>()).addAll(writes));
-        // For an entirely skipped batch the HTTP reply already contains the excluded writes.
-        return empty ? response : batch.toBuilder().unprocessedItems(combined).build();
+    UnprocessedBatchWrite forRequest() {
+      return new UnprocessedBatchWrite(count);
+    }
+
+    @Override
+    public SdkRequest prepare(SdkRequest request, FaultRegistry.Injection injection) {
+      BatchWriteItemRequest batch = (BatchWriteItemRequest) request;
+      excluded = new LinkedHashMap<>();
+      Map<String, List<WriteRequest>> remainder = new LinkedHashMap<>();
+      int left = count;
+      for (Map.Entry<String, List<WriteRequest>> entry : batch.requestItems().entrySet()) {
+        int take = Math.min(left, entry.getValue().size());
+        if (take > 0) excluded.put(entry.getKey(), List.copyOf(entry.getValue().subList(0, take)));
+        if (take < entry.getValue().size())
+          remainder.put(
+              entry.getKey(), List.copyOf(entry.getValue().subList(take, entry.getValue().size())));
+        left -= take;
       }
-    };
+      if (left != 0)
+        throw new IllegalArgumentException("Unprocessed count exceeds actual batch size");
+      empty = remainder.isEmpty();
+      // SDK validates empty batches; the HTTP layer skips the original full batch instead.
+      return empty ? request : batch.toBuilder().requestItems(remainder).build();
+    }
+
+    @Override
+    public HttpReply reply(DynamoDbRequestRecorder.Request request) {
+      return empty
+          ? new HttpReply(
+              200,
+              DynamoDbJson.sdk(BatchWriteItemResponse.builder().unprocessedItems(excluded).build()))
+          : null;
+    }
+
+    @Override
+    public SdkResponse afterResponse(
+        DynamoDbRequestRecorder.Request request, SdkResponse response) {
+      BatchWriteItemResponse batch = (BatchWriteItemResponse) response;
+      Map<String, List<WriteRequest>> combined = new LinkedHashMap<>();
+      batch
+          .unprocessedItems()
+          .forEach((table, writes) -> combined.put(table, new ArrayList<>(writes)));
+      excluded.forEach(
+          (table, writes) ->
+              combined.computeIfAbsent(table, key -> new ArrayList<>()).addAll(writes));
+      // For an entirely skipped batch the HTTP reply already contains the excluded writes.
+      return empty ? response : batch.toBuilder().unprocessedItems(combined).build();
+    }
   }
 
   static FaultRegistry.Effect partialBatchGet(

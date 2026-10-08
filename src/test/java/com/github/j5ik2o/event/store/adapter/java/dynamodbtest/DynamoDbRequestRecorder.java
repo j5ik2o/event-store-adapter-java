@@ -95,10 +95,11 @@ final class DynamoDbRequestRecorder implements ExecutionInterceptor {
     state.selection = faults.select(state.operation, state.phase);
     if (state.selection != null) {
       FaultRegistry.Effect selected = state.selection.fault.effect;
-      state.effect =
-          selected instanceof DynamoDbFaultEffects.PartialBatchGet
-              ? ((DynamoDbFaultEffects.PartialBatchGet) selected).forRequest()
-              : selected;
+      if (selected instanceof DynamoDbFaultEffects.PartialBatchGet)
+        state.effect = ((DynamoDbFaultEffects.PartialBatchGet) selected).forRequest();
+      else if (selected instanceof DynamoDbFaultEffects.UnprocessedBatchWrite)
+        state.effect = ((DynamoDbFaultEffects.UnprocessedBatchWrite) selected).forRequest();
+      else state.effect = selected;
     }
     if (state.phase.equals("retention-query")) {
       FaultRegistry.Selection active = pages.get(state.operation);
@@ -198,6 +199,8 @@ final class DynamoDbRequestRecorder implements ExecutionInterceptor {
   private synchronized void terminal(ExecutionAttributes attrs) {
     State state = attrs.getAttribute(STATE);
     if (state != null && !state.termination.isDone()) {
+      if (state.selection != null && !faults.isApplied(state.selection))
+        pages.remove(state.operation, state.selection);
       faults.release(state.selection);
       faults.requestFinished(state.operation);
       state.termination.complete(null);

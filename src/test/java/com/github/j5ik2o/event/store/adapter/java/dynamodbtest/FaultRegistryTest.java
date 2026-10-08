@@ -42,12 +42,18 @@ class FaultRegistryTest {
     FaultRegistry.Selection second = registry.select(operation, "read-events");
     assertNull(registry.select(operation, "read-events"));
     assertEquals(0, registry.applications(fault));
+    assertFalse(registry.isApplied(first));
+    assertFalse(registry.isApplied(second));
     registry.applied(first, 11);
     registry.release(second);
+    assertTrue(registry.isApplied(first));
+    assertFalse(registry.isApplied(second));
     FaultRegistry.Selection replacement = registry.select(operation, "read-events");
     assertNotNull(replacement);
+    assertFalse(registry.isApplied(replacement));
     assertEquals(1, registry.applications(fault));
     registry.applied(replacement, 12);
+    assertTrue(registry.isApplied(replacement));
     assertNull(registry.select(operation, "read-events"));
     assertEquals(2, registry.applications(fault));
     assertEquals("passed", registry.finish(operation).status);
