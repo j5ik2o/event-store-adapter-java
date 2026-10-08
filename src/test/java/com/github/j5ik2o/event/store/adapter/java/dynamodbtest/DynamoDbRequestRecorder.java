@@ -57,6 +57,7 @@ final class DynamoDbRequestRecorder implements ExecutionInterceptor {
     JsonNode marshalled;
     JsonNode transmitted;
     FaultRegistry.Selection selection;
+    FaultRegistry.Effect effect;
     FaultRegistry.Selection continuation;
     int httpAttempts;
     int transmissions;
@@ -92,6 +93,13 @@ final class DynamoDbRequestRecorder implements ExecutionInterceptor {
     state.original = DynamoDbJson.sdk(context.request());
     state.phase = targets.phase(state.api, state.original, state.operation);
     state.selection = faults.select(state.operation, state.phase);
+    if (state.selection != null) {
+      FaultRegistry.Effect selected = state.selection.fault.effect;
+      state.effect =
+          selected instanceof DynamoDbFaultEffects.PartialBatchGet
+              ? ((DynamoDbFaultEffects.PartialBatchGet) selected).forRequest()
+              : selected;
+    }
     if (state.phase.equals("retention-query")) {
       FaultRegistry.Selection active = pages.get(state.operation);
       if (active != null && ((DynamoDbFaultEffects.HistoryPages) active.fault.effect).hasNext()) {
@@ -104,7 +112,7 @@ final class DynamoDbRequestRecorder implements ExecutionInterceptor {
     }
     return state.selection == null
         ? context.request()
-        : state.selection.fault.effect.prepare(context.request(), state.selection.fault.injection);
+        : state.effect.prepare(context.request(), state.selection.fault.injection);
   }
 
   @Override
@@ -134,8 +142,7 @@ final class DynamoDbRequestRecorder implements ExecutionInterceptor {
   @Override
   public void beforeTransmission(Context.BeforeTransmission context, ExecutionAttributes attrs) {
     State state = attrs.getAttribute(STATE);
-    if (state.selection != null)
-      state.selection.fault.effect.beforeTransmission(new Request(state));
+    if (state.selection != null) state.effect.beforeTransmission(new Request(state));
     else if (state.continuation != null)
       state.continuation.fault.effect.beforeTransmission(new Request(state));
   }
@@ -148,7 +155,7 @@ final class DynamoDbRequestRecorder implements ExecutionInterceptor {
       return state.continuation.fault.effect.reply(new Request(state));
     if (state.selection == null
         || state.selection.fault.injection != FaultRegistry.Injection.REPLACE_REQUEST) return null;
-    HttpReply reply = state.selection.fault.effect.reply(new Request(state));
+    HttpReply reply = state.effect.reply(new Request(state));
     if (reply != null) faults.applied(state.selection, state.id);
     return reply;
   }
@@ -180,10 +187,9 @@ final class DynamoDbRequestRecorder implements ExecutionInterceptor {
     if (state.selection.fault.injection == FaultRegistry.Injection.REPLACE_RESPONSE) {
       // The response boundary was actually reached. An injected exception is also an application.
       faults.applied(state.selection, state.id);
-      return state.selection.fault.effect.response(new Request(state), context.response());
+      return state.effect.response(new Request(state), context.response());
     }
-    SdkResponse response =
-        state.selection.fault.effect.afterResponse(new Request(state), context.response());
+    SdkResponse response = state.effect.afterResponse(new Request(state), context.response());
     // Partial batches are applied only after their actual remainder completed.
     if (state.transmissions > 0) faults.applied(state.selection, state.id);
     return response;

@@ -194,6 +194,14 @@ final class FaultRegistry {
     return fault.applications.size();
   }
 
+  synchronized int reservations(Fault fault) {
+    return fault.reservations;
+  }
+
+  synchronized int pending(Operation operation) {
+    return operation.pending;
+  }
+
   synchronized Result finish(Operation operation) {
     if (operation != current || operation.pending != 0) {
       throw new IllegalStateException("Operation is not ready to finish");

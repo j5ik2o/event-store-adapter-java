@@ -6,13 +6,370 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
+import software.amazon.awssdk.core.interceptor.Context;
+import software.amazon.awssdk.core.interceptor.ExecutionAttributes;
+import software.amazon.awssdk.core.interceptor.ExecutionInterceptor;
+import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
 import software.amazon.awssdk.services.dynamodb.model.*;
 
 class DynamoDbResponsePlansTest {
   @RegisterExtension static final DynamoDbLocalExtension local = new DynamoDbLocalExtension();
   private static final String AID = "User-A";
+
+  @Test
+  void partialBatchGetPreparationsKeepEachRequestsKeyAndSupplementedAttributes() {
+    KeysAndAttributes firstKeys =
+        KeysAndAttributes.builder()
+            .keys(key("skey", 1), key("skey", 2))
+            .projectionExpression("#first")
+            .expressionAttributeNames(Map.of("#first", "store_id"))
+            .build();
+    KeysAndAttributes secondKeys =
+        KeysAndAttributes.builder()
+            .keys(key("skey", 1), key("skey", 3))
+            .projectionExpression("#id, #second")
+            .expressionAttributeNames(Map.of("#id", "aid", "#second", "payload"))
+            .build();
+    DynamoDbFaultEffects.PartialBatchGet plan =
+        (DynamoDbFaultEffects.PartialBatchGet)
+            DynamoDbFaultEffects.partialBatchGet(null, Map.of("snapshot", List.of(key("skey", 1))));
+    DynamoDbFaultEffects.PartialBatchGet first = plan.forRequest();
+    DynamoDbFaultEffects.PartialBatchGet second = plan.forRequest();
+    first.prepare(
+        BatchGetItemRequest.builder().requestItems(Map.of("snapshot", firstKeys)).build(),
+        FaultRegistry.Injection.REPLACE_RESPONSE);
+    second.prepare(
+        BatchGetItemRequest.builder().requestItems(Map.of("snapshot", secondKeys)).build(),
+        FaultRegistry.Injection.REPLACE_RESPONSE);
+    java.util.HashMap<String, AttributeValue> firstItem = new java.util.HashMap<>(key("skey", 2));
+    firstItem.put("store_id", AttributeValue.fromS("owner-2"));
+    java.util.HashMap<String, AttributeValue> secondItem = new java.util.HashMap<>(key("skey", 3));
+    secondItem.put("payload", AttributeValue.fromS("payload-3"));
+    BatchGetItemResponse firstResponse =
+        (BatchGetItemResponse)
+            first.response(
+                null,
+                BatchGetItemResponse.builder()
+                    .responses(Map.of("snapshot", List.of(firstItem)))
+                    .build());
+    BatchGetItemResponse secondResponse =
+        (BatchGetItemResponse)
+            second.response(
+                null,
+                BatchGetItemResponse.builder()
+                    .responses(Map.of("snapshot", List.of(secondItem)))
+                    .build());
+    assertEquals(
+        List.of(Map.of("store_id", AttributeValue.fromS("owner-2"))),
+        firstResponse.responses().get("snapshot"));
+    assertEquals(
+        List.of(
+            Map.of("aid", AttributeValue.fromS(AID), "payload", AttributeValue.fromS("payload-3"))),
+        secondResponse.responses().get("snapshot"));
+    assertEquals(
+        firstKeys.toBuilder().keys(key("skey", 1)).build(),
+        firstResponse.unprocessedKeys().get("snapshot"));
+    assertEquals(
+        secondKeys.toBuilder().keys(key("skey", 1)).build(),
+        secondResponse.unprocessedKeys().get("snapshot"));
+  }
+
+  @Test
+  void asyncRequestReplacementIsolatesOverlappingBatchGetPreparation() throws Exception {
+    assertOverlappingBatchGetPreparation(FaultRegistry.Injection.REPLACE_REQUEST);
+  }
+
+  @Test
+  void asyncResponseReplacementIsolatesOverlappingBatchGetPreparation() throws Exception {
+    assertOverlappingBatchGetPreparation(FaultRegistry.Injection.REPLACE_RESPONSE);
+  }
+
+  private static void assertOverlappingBatchGetPreparation(FaultRegistry.Injection injection)
+      throws Exception {
+    try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+      context.createMinimalTables();
+      Map<String, AttributeValue> pendingKey = key("skey", 1);
+      Map<String, AttributeValue> firstKey = key("skey", 2);
+      Map<String, AttributeValue> secondKey = key("skey", 3);
+      for (int seq = 1; seq <= 3; seq++) {
+        java.util.HashMap<String, AttributeValue> stored =
+            new java.util.HashMap<>(key("skey", seq));
+        stored.put("store_id", AttributeValue.fromS("owner-" + seq));
+        stored.put("payload", AttributeValue.fromS("payload-" + seq));
+        stored.put("extra", AttributeValue.fromS("outside-projection"));
+        context.admin.putItem(
+            PutItemRequest.builder().tableName(context.snapshot).item(stored).build());
+      }
+      KeysAndAttributes firstKeys =
+          KeysAndAttributes.builder()
+              .keys(pendingKey, firstKey)
+              .consistentRead(true)
+              .projectionExpression("#first")
+              .expressionAttributeNames(Map.of("#first", "store_id"))
+              .build();
+      KeysAndAttributes secondKeys =
+          KeysAndAttributes.builder()
+              .keys(pendingKey, secondKey)
+              .consistentRead(false)
+              .projectionExpression("#id, #second")
+              .expressionAttributeNames(Map.of("#id", "aid", "#second", "payload"))
+              .build();
+      BatchGetItemRequest firstRequest =
+          BatchGetItemRequest.builder().requestItems(Map.of(context.snapshot, firstKeys)).build();
+      BatchGetItemRequest secondRequest =
+          BatchGetItemRequest.builder().requestItems(Map.of(context.snapshot, secondKeys)).build();
+      FaultRegistry.Fault fault =
+          context.faults.register(
+              1,
+              "read-snapshot",
+              2,
+              injection,
+              DynamoDbFaultEffects.partialBatchGet(
+                  injection == FaultRegistry.Injection.REPLACE_REQUEST ? context.admin : null,
+                  Map.of(context.snapshot, List.of(pendingKey))));
+      CountDownLatch firstPrepared = new CountDownLatch(1);
+      CountDownLatch secondPrepared = new CountDownLatch(1);
+      CountDownLatch releaseFirst = new CountDownLatch(1);
+      CountDownLatch releaseSecond = new CountDownLatch(1);
+      ExecutionInterceptor gate =
+          new ExecutionInterceptor() {
+            @Override
+            public void beforeTransmission(
+                Context.BeforeTransmission actual, ExecutionAttributes attrs) {
+              KeysAndAttributes keys =
+                  ((BatchGetItemRequest) actual.request()).requestItems().get(context.snapshot);
+              if (keys.keys().size() != 2) return;
+              boolean first = keys.keys().contains(firstKey);
+              System.out.println("prepared " + (first ? "A" : "B") + " " + keys);
+              (first ? firstPrepared : secondPrepared).countDown();
+              await(first ? releaseFirst : releaseSecond);
+            }
+          };
+      ExecutorService callers = Executors.newFixedThreadPool(2);
+      FaultRegistry.Operation operation = context.faults.begin(1, false);
+      try (FaultAsyncHttpClient http =
+              new FaultAsyncHttpClient(DynamoDbTestClients.asyncHttp().build(), context.recorder);
+          DynamoDbAsyncClient client =
+              DynamoDbTestClients.observedAsync(local.endpoint(), context.recorder, http, gate)) {
+        try {
+          CompletableFuture<BatchGetItemResponse> first =
+              CompletableFuture.supplyAsync(
+                  () -> client.batchGetItem(firstRequest).join(), callers);
+          assertTrue(firstPrepared.await(10, TimeUnit.SECONDS), "first prepare completed");
+          CompletableFuture<BatchGetItemResponse> second =
+              CompletableFuture.supplyAsync(
+                  () -> client.batchGetItem(secondRequest).join(), callers);
+          assertTrue(secondPrepared.await(10, TimeUnit.SECONDS), "second prepare completed");
+          System.out.println(
+              "both prepared pending="
+                  + context.faults.pending(operation)
+                  + " reservations="
+                  + context.faults.reservations(fault)
+                  + " applications="
+                  + context.faults.applications(fault));
+          assertEquals(2, context.faults.pending(operation));
+          assertEquals(2, context.faults.reservations(fault));
+          assertEquals(0, context.faults.applications(fault));
+          releaseFirst.countDown();
+          Throwable firstFailure =
+              first.handle((response, error) -> error).get(10, TimeUnit.SECONDS);
+          System.out.println(
+              "A SDK result=" + (firstFailure == null ? first.join() : firstFailure));
+          releaseSecond.countDown();
+          Throwable secondFailure =
+              second.handle((response, error) -> error).get(10, TimeUnit.SECONDS);
+          System.out.println(
+              "B SDK result=" + (secondFailure == null ? second.join() : secondFailure));
+          context.recorder.requestsFinished(operation).get(10, TimeUnit.SECONDS);
+          printOverlapObservations(context, fault, operation);
+          assertAll(
+              () -> assertNull(firstFailure, "first SDK request failed"),
+              () -> assertNull(secondFailure, "second SDK request failed"));
+          BatchGetItemResponse firstResponse = first.join();
+          BatchGetItemResponse secondResponse = second.join();
+          BatchGetItemResponse firstRetry =
+              client
+                  .batchGetItem(
+                      firstRequest.toBuilder()
+                          .requestItems(firstResponse.unprocessedKeys())
+                          .build())
+                  .get(10, TimeUnit.SECONDS);
+          BatchGetItemResponse secondRetry =
+              client
+                  .batchGetItem(
+                      secondRequest.toBuilder()
+                          .requestItems(secondResponse.unprocessedKeys())
+                          .build())
+                  .get(10, TimeUnit.SECONDS);
+          context.recorder.requestsFinished(operation).get(10, TimeUnit.SECONDS);
+          printOverlapObservations(context, fault, operation);
+          assertOverlapResponse(
+              context.snapshot,
+              firstKeys,
+              pendingKey,
+              firstResponse,
+              firstRetry,
+              Map.of("store_id", AttributeValue.fromS("owner-2")),
+              Map.of("store_id", AttributeValue.fromS("owner-1")));
+          assertOverlapResponse(
+              context.snapshot,
+              secondKeys,
+              pendingKey,
+              secondResponse,
+              secondRetry,
+              Map.of(
+                  "aid", AttributeValue.fromS(AID), "payload", AttributeValue.fromS("payload-3")),
+              Map.of(
+                  "aid", AttributeValue.fromS(AID), "payload", AttributeValue.fromS("payload-1")));
+          List<DynamoDbRequestRecorder.Request> observed = context.recorder.requests();
+          assertEquals(4, observed.size());
+          assertOverlapRequest(observed.get(0), firstRequest, injection);
+          assertOverlapRequest(observed.get(1), secondRequest, injection);
+          for (int i = 2; i < 4; i++) {
+            DynamoDbRequestRecorder.Request retry = observed.get(i);
+            assertEquals(1, retry.httpAttempts);
+            assertEquals(1, retry.transmissions);
+            assertEquals(retry.original, retry.marshalled);
+            assertEquals(retry.marshalled, retry.transmitted);
+            assertEquals(
+                DynamoDbJson.sdk(
+                    i == 2 ? firstResponse.unprocessedKeys() : secondResponse.unprocessedKeys()),
+                retry.transmitted.path("RequestItems"));
+          }
+          assertEquals(2, context.faults.applications(fault));
+          assertEquals(0, context.faults.reservations(fault));
+          assertEquals(0, context.faults.pending(operation), "pending at finish");
+          String status = context.faults.finish(operation).status;
+          System.out.println("finish pending=0 status=" + status);
+          assertEquals("passed", status);
+          FaultRegistry.Operation next = context.faults.begin(2, false);
+          BatchGetItemResponse nextResponse =
+              client.batchGetItem(firstRequest).get(10, TimeUnit.SECONDS);
+          context.recorder.requestsFinished(next).get(10, TimeUnit.SECONDS);
+          assertTrue(nextResponse.unprocessedKeys().isEmpty());
+          assertEquals(
+              java.util.Set.of(
+                  Map.of("store_id", AttributeValue.fromS("owner-1")),
+                  Map.of("store_id", AttributeValue.fromS("owner-2"))),
+              java.util.Set.copyOf(nextResponse.responses().get(context.snapshot)));
+          DynamoDbRequestRecorder.Request nextObserved = context.recorder.requests().get(4);
+          assertEquals(2, nextObserved.operation);
+          assertEquals(1, nextObserved.httpAttempts);
+          assertEquals(1, nextObserved.transmissions);
+          assertEquals(DynamoDbJson.sdk(firstRequest), nextObserved.transmitted);
+          assertEquals(2, context.faults.applications(fault));
+          assertEquals(0, context.faults.reservations(fault));
+          assertEquals(0, context.faults.pending(next));
+          String nextStatus = context.faults.finish(next).status;
+          System.out.println(
+              "next operation result=" + nextResponse + " pending=0 status=" + nextStatus);
+          assertEquals("passed", nextStatus);
+        } finally {
+          releaseFirst.countDown();
+          releaseSecond.countDown();
+          try {
+            callers.shutdown();
+            assertTrue(callers.awaitTermination(30, TimeUnit.SECONDS), "SDK callers terminated");
+            context.recorder.requestsFinished(operation).get(10, TimeUnit.SECONDS);
+          } finally {
+            callers.shutdownNow();
+          }
+        }
+      } finally {
+        callers.shutdownNow();
+      }
+    }
+  }
+
+  private static void assertOverlapResponse(
+      String table,
+      KeysAndAttributes original,
+      Map<String, AttributeValue> pendingKey,
+      BatchGetItemResponse initial,
+      BatchGetItemResponse retry,
+      Map<String, AttributeValue> processedProjection,
+      Map<String, AttributeValue> pendingProjection) {
+    assertAll(
+        () -> assertEquals(List.of(processedProjection), initial.responses().get(table)),
+        () -> assertFalse(initial.responses().get(table).contains(pendingProjection)),
+        () ->
+            assertEquals(
+                Map.of(table, original.toBuilder().keys(pendingKey).build()),
+                initial.unprocessedKeys()),
+        () -> assertEquals(List.of(pendingProjection), retry.responses().get(table)),
+        () -> assertTrue(retry.unprocessedKeys().isEmpty()),
+        () -> {
+          List<Map<String, AttributeValue>> combined =
+              new ArrayList<>(initial.responses().get(table));
+          combined.addAll(retry.responses().get(table));
+          assertEquals(2, combined.size());
+          assertEquals(2, combined.stream().distinct().count(), "no duplicate after retry");
+        });
+  }
+
+  private static void assertOverlapRequest(
+      DynamoDbRequestRecorder.Request observed,
+      BatchGetItemRequest original,
+      FaultRegistry.Injection injection) {
+    assertEquals(DynamoDbJson.sdk(original), observed.original);
+    assertEquals(1, observed.httpAttempts);
+    assertEquals(
+        injection == FaultRegistry.Injection.REPLACE_REQUEST ? 0 : 1, observed.transmissions);
+    if (injection == FaultRegistry.Injection.REPLACE_REQUEST) {
+      assertNull(observed.transmitted);
+      assertEquals(observed.original, observed.marshalled);
+    } else {
+      assertEquals(observed.marshalled, observed.transmitted);
+      String table = original.requestItems().keySet().iterator().next();
+      com.fasterxml.jackson.databind.JsonNode keys =
+          observed.transmitted.path("RequestItems").path(table);
+      assertEquals(DynamoDbJson.sdk(original.requestItems().get(table).keys()), keys.path("Keys"));
+      Map<String, String> names = original.requestItems().get(table).expressionAttributeNames();
+      names.forEach(
+          (alias, attribute) ->
+              assertEquals(attribute, keys.path("ExpressionAttributeNames").path(alias).asText()));
+      java.util.Set<String> projected = new java.util.HashSet<>();
+      for (String term : keys.path("ProjectionExpression").asText().split(","))
+        projected.add(keys.path("ExpressionAttributeNames").path(term.trim()).asText());
+      java.util.Set<String> expected = new java.util.HashSet<>(names.values());
+      expected.addAll(java.util.Set.of("aid", "skey"));
+      assertEquals(expected, projected);
+    }
+  }
+
+  private static void printOverlapObservations(
+      DynamoDbTestContext context, FaultRegistry.Fault fault, FaultRegistry.Operation operation) {
+    for (DynamoDbRequestRecorder.Request request : context.recorder.requests())
+      System.out.println(
+          "request="
+              + request.id
+              + " operation="
+              + request.operation
+              + " original="
+              + request.original
+              + " marshalled="
+              + request.marshalled
+              + " transmitted="
+              + request.transmitted
+              + " attempts="
+              + request.httpAttempts
+              + " transmissions="
+              + request.transmissions);
+    System.out.println(
+        "applications="
+            + context.faults.applications(fault)
+            + " reservations="
+            + context.faults.reservations(fault)
+            + " pending="
+            + context.faults.pending(operation));
+  }
 
   @Test
   void syncRequestReplacementPreservesKeylessAliasedProjection() {

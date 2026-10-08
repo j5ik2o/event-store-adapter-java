@@ -70,12 +70,19 @@ final class DynamoDbTestClients {
   }
 
   static DynamoDbAsyncClient observedAsync(
-      URI endpoint, DynamoDbRequestRecorder recorder, FaultAsyncHttpClient http) {
+      URI endpoint,
+      DynamoDbRequestRecorder recorder,
+      FaultAsyncHttpClient http,
+      ExecutionInterceptor... interceptors) {
     return DynamoDbAsyncClient.builder()
         .endpointOverride(endpoint)
         .region(REGION)
         .credentialsProvider(CREDENTIALS)
-        .overrideConfiguration(overrides().addExecutionInterceptor(recorder).build())
+        .overrideConfiguration(
+            overrides()
+                .executionInterceptors(Arrays.asList(interceptors))
+                .addExecutionInterceptor(recorder)
+                .build())
         .httpClient(http)
         .build();
   }
