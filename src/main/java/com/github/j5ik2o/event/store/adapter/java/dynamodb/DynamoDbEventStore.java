@@ -6,10 +6,11 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsRequest;
 
 /**
- * Validates the configuration using caller-owned SDK clients. Event operations are supplied in the
- * following implementation stage. / 呼出し側が所有するSDKで生成時照合を行います。4操作は次工程で提供します。
+ * Validates configuration and writes events using caller-owned SDK clients. /
+ * 呼出し側が所有するSDKで生成時照合とイベント書込みを行います。
  */
 public final class DynamoDbEventStore {
   private DynamoDbEventStore() {}
@@ -33,7 +34,7 @@ public final class DynamoDbEventStore {
       Sleeper sleeper) {
     requireSettings(client, tables, config);
     new DynamoDbConfigurationInitializer(tables, sleeper).initialize(client);
-    return new Synchronous<>();
+    return new Synchronous<>(client, tables, config.payloadSerializer());
   }
 
   static <P, A> CompletableFuture<AsyncEventStore<P, A>> createAsync(
@@ -45,7 +46,7 @@ public final class DynamoDbEventStore {
       requireSettings(client, tables, config);
       return new DynamoDbConfigurationInitializer(tables, sleeper)
           .initializeAsync(client)
-          .thenApply(ignored -> new Asynchronous<>());
+          .thenApply(ignored -> new Asynchronous<>(client, tables, config.payloadSerializer()));
     } catch (ConfigurationException failure) {
       return CompletableFuture.failedFuture(failure);
     }
@@ -63,8 +64,24 @@ public final class DynamoDbEventStore {
   }
 
   private static final class Synchronous<P, A> implements EventStore<P, A> {
+    private final DynamoDbClient client;
+    private final DynamoDbTableConfig tables;
+    private final PayloadSerializer<P> serializer;
+
+    Synchronous(
+        DynamoDbClient client, DynamoDbTableConfig tables, PayloadSerializer<P> serializer) {
+      this.client = client;
+      this.tables = tables;
+      this.serializer = serializer;
+    }
+
     public void persistEvent(EventEnvelope<P> event) {
-      throw unavailable();
+      TransactWriteItemsRequest request = DynamoDbEventWrite.prepare(event, tables, serializer);
+      try {
+        client.transactWriteItems(request);
+      } catch (RuntimeException failure) {
+        throw DynamoDbEventWrite.classify(event, failure);
+      }
     }
 
     public void persistEventAndSnapshot(EventEnvelope<P> event, SnapshotEnvelope<A> snapshot) {
@@ -81,8 +98,32 @@ public final class DynamoDbEventStore {
   }
 
   private static final class Asynchronous<P, A> implements AsyncEventStore<P, A> {
+    private final DynamoDbAsyncClient client;
+    private final DynamoDbTableConfig tables;
+    private final PayloadSerializer<P> serializer;
+
+    Asynchronous(
+        DynamoDbAsyncClient client, DynamoDbTableConfig tables, PayloadSerializer<P> serializer) {
+      this.client = client;
+      this.tables = tables;
+      this.serializer = serializer;
+    }
+
     public CompletableFuture<Void> persistEvent(EventEnvelope<P> event) {
-      return CompletableFuture.failedFuture(unavailable());
+      CompletableFuture<Void> result = new CompletableFuture<>();
+      try {
+        TransactWriteItemsRequest request = DynamoDbEventWrite.prepare(event, tables, serializer);
+        client
+            .transactWriteItems(request)
+            .whenComplete(
+                (response, failure) -> {
+                  if (failure == null) result.complete(null);
+                  else result.completeExceptionally(DynamoDbEventWrite.classify(event, failure));
+                });
+      } catch (RuntimeException failure) {
+        result.completeExceptionally(DynamoDbEventWrite.classify(event, failure));
+      }
+      return result;
     }
 
     public CompletableFuture<Void> persistEventAndSnapshot(
