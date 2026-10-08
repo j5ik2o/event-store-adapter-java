@@ -99,6 +99,8 @@ final class DynamoDbRequestRecorder implements ExecutionInterceptor {
         state.effect = ((DynamoDbFaultEffects.PartialBatchGet) selected).forRequest();
       else if (selected instanceof DynamoDbFaultEffects.UnprocessedBatchWrite)
         state.effect = ((DynamoDbFaultEffects.UnprocessedBatchWrite) selected).forRequest();
+      else if (selected instanceof DynamoDbFaultEffects.ReadInterleave)
+        state.effect = ((DynamoDbFaultEffects.ReadInterleave) selected).forRequest();
       else state.effect = selected;
     }
     if (state.phase.equals("retention-query")) {
@@ -191,8 +193,9 @@ final class DynamoDbRequestRecorder implements ExecutionInterceptor {
       return state.effect.response(new Request(state), context.response());
     }
     SdkResponse response = state.effect.afterResponse(new Request(state), context.response());
-    // Partial batches are applied only after their actual remainder completed.
-    if (state.transmissions > 0) faults.applied(state.selection, state.id);
+    // A successful remainder response can arrive before async execute returns and records a send.
+    // Entirely replaced requests already recorded their application at the HTTP boundary.
+    if (!faults.isApplied(state.selection)) faults.applied(state.selection, state.id);
     return response;
   }
 

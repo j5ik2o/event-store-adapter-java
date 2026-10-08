@@ -25,6 +25,321 @@ class DynamoDbResponsePlansTest {
   private static final String AID = "User-A";
 
   @Test
+  void readInterleaveRequestEffectsRetainTheirOwnCapturedHead() {
+    java.util.concurrent.atomic.AtomicReference<Map<String, AttributeValue>> storedHead =
+        new java.util.concurrent.atomic.AtomicReference<>(
+            Map.of("aid", AttributeValue.fromS(AID), "seq_nr", AttributeValue.fromN("1")));
+    java.util.concurrent.atomic.AtomicInteger commits =
+        new java.util.concurrent.atomic.AtomicInteger();
+    try (DynamoDbClient admin =
+        new DynamoDbClient() {
+          @Override
+          public GetItemResponse getItem(GetItemRequest request) {
+            assertEquals("head", request.tableName());
+            assertTrue(request.consistentRead());
+            return GetItemResponse.builder().item(storedHead.get()).build();
+          }
+
+          @Override
+          public String serviceName() {
+            return "dynamodb";
+          }
+
+          @Override
+          public void close() {}
+        }) {
+      DynamoDbFaultEffects.ReadInterleave plan =
+          (DynamoDbFaultEffects.ReadInterleave)
+              DynamoDbFaultEffects.readInterleave(admin, "head", commits::incrementAndGet);
+      DynamoDbFaultEffects.ReadInterleave first = plan.forRequest();
+      DynamoDbFaultEffects.ReadInterleave second = plan.forRequest();
+      FaultRegistry faults = new FaultRegistry();
+      FaultRegistry.Operation operation = faults.begin(1, false);
+      DynamoDbRequestRecorder recorder =
+          new DynamoDbRequestRecorder(
+              faults, new DynamoDbRequestTargets("journal", "snapshot", "head", "history"));
+      BatchGetItemRequest request =
+          BatchGetItemRequest.builder()
+              .requestItems(
+                  Map.of(
+                      "head",
+                      KeysAndAttributes.builder()
+                          .keys(Map.of("aid", AttributeValue.fromS(AID)))
+                          .build()))
+              .build();
+      software.amazon.awssdk.core.interceptor.ExecutionAttributes attrs =
+          new ExecutionAttributes()
+              .putAttribute(
+                  software.amazon.awssdk.core.interceptor.SdkExecutionAttribute.OPERATION_NAME,
+                  "BatchGetItem");
+      software.amazon.awssdk.core.interceptor.InterceptorContext actual =
+          software.amazon.awssdk.core.interceptor.InterceptorContext.builder()
+              .request(request)
+              .requestBody(
+                  software.amazon.awssdk.core.sync.RequestBody.fromBytes(
+                      DynamoDbJson.bytes(DynamoDbJson.sdk(request))))
+              .build();
+      recorder.beforeExecution(actual, attrs);
+      recorder.modifyRequest(actual, attrs);
+      recorder.afterMarshalling(actual, attrs);
+      DynamoDbRequestRecorder.Request observed = recorder.requests().get(0);
+      first.beforeTransmission(observed);
+      storedHead.set(Map.of("aid", AttributeValue.fromS(AID), "seq_nr", AttributeValue.fromN("2")));
+      second.beforeTransmission(observed);
+      BatchGetItemResponse real =
+          BatchGetItemResponse.builder()
+              .responses(
+                  Map.of("head", List.of(storedHead.get()), "snapshot", List.of(key("skey", 0))))
+              .build();
+      BatchGetItemResponse firstResponse = (BatchGetItemResponse) first.response(observed, real);
+      BatchGetItemResponse secondResponse = (BatchGetItemResponse) second.response(observed, real);
+      assertEquals("1", firstResponse.responses().get("head").get(0).get("seq_nr").n());
+      assertEquals("2", secondResponse.responses().get("head").get(0).get("seq_nr").n());
+      assertEquals(real.responses().get("snapshot"), firstResponse.responses().get("snapshot"));
+      assertEquals(2, commits.get());
+      recorder.afterExecution(actual, attrs);
+      assertEquals("passed", faults.finish(operation).status);
+    }
+  }
+
+  @Test
+  void syncHistoryPaginationStopsAtAbsentTerminalCursor() throws Exception {
+    assertHistoryPaginationStopsAtAbsentTerminalCursor(false);
+  }
+
+  @Test
+  void asyncHistoryPaginationStopsAtAbsentTerminalCursor() throws Exception {
+    assertHistoryPaginationStopsAtAbsentTerminalCursor(true);
+  }
+
+  private static void assertHistoryPaginationStopsAtAbsentTerminalCursor(boolean async)
+      throws Exception {
+    List<org.junit.jupiter.api.function.Executable> checks = new ArrayList<>();
+    for (FaultRegistry.Injection injection : FaultRegistry.Injection.values()) {
+      try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+        createHistoryTable(context);
+        for (int seq = 1; seq <= 2; seq++) {
+          Map<String, AttributeValue> history = new java.util.HashMap<>(item("skey", seq));
+          history.put("active_history_seq_nr", AttributeValue.fromN(Integer.toString(seq)));
+          context.admin.putItem(
+              PutItemRequest.builder().tableName(context.snapshot).item(history).build());
+        }
+        DynamoDbFaultEffects.HistoryPages plan =
+            DynamoDbFaultEffects.historyPages(
+                context.admin,
+                context.snapshot,
+                AID,
+                List.of(List.of(2L), List.of(1L)),
+                null,
+                false);
+        FaultRegistry.Fault fault =
+            context.faults.register(1, "retention-query", 1, injection, plan);
+        FaultRegistry.Operation operation = context.faults.begin(1, true);
+        QueryRequest request = historyQuery(context);
+        List<QueryResponse> responses = new ArrayList<>();
+        RuntimeException paginationFailure = null;
+        try {
+          QueryResponse response;
+          do {
+            response = query(context, request, async);
+            responses.add(response);
+            request = request.toBuilder().exclusiveStartKey(response.lastEvaluatedKey()).build();
+          } while (response.hasLastEvaluatedKey() && responses.size() < 3);
+        } catch (RuntimeException failure) {
+          paginationFailure = failure;
+        }
+        RuntimeException observedFailure = paginationFailure;
+        context.recorder.requestsFinished(operation).get(10, TimeUnit.SECONDS);
+        List<DynamoDbRequestRecorder.Request> observed = context.recorder.requests();
+        int applications = context.faults.applications(fault);
+        int reservations = context.faults.reservations(fault);
+        int pending = context.faults.pending(operation);
+        String status = context.faults.finish(operation).status;
+        System.out.println(
+            "History pagination async="
+                + async
+                + " injection="
+                + injection
+                + " responses="
+                + responses
+                + " has="
+                + responses.stream()
+                    .map(QueryResponse::hasLastEvaluatedKey)
+                    .collect(java.util.stream.Collectors.toList())
+                + " queries="
+                + observed.size()
+                + " applications="
+                + applications
+                + " reservations="
+                + reservations
+                + " pending="
+                + pending
+                + " finish="
+                + status
+                + " failure="
+                + observedFailure);
+        checks.add(
+            () ->
+                assertAll(
+                    () -> assertNull(observedFailure, "pagination failed"),
+                    () -> assertEquals(2, observed.size(), "no extra Query"),
+                    () -> assertEquals(2, responses.size()),
+                    () -> assertTrue(responses.get(0).hasLastEvaluatedKey()),
+                    () ->
+                        assertEquals(
+                            responses.get(0).items().get(0), responses.get(0).lastEvaluatedKey()),
+                    () ->
+                        assertEquals(
+                            DynamoDbJson.sdk(responses.get(0).lastEvaluatedKey()),
+                            observed.get(1).marshalled.path("ExclusiveStartKey")),
+                    () -> assertTrue(responses.get(1).lastEvaluatedKey().isEmpty()),
+                    () ->
+                        assertFalse(
+                            responses.get(1).hasLastEvaluatedKey(), "terminal field absent"),
+                    () -> assertEquals("1", responses.get(1).items().get(0).get("skey").n()),
+                    () -> assertFalse(plan.hasNext()),
+                    () -> assertEquals(1, applications),
+                    () -> assertEquals(0, reservations),
+                    () -> assertEquals(0, pending),
+                    () -> assertEquals("passed", status)));
+      }
+    }
+    assertAll(checks);
+  }
+
+  @Test
+  void asyncReadInterleaveKeepsOverlappingCapturesRequestLocal() throws Exception {
+    try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+      context.createMinimalTables();
+      Map<String, AttributeValue> headKey = Map.of("aid", AttributeValue.fromS(AID));
+      context.admin.putItem(
+          PutItemRequest.builder()
+              .tableName(context.head)
+              .item(Map.of("aid", AttributeValue.fromS(AID), "seq_nr", AttributeValue.fromN("1")))
+              .build());
+      List<String> captured = new java.util.concurrent.CopyOnWriteArrayList<>();
+      ExecutionInterceptor captureObserver =
+          new ExecutionInterceptor() {
+            @Override
+            public void afterExecution(Context.AfterExecution actual, ExecutionAttributes attrs) {
+              if (actual.request() instanceof GetItemRequest)
+                captured.add(((GetItemResponse) actual.response()).item().get("seq_nr").n());
+            }
+          };
+      CountDownLatch firstCaptured = new CountDownLatch(1);
+      CountDownLatch secondCaptured = new CountDownLatch(1);
+      CountDownLatch releaseFirst = new CountDownLatch(1);
+      CountDownLatch releaseSecond = new CountDownLatch(1);
+      java.util.concurrent.atomic.AtomicInteger commits =
+          new java.util.concurrent.atomic.AtomicInteger();
+      ExecutorService callers = Executors.newFixedThreadPool(2);
+      try (DynamoDbClient admin =
+          DynamoDbClient.builder()
+              .endpointOverride(local.endpoint())
+              .region(DynamoDbTestClients.REGION)
+              .credentialsProvider(
+                  software.amazon.awssdk.auth.credentials.StaticCredentialsProvider.create(
+                      software.amazon.awssdk.auth.credentials.AwsBasicCredentials.create(
+                          DynamoDbTestClients.ACCESS_KEY, "DynamoDbLocalDummySecret")))
+              .overrideConfiguration(
+                  DynamoDbTestClients.overrides().addExecutionInterceptor(captureObserver).build())
+              .httpClientBuilder(software.amazon.awssdk.http.apache5.Apache5HttpClient.builder())
+              .build()) {
+        FaultRegistry.Fault fault =
+            context.faults.register(
+                1,
+                "read-snapshot",
+                2,
+                FaultRegistry.Injection.REPLACE_RESPONSE,
+                DynamoDbFaultEffects.readInterleave(
+                    admin,
+                    context.head,
+                    () -> {
+                      boolean first = commits.incrementAndGet() == 1;
+                      (first ? firstCaptured : secondCaptured).countDown();
+                      await(first ? releaseFirst : releaseSecond);
+                    }));
+        FaultRegistry.Operation operation = context.faults.begin(1, false);
+        BatchGetItemRequest request =
+            BatchGetItemRequest.builder()
+                .requestItems(
+                    Map.of(
+                        context.head,
+                        KeysAndAttributes.builder().keys(headKey).consistentRead(true).build()))
+                .build();
+        try {
+          CompletableFuture<BatchGetItemResponse> first =
+              CompletableFuture.supplyAsync(
+                  () -> context.async.batchGetItem(request).join(), callers);
+          assertTrue(firstCaptured.await(10, TimeUnit.SECONDS), "first capture reached");
+          context.admin.putItem(
+              PutItemRequest.builder()
+                  .tableName(context.head)
+                  .item(
+                      Map.of("aid", AttributeValue.fromS(AID), "seq_nr", AttributeValue.fromN("2")))
+                  .build());
+          CompletableFuture<BatchGetItemResponse> second =
+              CompletableFuture.supplyAsync(
+                  () -> context.async.batchGetItem(request).join(), callers);
+          assertTrue(secondCaptured.await(10, TimeUnit.SECONDS), "second capture reached");
+          assertEquals(
+              List.of("1", "2"), captured, "actual GetItem versions before either response");
+          assertFalse(first.isDone());
+          assertFalse(second.isDone());
+          assertEquals(2, context.faults.reservations(fault));
+          assertEquals(2, context.faults.pending(operation));
+          releaseFirst.countDown();
+          BatchGetItemResponse firstResponse = first.get(10, TimeUnit.SECONDS);
+          releaseSecond.countDown();
+          BatchGetItemResponse secondResponse = second.get(10, TimeUnit.SECONDS);
+          context.recorder.requestsFinished(operation).get(10, TimeUnit.SECONDS);
+          String status = context.faults.finish(operation).status;
+          System.out.println(
+              "Read interleave captured="
+                  + captured
+                  + " first="
+                  + firstResponse
+                  + " second="
+                  + secondResponse
+                  + " applications="
+                  + context.faults.applications(fault)
+                  + " reservations="
+                  + context.faults.reservations(fault)
+                  + " pending="
+                  + context.faults.pending(operation)
+                  + " finish="
+                  + status);
+          assertAll(
+              () ->
+                  assertEquals(
+                      captured.get(0),
+                      firstResponse.responses().get(context.head).get(0).get("seq_nr").n()),
+              () ->
+                  assertEquals(
+                      captured.get(1),
+                      secondResponse.responses().get(context.head).get(0).get("seq_nr").n()),
+              () -> assertEquals(2, context.faults.applications(fault)),
+              () -> assertEquals(0, context.faults.reservations(fault)),
+              () -> assertEquals(0, context.faults.pending(operation)),
+              () -> assertEquals(2, context.recorder.requests().size()),
+              () ->
+                  assertTrue(
+                      context.recorder.requests().stream().allMatch(r -> r.transmissions == 1)),
+              () -> assertEquals("passed", status));
+        } finally {
+          releaseFirst.countDown();
+          releaseSecond.countDown();
+          callers.shutdown();
+          assertTrue(callers.awaitTermination(30, TimeUnit.SECONDS));
+          context.recorder.requestsFinished(operation).get(10, TimeUnit.SECONDS);
+        }
+      } finally {
+        callers.shutdownNow();
+      }
+    }
+  }
+
+  @Test
   void syncHistoryPlanResolvesItemsWrittenByItsOperation() throws Exception {
     assertHistoryPlanResolvesItemsWrittenByItsOperation(false);
   }

@@ -3,24 +3,31 @@ package com.github.j5ik2o.event.store.adapter.java.dynamodbtest;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.io.IOException;
+import java.net.URI;
 import java.nio.ByteBuffer;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
+import software.amazon.awssdk.core.SdkResponse;
 import software.amazon.awssdk.core.async.AsyncRequestBody;
+import software.amazon.awssdk.core.interceptor.Context;
 import software.amazon.awssdk.core.interceptor.ExecutionAttributes;
+import software.amazon.awssdk.core.interceptor.ExecutionInterceptor;
 import software.amazon.awssdk.core.interceptor.InterceptorContext;
 import software.amazon.awssdk.core.interceptor.SdkExecutionAttribute;
+import software.amazon.awssdk.core.internal.interceptor.DefaultFailedExecutionContext;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.http.*;
 import software.amazon.awssdk.http.async.*;
-import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
-import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
+import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
+import software.amazon.awssdk.services.dynamodb.model.*;
 
 /** SPI test doubles cover abort/cancellation and lifetime; real SDK/Local tests cover effects. */
 class FaultTransportTest {
@@ -165,8 +172,164 @@ class FaultTransportTest {
       CompletableFuture<Void> result = wrapper.execute(fixture.asyncRequest(handler));
       assertSame(original, assertThrows(CompletionException.class, result::join).getCause());
       assertSame(original, handler.error.get());
+      DynamoDbRequestRecorder.Request observed = fixture.recorder.requests().get(0);
+      System.out.println(
+          "Synchronous SPI throw attempts="
+              + observed.httpAttempts
+              + " transmissions="
+              + observed.transmissions
+              + " payload="
+              + observed.transmitted);
+      fixture.recorder.onExecutionFailure(
+          DefaultFailedExecutionContext.builder()
+              .interceptorContext(fixture.context)
+              .exception(original)
+              .build(),
+          fixture.attributes);
+      assertTrue(fixture.recorder.requestsFinished(fixture.operation).isDone());
+      assertEquals(0, fixture.faults.pending(fixture.operation));
+      assertAll(
+          () -> assertEquals(1, observed.httpAttempts),
+          () -> assertEquals(0, observed.transmissions),
+          () -> assertNull(observed.transmitted));
     }
     fixture.finish();
+  }
+
+  @Test
+  void asyncAcceptedFutureFailureKeepsTransmissionAndOriginalError() {
+    Fixture fixture = new Fixture();
+    RuntimeException original = new IllegalStateException("accepted transport failed");
+    CompletableFuture<Void> actual = new CompletableFuture<>();
+    Handler handler = new Handler();
+    SdkAsyncHttpClient delegate =
+        new SdkAsyncHttpClient() {
+          @Override
+          public CompletableFuture<Void> execute(AsyncExecuteRequest request) {
+            return actual;
+          }
+
+          @Override
+          public void close() {}
+        };
+    try (FaultAsyncHttpClient wrapper = new FaultAsyncHttpClient(delegate, fixture.recorder)) {
+      CompletableFuture<Void> result = wrapper.execute(fixture.asyncRequest(handler));
+      assertEquals(1, fixture.recorder.requests().get(0).transmissions);
+      assertEquals(DynamoDbJson.read(fixture.body), fixture.recorder.requests().get(0).transmitted);
+      handler.onError(original);
+      actual.completeExceptionally(original);
+      assertSame(original, assertThrows(CompletionException.class, result::join).getCause());
+      assertSame(original, handler.error.get());
+    }
+    fixture.finish();
+  }
+
+  @Test
+  void asyncImmediateSdkResponseKeepsPartialBatchApplication() throws Exception {
+    FaultRegistry faults = new FaultRegistry();
+    DynamoDbRequestRecorder recorder =
+        new DynamoDbRequestRecorder(
+            faults, new DynamoDbRequestTargets("journal", "snapshot", "head", "history"));
+    FaultRegistry.Fault fault =
+        faults.register(
+            1,
+            "retention-delete",
+            1,
+            FaultRegistry.Injection.REPLACE_REQUEST,
+            DynamoDbFaultEffects.unprocessedFirst(1));
+    FaultRegistry.Operation operation = faults.begin(1, true);
+    AtomicBoolean closed = new AtomicBoolean();
+    AtomicBoolean responseBeforeReturn = new AtomicBoolean();
+    ExecutionInterceptor observer =
+        new ExecutionInterceptor() {
+          @Override
+          public SdkResponse modifyResponse(
+              Context.ModifyResponse context, ExecutionAttributes attrs) {
+            responseBeforeReturn.set(true);
+            return context.response();
+          }
+        };
+    SdkAsyncHttpClient delegate =
+        new SdkAsyncHttpClient() {
+          @Override
+          public CompletableFuture<Void> execute(AsyncExecuteRequest request) {
+            HttpReply reply = new HttpReply(200, DynamoDbJson.object());
+            request.responseHandler().onHeaders(reply.headers());
+            request.responseHandler().onStream(AsyncRequestBody.fromBytes(reply.body()));
+            assertTrue(
+                responseBeforeReturn.get(), "SDK modifyResponse reached before execute return");
+            return CompletableFuture.completedFuture(null);
+          }
+
+          @Override
+          public void close() {
+            closed.set(true);
+          }
+        };
+    WriteRequest first =
+        WriteRequest.builder()
+            .deleteRequest(
+                DeleteRequest.builder()
+                    .key(
+                        Map.of(
+                            "aid",
+                            AttributeValue.fromS("User-A"),
+                            "skey",
+                            AttributeValue.fromN("1")))
+                    .build())
+            .build();
+    WriteRequest second =
+        WriteRequest.builder()
+            .deleteRequest(
+                DeleteRequest.builder()
+                    .key(
+                        Map.of(
+                            "aid",
+                            AttributeValue.fromS("User-A"),
+                            "skey",
+                            AttributeValue.fromN("2")))
+                    .build())
+            .build();
+    try (FaultAsyncHttpClient wrapper = new FaultAsyncHttpClient(delegate, recorder);
+        DynamoDbAsyncClient client =
+            DynamoDbTestClients.observedAsync(
+                URI.create("http://localhost:12345"), recorder, wrapper, observer)) {
+      BatchWriteItemResponse response =
+          client
+              .batchWriteItem(
+                  BatchWriteItemRequest.builder()
+                      .requestItems(Map.of("snapshot", List.of(first, second)))
+                      .build())
+              .get(10, TimeUnit.SECONDS);
+      recorder.requestsFinished(operation).get(10, TimeUnit.SECONDS);
+      DynamoDbRequestRecorder.Request observed = recorder.requests().get(0);
+      String status = faults.finish(operation).status;
+      System.out.println(
+          "Immediate SDK callback response="
+              + response
+              + " transmissions="
+              + observed.transmissions
+              + " applications="
+              + faults.applications(fault)
+              + " reservations="
+              + faults.reservations(fault)
+              + " pending="
+              + faults.pending(operation)
+              + " finish="
+              + status);
+      assertAll(
+          () -> assertEquals(List.of(first), response.unprocessedItems().get("snapshot")),
+          () -> assertEquals(1, observed.transmissions),
+          () ->
+              assertEquals(
+                  DynamoDbJson.sdk(List.of(second)),
+                  observed.transmitted.path("RequestItems").path("snapshot")),
+          () -> assertEquals(1, faults.applications(fault)),
+          () -> assertEquals(0, faults.reservations(fault)),
+          () -> assertEquals(0, faults.pending(operation)),
+          () -> assertEquals("passed", status));
+    }
+    assertTrue(closed.get());
   }
 
   private static final class Handler implements SdkAsyncHttpResponseHandler {

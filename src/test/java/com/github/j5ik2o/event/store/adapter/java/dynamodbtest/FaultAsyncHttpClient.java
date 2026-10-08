@@ -42,8 +42,8 @@ final class FaultAsyncHttpClient implements SdkAsyncHttpClient {
               return;
             }
             try {
-              recorder.transmitted(request.request(), bytes);
               CompletableFuture<Void> actual = delegate.execute(request);
+              recorder.transmitted(request.request(), bytes);
               pending.set(actual);
               if (result.isCancelled()) actual.cancel(true);
               actual.whenComplete(

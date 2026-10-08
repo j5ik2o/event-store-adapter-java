@@ -346,37 +346,52 @@ final class DynamoDbFaultEffects {
 
   static FaultRegistry.Effect readInterleave(
       DynamoDbClient admin, String headTable, Runnable commit) {
-    return new ResponseEffect() {
-      private Map<String, AttributeValue> captured;
+    return new ReadInterleave(admin, headTable, commit);
+  }
 
-      @Override
-      public void beforeTransmission(DynamoDbRequestRecorder.Request request) {
-        JsonNode keys = request.marshalled.path("RequestItems").path(headTable).path("Keys");
-        if (keys.size() != 1) throw new IllegalArgumentException("One head key is required");
-        captured =
-            admin
-                .getItem(
-                    GetItemRequest.builder()
-                        .tableName(headTable)
-                        .key(
-                            Map.of(
-                                "aid",
-                                AttributeValue.fromS(keys.get(0).path("aid").path("S").asText())))
-                        .consistentRead(true)
-                        .build())
-                .item();
-        commit.run();
-      }
+  static final class ReadInterleave extends ResponseEffect {
+    private final DynamoDbClient admin;
+    private final String headTable;
+    private final Runnable commit;
+    private Map<String, AttributeValue> captured;
 
-      @Override
-      public SdkResponse response(DynamoDbRequestRecorder.Request request, SdkResponse response) {
-        BatchGetItemResponse batch = (BatchGetItemResponse) response;
-        Map<String, List<Map<String, AttributeValue>>> replaced =
-            new LinkedHashMap<>(batch.responses());
-        replaced.put(headTable, captured.isEmpty() ? List.of() : List.of(captured));
-        return batch.toBuilder().responses(replaced).build();
-      }
-    };
+    private ReadInterleave(DynamoDbClient admin, String headTable, Runnable commit) {
+      this.admin = admin;
+      this.headTable = headTable;
+      this.commit = commit;
+    }
+
+    ReadInterleave forRequest() {
+      return new ReadInterleave(admin, headTable, commit);
+    }
+
+    @Override
+    public void beforeTransmission(DynamoDbRequestRecorder.Request request) {
+      JsonNode keys = request.marshalled.path("RequestItems").path(headTable).path("Keys");
+      if (keys.size() != 1) throw new IllegalArgumentException("One head key is required");
+      captured =
+          admin
+              .getItem(
+                  GetItemRequest.builder()
+                      .tableName(headTable)
+                      .key(
+                          Map.of(
+                              "aid",
+                              AttributeValue.fromS(keys.get(0).path("aid").path("S").asText())))
+                      .consistentRead(true)
+                      .build())
+              .item();
+      commit.run();
+    }
+
+    @Override
+    public SdkResponse response(DynamoDbRequestRecorder.Request request, SdkResponse response) {
+      BatchGetItemResponse batch = (BatchGetItemResponse) response;
+      Map<String, List<Map<String, AttributeValue>>> replaced =
+          new LinkedHashMap<>(batch.responses());
+      replaced.put(headTable, captured.isEmpty() ? List.of() : List.of(captured));
+      return batch.toBuilder().responses(replaced).build();
+    }
   }
 
   /** A plan starts once; later pages validate the real cursor without consuming another fault. */
@@ -494,13 +509,10 @@ final class DynamoDbFaultEffects {
                 "active_history_seq_nr",
                 stored.get("active_history_seq_nr")));
       }
-      QueryResponse response =
-          QueryResponse.builder()
-              .items(items)
-              .count(items.size())
-              .scannedCount(items.size())
-              .lastEvaluatedKey(next + 1 == pages.size() ? Map.of() : items.get(items.size() - 1))
-              .build();
+      QueryResponse.Builder builder =
+          QueryResponse.builder().items(items).count(items.size()).scannedCount(items.size());
+      if (next + 1 < pages.size()) builder.lastEvaluatedKey(items.get(items.size() - 1));
+      QueryResponse response = builder.build();
       lastEvaluatedKey = response.lastEvaluatedKey();
       next++;
       return response;
