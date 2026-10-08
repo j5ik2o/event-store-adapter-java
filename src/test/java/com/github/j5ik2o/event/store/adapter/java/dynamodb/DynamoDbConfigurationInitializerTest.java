@@ -43,6 +43,10 @@ class DynamoDbConfigurationInitializerTest {
         return response;
       }
 
+      public QueryResponse query(QueryRequest request) {
+        return QueryResponse.builder().build();
+      }
+
       public String serviceName() {
         return "dynamodb";
       }
@@ -57,6 +61,10 @@ class DynamoDbConfigurationInitializerTest {
     return new DynamoDbAsyncClient() {
       public CompletableFuture<BatchGetItemResponse> batchGetItem(BatchGetItemRequest request) {
         return CompletableFuture.completedFuture(response);
+      }
+
+      public CompletableFuture<QueryResponse> query(QueryRequest request) {
+        return CompletableFuture.completedFuture(QueryResponse.builder().build());
       }
 
       public String serviceName() {
@@ -85,12 +93,11 @@ class DynamoDbConfigurationInitializerTest {
     assertThrows(
         UnsupportedOperationException.class, () -> sync.persistEventAndSnapshot(null, null));
     assertThrows(UnsupportedOperationException.class, () -> sync.getLatestSnapshotById(null));
-    assertThrows(UnsupportedOperationException.class, () -> sync.getEventsByIdSinceSeqNr(null, 0));
+    AggregateId id = AggregateId.of("A", "empty");
+    assertTrue(sync.getEventsByIdSinceSeqNr(id, 0).isEmpty());
+    assertTrue(async.getEventsByIdSinceSeqNr(id, 0).join().isEmpty());
     for (CompletableFuture<?> future :
-        List.of(
-            async.persistEventAndSnapshot(null, null),
-            async.getLatestSnapshotById(null),
-            async.getEventsByIdSinceSeqNr(null, 0))) {
+        List.of(async.persistEventAndSnapshot(null, null), async.getLatestSnapshotById(null))) {
       assertInstanceOf(
           UnsupportedOperationException.class,
           EventStoreExceptions.unwrap(assertThrows(CompletionException.class, future::join)));

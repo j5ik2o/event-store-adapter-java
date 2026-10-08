@@ -1,16 +1,19 @@
 package com.github.j5ik2o.event.store.adapter.java.dynamodb;
 
 import com.github.j5ik2o.event.store.adapter.java.core.*;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
+import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsRequest;
 
 /**
- * Validates configuration and writes events using caller-owned SDK clients. /
- * 呼出し側が所有するSDKで生成時照合とイベント書込みを行います。
+ * Validates configuration, writes and reads events using caller-owned SDK clients. /
+ * 呼出し側が所有するSDKで生成時照合とイベントの書込み・読取りを行います。
  */
 public final class DynamoDbEventStore {
   private DynamoDbEventStore() {}
@@ -93,7 +96,18 @@ public final class DynamoDbEventStore {
     }
 
     public List<EventEnvelope<P>> getEventsByIdSinceSeqNr(AggregateId id, long seqNr) {
-      throw unavailable();
+      QueryRequest request = DynamoDbEventRead.prepare(id, seqNr, tables);
+      List<EventEnvelope<P>> events = new ArrayList<>();
+      try {
+        while (true) {
+          QueryResponse response = client.query(request);
+          DynamoDbEventRead.append(response, serializer, events);
+          if (response.lastEvaluatedKey().isEmpty()) return List.copyOf(events);
+          request = request.toBuilder().exclusiveStartKey(response.lastEvaluatedKey()).build();
+        }
+      } catch (RuntimeException failure) {
+        throw DynamoDbEventRead.classify(failure);
+      }
     }
   }
 
@@ -138,7 +152,47 @@ public final class DynamoDbEventStore {
 
     public CompletableFuture<List<EventEnvelope<P>>> getEventsByIdSinceSeqNr(
         AggregateId id, long seqNr) {
-      return CompletableFuture.failedFuture(unavailable());
+      QueryRequest request;
+      try {
+        request = DynamoDbEventRead.prepare(id, seqNr, tables);
+      } catch (RuntimeException failure) {
+        return CompletableFuture.failedFuture(failure);
+      }
+      CompletableFuture<List<EventEnvelope<P>>> result = new CompletableFuture<>();
+      readPage(request, new ArrayList<>(), result);
+      return result;
+    }
+
+    private void readPage(
+        QueryRequest request,
+        List<EventEnvelope<P>> events,
+        CompletableFuture<List<EventEnvelope<P>>> result) {
+      try {
+        client
+            .query(request)
+            .whenComplete(
+                (response, failure) -> {
+                  if (failure != null) {
+                    result.completeExceptionally(DynamoDbEventRead.classify(failure));
+                    return;
+                  }
+                  try {
+                    DynamoDbEventRead.append(response, serializer, events);
+                    if (response.lastEvaluatedKey().isEmpty()) result.complete(List.copyOf(events));
+                    else
+                      readPage(
+                          request.toBuilder()
+                              .exclusiveStartKey(response.lastEvaluatedKey())
+                              .build(),
+                          events,
+                          result);
+                  } catch (RuntimeException invalidResponse) {
+                    result.completeExceptionally(DynamoDbEventRead.classify(invalidResponse));
+                  }
+                });
+      } catch (RuntimeException failure) {
+        result.completeExceptionally(DynamoDbEventRead.classify(failure));
+      }
     }
   }
 }
