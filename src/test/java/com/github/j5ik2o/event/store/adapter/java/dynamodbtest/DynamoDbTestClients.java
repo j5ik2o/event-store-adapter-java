@@ -42,19 +42,29 @@ final class DynamoDbTestClients {
   }
 
   static NettyNioAsyncHttpClient.Builder asyncHttp() {
-    return NettyNioAsyncHttpClient.builder()
-        .maxConcurrency(8)
-        .eventLoopGroupBuilder(SdkEventLoopGroup.builder().numberOfThreads(2));
+    return asyncHttp(null);
+  }
+
+  static NettyNioAsyncHttpClient.Builder asyncHttp(SdkEventLoopGroup borrowedEventLoop) {
+    NettyNioAsyncHttpClient.Builder builder = NettyNioAsyncHttpClient.builder().maxConcurrency(8);
+    return borrowedEventLoop == null
+        ? builder.eventLoopGroupBuilder(SdkEventLoopGroup.builder().numberOfThreads(2))
+        : builder.eventLoopGroup(borrowedEventLoop);
   }
 
   static DynamoDbAsyncClient adminAsync(URI endpoint, ExecutionInterceptor... interceptors) {
+    return adminAsync(endpoint, null, interceptors);
+  }
+
+  static DynamoDbAsyncClient adminAsync(
+      URI endpoint, SdkEventLoopGroup borrowedEventLoop, ExecutionInterceptor... interceptors) {
     return DynamoDbAsyncClient.builder()
         .endpointOverride(endpoint)
         .region(REGION)
         .credentialsProvider(CREDENTIALS)
         .overrideConfiguration(
             overrides().executionInterceptors(Arrays.asList(interceptors)).build())
-        .httpClientBuilder(asyncHttp())
+        .httpClientBuilder(asyncHttp(borrowedEventLoop))
         .build();
   }
 

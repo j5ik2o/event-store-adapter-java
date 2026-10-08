@@ -158,7 +158,7 @@ class DynamoDbConfigurationBoundaryTest {
     for (boolean exhausted : List.of(false, true)) {
       for (boolean async : List.of(false, true)) {
         ObjectNode c = scenario("dynamodb-config-create-race");
-        try (DynamoDbTestContext context = new DynamoDbTestContext(fixture.endpoint())) {
+        try (DynamoDbTestContext context = fixture.createContext()) {
           DynamoDbConfigurationTables.create(context, RetentionPolicy.none());
           List<FaultRegistry.Fault> registered = register(context, c.path("faults"));
           FaultRegistry.Effect readPlan =
@@ -285,7 +285,7 @@ class DynamoDbConfigurationBoundaryTest {
 
   @Test
   void duplicateTableNamesAreRejectedBeforeEitherSdkEntryCommunicates() {
-    DynamoDbTestContext c = new DynamoDbTestContext(fixture.endpoint());
+    DynamoDbTestContext c = fixture.createContext();
     try {
       DynamoDbConfigurationTables.create(c, RetentionPolicy.none());
       Map<String, Map<String, AttributeValue>> before = stored(c);
@@ -320,7 +320,7 @@ class DynamoDbConfigurationBoundaryTest {
 
   @Test
   void publicFactoriesCommunicateWithBothSdkClientsOnTheSameRealTables() {
-    DynamoDbTestContext c = new DynamoDbTestContext(fixture.endpoint());
+    DynamoDbTestContext c = fixture.createContext();
     try {
       DynamoDbConfigurationTables.create(c, RetentionPolicy.none());
       DynamoDbTableConfig tables = DynamoDbConfigurationTables.config(c).build();
@@ -349,12 +349,27 @@ class DynamoDbConfigurationBoundaryTest {
     } finally {
       close(c);
     }
+    // Closing one scene must leave both async communication paths usable in the next scene.
+    try (DynamoDbTestContext next = fixture.createContext()) {
+      assertNotEquals(c.journal, next.journal);
+      DynamoDbConfigurationTables.create(next, RetentionPolicy.none());
+      for (Map<String, AttributeValue> item : stored(next).values()) assertTrue(item.isEmpty());
+      assertFalse(next.adminAsync.listTables().join().tableNames().isEmpty());
+      FaultRegistry.Operation operation = next.faults.begin(0, false);
+      assertNotNull(
+          DynamoDbEventStore.createAsync(
+                  next.async, DynamoDbConfigurationTables.config(next).build(), storeConfig())
+              .join());
+      next.recorder.requestsFinished(operation).join();
+      assertEquals(0, next.faults.pending(operation));
+      assertEquals("passed", next.faults.finish(operation).status);
+    }
   }
 
   @Test
   void realConnectionFailureIsStorageAndHasOneTerminalRequestPerEntry() {
     for (boolean async : List.of(false, true)) {
-      DynamoDbTestContext c = new DynamoDbTestContext(URI.create("http://127.0.0.1:1"));
+      DynamoDbTestContext c = fixture.createContext(URI.create("http://127.0.0.1:1"));
       try {
         FaultRegistry.Operation operation = c.faults.begin(0, false);
         DynamoDbTableConfig tables = DynamoDbConfigurationTables.config(c).build();
@@ -383,7 +398,7 @@ class DynamoDbConfigurationBoundaryTest {
 
   @Test
   void asyncGenerationRemainsPendingUntilItsWaitCompletesAndKeepsClientBorrowed() throws Exception {
-    DynamoDbTestContext c = new DynamoDbTestContext(fixture.endpoint());
+    DynamoDbTestContext c = fixture.createContext();
     CompletableFuture<Void> gate = new CompletableFuture<>();
     CompletableFuture<Long> entered = new CompletableFuture<>();
     CompletableFuture<AsyncEventStore<String, String>> generation = null;

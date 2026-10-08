@@ -9,23 +9,90 @@ import com.github.j5ik2o.event.store.adapter.java.core.*;
 import com.github.j5ik2o.event.store.adapter.java.dynamodb.*;
 import java.math.BigDecimal;
 import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.extension.BeforeAllCallback;
 import org.junit.jupiter.api.extension.ExtensionContext;
+import software.amazon.awssdk.http.nio.netty.SdkEventLoopGroup;
 import software.amazon.awssdk.services.dynamodb.model.*;
 
 /** Public test bridge; all resource and fault machinery remains in the test package. */
 public final class DynamoDbConfigurationFixture implements BeforeAllCallback {
   private final DynamoDbLocalExtension local = new DynamoDbLocalExtension();
+  private CommunicationResources resources;
 
   @Override
   public void beforeAll(ExtensionContext context) {
     local.beforeAll(context);
+    resources =
+        context
+            .getStore(ExtensionContext.Namespace.create(DynamoDbConfigurationFixture.class))
+            .getOrComputeIfAbsent(
+                CommunicationResources.class,
+                key -> new CommunicationResources(context.getRequiredTestClass().getName()),
+                CommunicationResources.class);
   }
 
   URI endpoint() {
     return local.endpoint();
+  }
+
+  DynamoDbTestContext createContext() {
+    return createContext(endpoint());
+  }
+
+  DynamoDbTestContext createContext(URI endpoint) {
+    long started = System.nanoTime();
+    DynamoDbTestContext context = new DynamoDbTestContext(endpoint, resources.eventLoop);
+    ObjectNode observation = DynamoDbJson.object();
+    observation.put("endpoint", endpoint.toString());
+    observation.put("context_construct_ns", System.nanoTime() - started);
+    observation.set(
+        "tables", DynamoDbJson.mapper().valueToTree(DynamoDbConfigurationTables.names(context)));
+    resources.contexts.put(context, observation);
+    return context;
+  }
+
+  /** The class Store closes this after all scene-owned SDK clients and HTTP pools have closed. */
+  private static final class CommunicationResources
+      implements ExtensionContext.Store.CloseableResource {
+    final SdkEventLoopGroup eventLoop = SdkEventLoopGroup.builder().numberOfThreads(2).build();
+    final Map<DynamoDbTestContext, ObjectNode> contexts = new LinkedHashMap<>();
+    private final String owner;
+
+    CommunicationResources(String owner) {
+      this.owner = owner;
+    }
+
+    @Override
+    public void close() throws Exception {
+      ObjectNode observation = DynamoDbJson.object().put("owner", owner);
+      ArrayNode scenes = observation.putArray("contexts");
+      try {
+        for (Map.Entry<DynamoDbTestContext, ObjectNode> scene : contexts.entrySet()) {
+          DynamoDbTestContext context = scene.getKey();
+          scenes.add(scene.getValue().put("resources_closed", context.closed()));
+          assertTrue(context.closed(), "Scene resources must close before the event loop");
+          assertNull(context.finish(null).join(), "Scene termination must succeed");
+        }
+      } finally {
+        long started = System.nanoTime();
+        io.netty.util.concurrent.Future<?> termination =
+            eventLoop.eventLoopGroup().shutdownGracefully(2, 15, TimeUnit.SECONDS);
+        termination.awaitUninterruptibly();
+        observation.put("event_loop_shutdown_ns", System.nanoTime() - started);
+        observation.put("termination_future_success", termination.isSuccess());
+        observation.put("event_loop_terminated", eventLoop.eventLoopGroup().isTerminated());
+        Path directory = Path.of("build/reports/dynamodb-configuration-resources");
+        Files.createDirectories(directory);
+        Files.writeString(directory.resolve(owner + ".json"), observation.toPrettyString());
+        assertTrue(termination.isSuccess(), () -> String.valueOf(termination.cause()));
+        assertTrue(eventLoop.eventLoopGroup().isTerminated());
+      }
+    }
   }
 
   static EventStoreConfig<String, String> storeConfig() {
@@ -55,12 +122,18 @@ public final class DynamoDbConfigurationFixture implements BeforeAllCallback {
   }
 
   private void configuration(JsonNode scenario, boolean async, ObjectNode actual) {
-    DynamoDbTestContext c = new DynamoDbTestContext(endpoint());
+    DynamoDbTestContext c = createContext();
+    ObjectNode timing = resources.contexts.get(c);
+    timing.put("case_id", scenario.path("id").asText());
+    timing.put("sdk_path", async ? "async" : "sync");
     try {
+      long preparing = System.nanoTime();
       RetentionPolicy policy = retention(scenario.path("store"));
       DynamoDbConfigurationTables.create(c, policy);
       install(c, scenario.path("seed").path("items"));
       Map<String, Map<String, AttributeValue>> before = stored(c);
+      timing.put("table_prepare_ns", System.nanoTime() - preparing);
+      timing.set("initial_items", DynamoDbJson.sdk(before));
       List<FaultRegistry.Fault> faults = register(c, scenario.path("faults"));
       DynamoDbTableConfig.Builder builder =
           DynamoDbConfigurationTables.config(c).retentionPolicy(policy);
@@ -71,6 +144,7 @@ public final class DynamoDbConfigurationFixture implements BeforeAllCallback {
       FaultRegistry.Operation operation = c.faults.begin(0, false);
       Throwable failure = null;
       Object store = null;
+      long requesting = System.nanoTime();
       try {
         if (async)
           store =
@@ -88,6 +162,7 @@ public final class DynamoDbConfigurationFixture implements BeforeAllCallback {
         failure = EventStoreExceptions.unwrap(error);
       }
       c.recorder.requestsFinished(operation).join();
+      timing.put("request_ns", System.nanoTime() - requesting);
       actual.put("result", failure == null ? "success" : category(failure));
       actual.set("waits_ms", DynamoDbJson.mapper().valueToTree(waits));
       List<DynamoDbRequestRecorder.Request> requests = c.recorder.requests();
@@ -136,9 +211,11 @@ public final class DynamoDbConfigurationFixture implements BeforeAllCallback {
       assertEquals("passed", c.faults.finish(borrowed).status);
       actual.put("borrowed_clients_usable", true);
     } finally {
+      long closing = System.nanoTime();
       try {
         close(c);
       } finally {
+        timing.put("context_close_ns", System.nanoTime() - closing);
         actual.put("resources_closed", c.closed());
       }
     }
@@ -504,16 +581,22 @@ public final class DynamoDbConfigurationFixture implements BeforeAllCallback {
     for (RetentionPolicy policy :
         List.of(RetentionPolicy.none(), RetentionPolicy.delete(2), RetentionPolicy.ttl(2, 60))) {
       String mode = policy.mode().map(m -> m.name().toLowerCase(Locale.ROOT)).orElse("none");
-      DynamoDbTestContext c = new DynamoDbTestContext(endpoint());
+      DynamoDbTestContext c = createContext();
+      ObjectNode timing = resources.contexts.get(c);
+      timing.put("layout_mode", mode);
       ObjectNode observed = actual.putObject(mode);
       try {
+        long preparing = System.nanoTime();
         DynamoDbConfigurationTables.create(c, policy);
+        timing.put("table_prepare_ns", System.nanoTime() - preparing);
         FaultRegistry.Operation operation = c.faults.begin(0, false);
+        long requesting = System.nanoTime();
         DynamoDbEventStore.create(
             c.client,
             DynamoDbConfigurationTables.config(c).retentionPolicy(policy).build(),
             storeConfig());
         c.recorder.requestsFinished(operation).join();
+        timing.put("request_ns", System.nanoTime() - requesting);
         observed.set("requests", requestsJson(c.recorder.requests()));
         Map<String, Map<String, AttributeValue>> items = stored(c);
         observed.set("configuration_items", DynamoDbJson.sdk(items));
@@ -580,9 +663,11 @@ public final class DynamoDbConfigurationFixture implements BeforeAllCallback {
         }
         assertEquals(3, checked);
       } finally {
+        long closing = System.nanoTime();
         try {
           close(c);
         } finally {
+          timing.put("context_close_ns", System.nanoTime() - closing);
           observed.put("resources_closed", c.closed());
         }
       }
