@@ -67,8 +67,15 @@ class DynamoDbEventStoreTest {
             StorageException.class, () -> store.persistEvent(DynamoDbEventWriteTest.event(1, 1)));
     assertSame(cause, failure.getCause());
     assertFalse(failure.getMessage().contains("SDK transport detail"));
+    StorageException snapshotFailure =
+        assertThrows(
+            StorageException.class,
+            () ->
+                store.persistEventAndSnapshot(
+                    DynamoDbEventWriteTest.event(1, 1), DynamoDbEventWriteTest.snapshot(1)));
+    assertSame(cause, snapshotFailure.getCause());
     assertEquals(1, reads.get());
-    assertEquals(1, writes.get());
+    assertEquals(2, writes.get());
   }
 
   @Test
@@ -110,8 +117,16 @@ class DynamoDbEventStoreTest {
           EventStoreExceptions.unwrap(assertThrows(CompletionException.class, result::join));
       assertSame(callbackFailure, failure);
       assertSame(cause, failure.getCause());
+      CompletableFuture<Void> snapshotResult =
+          assertDoesNotThrow(
+              () ->
+                  store.persistEventAndSnapshot(
+                      DynamoDbEventWriteTest.event(1, 1), DynamoDbEventWriteTest.snapshot(1)));
+      Throwable snapshotCallbackFailure = snapshotResult.handle((ignored, error) -> error).join();
+      assertInstanceOf(StorageException.class, snapshotCallbackFailure);
+      assertSame(cause, snapshotCallbackFailure.getCause());
       assertEquals(1, reads.get());
-      assertEquals(1, writes.get());
+      assertEquals(2, writes.get());
     }
   }
 
@@ -144,11 +159,95 @@ class DynamoDbEventStoreTest {
     CompletableFuture<Void> invalid = assertDoesNotThrow(() -> store.persistEvent(null));
     assertInstanceOf(
         ContractViolationException.class, invalid.handle((ignored, error) -> error).join());
+    for (CompletableFuture<Void> rejected :
+        List.of(
+            store.persistEventAndSnapshot(null, DynamoDbEventWriteTest.snapshot(1)),
+            store.persistEventAndSnapshot(DynamoDbEventWriteTest.event(1, 1), null),
+            store.persistEventAndSnapshot(
+                DynamoDbEventWriteTest.event(1, 1), DynamoDbEventWriteTest.snapshot(2)))) {
+      assertInstanceOf(
+          ContractViolationException.class, rejected.handle((ignored, error) -> error).join());
+    }
     assertEquals(0, writes.get());
     CompletableFuture<Void> result = store.persistEvent(DynamoDbEventWriteTest.event(1, 1));
+    CompletableFuture<Void> snapshotResult =
+        store.persistEventAndSnapshot(
+            DynamoDbEventWriteTest.event(1, 1), DynamoDbEventWriteTest.snapshot(1));
     assertFalse(result.isDone());
+    assertFalse(snapshotResult.isDone());
     sdk.complete(TransactWriteItemsResponse.builder().build());
     assertNull(result.join());
-    assertEquals(1, writes.get());
+    assertNull(snapshotResult.join());
+    assertEquals(2, writes.get());
+  }
+
+  @Test
+  void publicGenerationWiresDistinctEventAndSnapshotTypesIntoBothStores() {
+    List<TransactWriteItemsRequest> requests = new ArrayList<>();
+    EventStoreConfig<String, Integer> config =
+        EventStoreConfig.<String, Integer>builder()
+            .payloadSerializer(JsonPayloadSerializer.of(String.class))
+            .snapshotSerializer(JsonPayloadSerializer.of(Integer.class))
+            .build();
+    DynamoDbClient client =
+        new DynamoDbClient() {
+          public BatchGetItemResponse batchGetItem(BatchGetItemRequest request) {
+            return initialized();
+          }
+
+          public TransactWriteItemsResponse transactWriteItems(TransactWriteItemsRequest request) {
+            requests.add(request);
+            return TransactWriteItemsResponse.builder().build();
+          }
+
+          public String serviceName() {
+            return "dynamodb";
+          }
+
+          public void close() {
+            fail("Borrowed client must remain open");
+          }
+        };
+    DynamoDbAsyncClient asyncClient =
+        new DynamoDbAsyncClient() {
+          public CompletableFuture<BatchGetItemResponse> batchGetItem(BatchGetItemRequest request) {
+            return CompletableFuture.completedFuture(initialized());
+          }
+
+          public CompletableFuture<TransactWriteItemsResponse> transactWriteItems(
+              TransactWriteItemsRequest request) {
+            requests.add(request);
+            return CompletableFuture.completedFuture(TransactWriteItemsResponse.builder().build());
+          }
+
+          public String serviceName() {
+            return "dynamodb";
+          }
+
+          public void close() {
+            fail("Borrowed client must remain open");
+          }
+        };
+    SnapshotEnvelope<Integer> snapshot =
+        SnapshotEnvelope.<Integer>builder()
+            .aggregate(42)
+            .seqNr(1)
+            .manifest("integer-state")
+            .build();
+    DynamoDbEventStore.create(client, TABLES, config)
+        .persistEventAndSnapshot(DynamoDbEventWriteTest.event(1, 1), snapshot);
+    DynamoDbEventStore.createAsync(asyncClient, TABLES, config)
+        .join()
+        .persistEventAndSnapshot(DynamoDbEventWriteTest.event(1, 1), snapshot)
+        .join();
+    assertEquals(2, requests.size());
+    for (TransactWriteItemsRequest request : requests) {
+      assertEquals(3, request.transactItems().size());
+      Map<String, AttributeValue> event = request.transactItems().get(0).put().item();
+      Map<String, AttributeValue> current = request.transactItems().get(2).put().item();
+      assertEquals("\"payload\"", event.get("payload").b().asUtf8String());
+      assertEquals("42", current.get("payload").b().asUtf8String());
+      assertEquals("integer-state", current.get("manifest").s());
+    }
   }
 }

@@ -40,6 +40,10 @@ public final class DynamoDbConfigurationFixture implements BeforeAllCallback {
     return local.endpoint();
   }
 
+  SdkEventLoopGroup eventLoop() {
+    return resources.eventLoop;
+  }
+
   DynamoDbTestContext createContext() {
     return createContext(endpoint());
   }
