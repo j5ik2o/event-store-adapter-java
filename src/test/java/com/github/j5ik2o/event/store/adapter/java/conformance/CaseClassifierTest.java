@@ -91,7 +91,7 @@ class CaseClassifierTest {
   }
 
   @Test
-  void requiredListAddsOnlyExecutableMemoryCasesAndKeepsDynamoDbFifteen() throws IOException {
+  void requiredListKeepsMemoryAndAddsOnlyConfigurationToDynamoDb() throws IOException {
     Map<Backend, Set<String>> required = RequiredCases.load();
 
     Set<String> memory =
@@ -101,7 +101,16 @@ class CaseClassifierTest {
             .collect(Collectors.toSet());
     assertEquals(60, memory.size());
     assertEquals(memory, required.get(Backend.MEMORY));
-    assertEquals(EXECUTABLE_CASE_IDS, required.get(Backend.DYNAMODB));
+    Set<String> dynamodb = new java.util.HashSet<>(EXECUTABLE_CASE_IDS);
+    Set<String> configuration =
+        data.cases().stream()
+            .filter(c -> c.file().equals("dynamodb/configuration.json"))
+            .map(ConformanceCase::id)
+            .collect(Collectors.toSet());
+    assertEquals(14, configuration.size());
+    dynamodb.addAll(configuration);
+    assertEquals(dynamodb, required.get(Backend.DYNAMODB));
+    assertFalse(required.get(Backend.DYNAMODB).contains("dynamodb-layout-v1"));
   }
 
   @Test

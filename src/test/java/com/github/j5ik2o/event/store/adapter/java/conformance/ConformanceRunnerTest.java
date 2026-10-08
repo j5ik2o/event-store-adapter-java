@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 import static org.junit.jupiter.api.DynamicContainer.dynamicContainer;
 import static org.junit.jupiter.api.DynamicTest.dynamicTest;
 
+import com.github.j5ik2o.event.store.adapter.java.dynamodbtest.DynamoDbConfigurationFixture;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -15,8 +16,11 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DynamicNode;
 import org.junit.jupiter.api.TestFactory;
+import org.junit.jupiter.api.extension.RegisterExtension;
 
 class ConformanceRunnerTest {
+  @RegisterExtension
+  static final DynamoDbConfigurationFixture dynamodb = new DynamoDbConfigurationFixture();
 
   @TestFactory
   Stream<DynamicNode> conformance() throws IOException {
@@ -27,7 +31,10 @@ class ConformanceRunnerTest {
     List<CaseResult> results = new ArrayList<>();
     for (ConformanceCase c : data.cases()) {
       for (Backend backend : Backend.values()) {
-        results.add(CaseClassifier.classify(c, backend));
+        results.add(
+            backend == Backend.DYNAMODB && DynamoDbCaseRunner.supports(c)
+                ? DynamoDbCaseRunner.run(c, dynamodb)
+                : CaseClassifier.classify(c, backend));
       }
     }
 
