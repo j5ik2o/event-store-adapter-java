@@ -27,6 +27,8 @@ dependencies {
     testImplementation("org.testcontainers:testcontainers:2.0.5")
     testImplementation("org.testcontainers:testcontainers-junit-jupiter:2.0.5")
     testImplementation("org.testcontainers:testcontainers-localstack:2.0.5")
+    testImplementation("software.amazon.awssdk:apache5-client:2.55.12")
+    testImplementation("software.amazon.awssdk:netty-nio-client:2.55.12")
 
     testImplementation("de.huxhorn.sulky:de.huxhorn.sulky.ulid:8.3.0")
     testImplementation("com.networknt:json-schema-validator:2.0.8")
