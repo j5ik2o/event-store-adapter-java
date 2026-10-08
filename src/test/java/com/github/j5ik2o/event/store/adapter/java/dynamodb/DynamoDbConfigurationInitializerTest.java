@@ -77,14 +77,17 @@ class DynamoDbConfigurationInitializerTest {
     EventStore<String, String> sync = DynamoDbEventStore.create(client(response), tables, config());
     AsyncEventStore<String, String> async =
         DynamoDbEventStore.createAsync(async(response), tables, config()).join();
-    assertThrows(UnsupportedOperationException.class, () -> sync.persistEvent(null));
+    assertThrows(ContractViolationException.class, () -> sync.persistEvent(null));
+    assertInstanceOf(
+        ContractViolationException.class,
+        EventStoreExceptions.unwrap(
+            assertThrows(CompletionException.class, () -> async.persistEvent(null).join())));
     assertThrows(
         UnsupportedOperationException.class, () -> sync.persistEventAndSnapshot(null, null));
     assertThrows(UnsupportedOperationException.class, () -> sync.getLatestSnapshotById(null));
     assertThrows(UnsupportedOperationException.class, () -> sync.getEventsByIdSinceSeqNr(null, 0));
     for (CompletableFuture<?> future :
         List.of(
-            async.persistEvent(null),
             async.persistEventAndSnapshot(null, null),
             async.getLatestSnapshotById(null),
             async.getEventsByIdSinceSeqNr(null, 0))) {
