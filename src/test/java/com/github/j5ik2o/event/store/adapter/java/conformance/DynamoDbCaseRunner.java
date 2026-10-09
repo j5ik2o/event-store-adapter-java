@@ -4,14 +4,29 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.j5ik2o.event.store.adapter.java.dynamodbtest.DynamoDbConfigurationFixture;
 import com.github.j5ik2o.event.store.adapter.java.dynamodbtest.DynamoDbEventReadFixture;
 import com.github.j5ik2o.event.store.adapter.java.dynamodbtest.DynamoDbSnapshotReadFixture;
+import com.github.j5ik2o.event.store.adapter.java.dynamodbtest.DynamoDbSnapshotRetentionFixture;
 import java.util.Set;
 
-/** Connects configuration, partial layout and verified read scenarios to real Local. */
+/** Connects configuration, partial layout, verified reads and DELETE retention to real Local. */
 final class DynamoDbCaseRunner {
   private DynamoDbCaseRunner() {}
 
   private static final Set<String> READ_CASE_IDS =
       Set.of("core-time-roundtrip-min", "core-time-roundtrip-max", "core-json-root-values");
+
+  static final Set<String> RETENTION_CASE_IDS =
+      Set.of(
+          "core-retention-zero",
+          "core-retention-delete-1",
+          "core-retention-delete-2",
+          "core-retention-default-current-only",
+          "core-retention-failure-after-commit",
+          "core-retention-query-failure",
+          "dynamodb-retention-delete-paginated-batch",
+          "dynamodb-retention-gsi-missing-new",
+          "dynamodb-retention-gsi-deduplicate",
+          "dynamodb-retention-event-only",
+          "dynamodb-retention-failure-delete");
 
   static final Set<String> SNAPSHOT_CASE_IDS =
       Set.of(
@@ -50,7 +65,8 @@ final class DynamoDbCaseRunner {
     return c.file().equals("dynamodb/configuration.json")
         || c.file().equals("dynamodb/layout.json")
         || READ_CASE_IDS.contains(c.id())
-        || SNAPSHOT_CASE_IDS.contains(c.id());
+        || SNAPSHOT_CASE_IDS.contains(c.id())
+        || RETENTION_CASE_IDS.contains(c.id());
   }
 
   static CaseResult run(ConformanceCase c, DynamoDbConfigurationFixture fixture) {
@@ -58,8 +74,12 @@ final class DynamoDbCaseRunner {
     ObjectNode actual = ConformanceJson.mapper().createObjectNode();
     try {
       boolean layout = c.format().equals("layout");
-      if (READ_CASE_IDS.contains(c.id()) || SNAPSHOT_CASE_IDS.contains(c.id())) {
-        if (SNAPSHOT_CASE_IDS.contains(c.id()))
+      if (READ_CASE_IDS.contains(c.id())
+          || SNAPSHOT_CASE_IDS.contains(c.id())
+          || RETENTION_CASE_IDS.contains(c.id())) {
+        if (RETENTION_CASE_IDS.contains(c.id()))
+          new DynamoDbSnapshotRetentionFixture(fixture).execute(c.materialized(), actual);
+        else if (SNAPSHOT_CASE_IDS.contains(c.id()))
           new DynamoDbSnapshotReadFixture(fixture).execute(c.materialized(), actual);
         else new DynamoDbEventReadFixture(fixture).execute(c.materialized(), actual);
         if (actual.has("unsupported"))

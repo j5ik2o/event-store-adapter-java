@@ -75,6 +75,7 @@ public final class DynamoDbConfigurationFixture implements BeforeAllCallback {
     public void close() throws Exception {
       ObjectNode observation = DynamoDbJson.object().put("owner", owner);
       ArrayNode scenes = observation.putArray("contexts");
+      boolean contextsTerminatedSuccessfully = false;
       try {
         for (Map.Entry<DynamoDbTestContext, ObjectNode> scene : contexts.entrySet()) {
           DynamoDbTestContext context = scene.getKey();
@@ -82,10 +83,14 @@ public final class DynamoDbConfigurationFixture implements BeforeAllCallback {
           assertTrue(context.closed(), "Scene resources must close before the event loop");
           assertNull(context.finish(null).join(), "Scene termination must succeed");
         }
+        contextsTerminatedSuccessfully = true;
       } finally {
+        long quietPeriodSeconds = contextsTerminatedSuccessfully ? 0 : 2;
+        observation.put("contexts_terminated_successfully", contextsTerminatedSuccessfully);
+        observation.put("event_loop_quiet_period_seconds", quietPeriodSeconds);
         long started = System.nanoTime();
         io.netty.util.concurrent.Future<?> termination =
-            eventLoop.eventLoopGroup().shutdownGracefully(2, 15, TimeUnit.SECONDS);
+            eventLoop.eventLoopGroup().shutdownGracefully(quietPeriodSeconds, 15, TimeUnit.SECONDS);
         termination.awaitUninterruptibly();
         observation.put("event_loop_shutdown_ns", System.nanoTime() - started);
         observation.put("termination_future_success", termination.isSuccess());
