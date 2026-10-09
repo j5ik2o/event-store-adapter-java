@@ -33,6 +33,9 @@ final class DynamoDbRequestRecorder implements ExecutionInterceptor {
     final int httpAttempts;
     final int transmissions;
     final JsonNode transmitted;
+    final JsonNode originalResponse;
+    final JsonNode effectiveResponse;
+    final Throwable failure;
 
     Request(State state) {
       id = state.id;
@@ -45,6 +48,10 @@ final class DynamoDbRequestRecorder implements ExecutionInterceptor {
       httpAttempts = state.httpAttempts;
       transmissions = state.transmissions;
       transmitted = state.transmitted == null ? null : state.transmitted.deepCopy();
+      originalResponse = state.originalResponse == null ? null : state.originalResponse.deepCopy();
+      effectiveResponse =
+          state.effectiveResponse == null ? null : state.effectiveResponse.deepCopy();
+      failure = state.failure;
     }
   }
 
@@ -56,6 +63,9 @@ final class DynamoDbRequestRecorder implements ExecutionInterceptor {
     JsonNode original;
     JsonNode marshalled;
     JsonNode transmitted;
+    JsonNode originalResponse;
+    JsonNode effectiveResponse;
+    Throwable failure;
     FaultRegistry.Selection selection;
     FaultRegistry.Effect effect;
     FaultRegistry.Selection continuation;
@@ -183,6 +193,13 @@ final class DynamoDbRequestRecorder implements ExecutionInterceptor {
   @Override
   public SdkResponse modifyResponse(Context.ModifyResponse context, ExecutionAttributes attrs) {
     State state = attrs.getAttribute(STATE);
+    state.originalResponse = DynamoDbJson.sdk(context.response());
+    SdkResponse response = transformResponse(context, state);
+    state.effectiveResponse = DynamoDbJson.sdk(response);
+    return response;
+  }
+
+  private SdkResponse transformResponse(Context.ModifyResponse context, State state) {
     if (state.continuation != null
         && state.continuation.fault.injection == FaultRegistry.Injection.REPLACE_RESPONSE)
       return state.continuation.fault.effect.response(new Request(state), context.response());
@@ -217,6 +234,8 @@ final class DynamoDbRequestRecorder implements ExecutionInterceptor {
 
   @Override
   public void onExecutionFailure(Context.FailedExecution context, ExecutionAttributes attrs) {
+    State state = attrs.getAttribute(STATE);
+    if (state != null) state.failure = context.exception();
     terminal(attrs);
   }
 

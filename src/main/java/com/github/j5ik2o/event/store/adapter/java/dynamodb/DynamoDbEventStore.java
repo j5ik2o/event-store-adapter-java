@@ -40,7 +40,12 @@ public final class DynamoDbEventStore {
     requireSettings(client, tables, config);
     new DynamoDbConfigurationInitializer(tables, sleeper).initialize(client);
     return new Synchronous<>(
-        client, tables, config.payloadSerializer(), config.snapshotSerializer(), sleeper);
+        client,
+        tables,
+        config.payloadSerializer(),
+        config.snapshotSerializer(),
+        config.retentionFailureListener(),
+        sleeper);
   }
 
   static <P, A> CompletableFuture<AsyncEventStore<P, A>> createAsync(
@@ -59,6 +64,7 @@ public final class DynamoDbEventStore {
                       tables,
                       config.payloadSerializer(),
                       config.snapshotSerializer(),
+                      config.retentionFailureListener(),
                       sleeper));
     } catch (ConfigurationException failure) {
       return CompletableFuture.failedFuture(failure);
@@ -77,6 +83,7 @@ public final class DynamoDbEventStore {
     private final DynamoDbTableConfig tables;
     private final PayloadSerializer<P> serializer;
     private final PayloadSerializer<A> snapshotSerializer;
+    private final Optional<RetentionFailureListener> retentionFailureListener;
     private final Sleeper sleeper;
 
     Synchronous(
@@ -84,11 +91,13 @@ public final class DynamoDbEventStore {
         DynamoDbTableConfig tables,
         PayloadSerializer<P> serializer,
         PayloadSerializer<A> snapshotSerializer,
+        Optional<RetentionFailureListener> retentionFailureListener,
         Sleeper sleeper) {
       this.client = client;
       this.tables = tables;
       this.serializer = serializer;
       this.snapshotSerializer = snapshotSerializer;
+      this.retentionFailureListener = retentionFailureListener;
       this.sleeper = sleeper;
     }
 
@@ -109,6 +118,9 @@ public final class DynamoDbEventStore {
       } catch (RuntimeException failure) {
         throw DynamoDbEventWrite.classify(event, failure);
       }
+      new DynamoDbSnapshotRetention(
+              event.aggregateId(), snapshot.seqNr(), tables, retentionFailureListener, sleeper)
+          .retain(client);
     }
 
     public Optional<SnapshotReadResult<A>> getLatestSnapshotById(AggregateId id) {
@@ -136,6 +148,7 @@ public final class DynamoDbEventStore {
     private final DynamoDbTableConfig tables;
     private final PayloadSerializer<P> serializer;
     private final PayloadSerializer<A> snapshotSerializer;
+    private final Optional<RetentionFailureListener> retentionFailureListener;
     private final Sleeper sleeper;
 
     Asynchronous(
@@ -143,11 +156,13 @@ public final class DynamoDbEventStore {
         DynamoDbTableConfig tables,
         PayloadSerializer<P> serializer,
         PayloadSerializer<A> snapshotSerializer,
+        Optional<RetentionFailureListener> retentionFailureListener,
         Sleeper sleeper) {
       this.client = client;
       this.tables = tables;
       this.serializer = serializer;
       this.snapshotSerializer = snapshotSerializer;
+      this.retentionFailureListener = retentionFailureListener;
       this.sleeper = sleeper;
     }
 
@@ -178,8 +193,18 @@ public final class DynamoDbEventStore {
             .transactWriteItems(request)
             .whenComplete(
                 (response, failure) -> {
-                  if (failure == null) result.complete(null);
-                  else result.completeExceptionally(DynamoDbEventWrite.classify(event, failure));
+                  if (failure != null) {
+                    result.completeExceptionally(DynamoDbEventWrite.classify(event, failure));
+                    return;
+                  }
+                  new DynamoDbSnapshotRetention(
+                          event.aggregateId(),
+                          snapshot.seqNr(),
+                          tables,
+                          retentionFailureListener,
+                          sleeper)
+                      .retainAsync(client)
+                      .thenRun(() -> result.complete(null));
                 });
       } catch (RuntimeException failure) {
         result.completeExceptionally(DynamoDbEventWrite.classify(event, failure));

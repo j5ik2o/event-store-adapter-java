@@ -33,7 +33,7 @@ import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.*;
 
-/** Direct snapshot-write acceptance; snapshot reads and retention conformance remain unverified. */
+/** Direct snapshot-write acceptance, preserving preparation and cancellation classification. */
 class DynamoDbSnapshotWriteBoundaryTest {
   @RegisterExtension
   static final DynamoDbConfigurationFixture fixture = new DynamoDbConfigurationFixture();
@@ -167,7 +167,11 @@ class DynamoDbSnapshotWriteBoundaryTest {
                         s.assertSaved(event, snapshot);
                         events.add(event);
                         assertEquals(seq, s.rows(s.c.journal).size());
-                        assertEquals(s.history ? seq + 1 : 1, s.rows(s.c.snapshot).size());
+                        assertEquals(
+                            policy.mode().orElse(null) == RetentionMode.DELETE
+                                ? Math.min(seq, 2) + 1
+                                : s.history ? seq + 1 : 1,
+                            s.rows(s.c.snapshot).size());
                       }
                       assertEquals(3, s.eventSerializations.get());
                       assertEquals(3, s.snapshotSerializations.get());
@@ -686,6 +690,7 @@ class DynamoDbSnapshotWriteBoundaryTest {
                               RetentionPolicy.delete(2))) {
                         CompletableFuture<Void> entered = new CompletableFuture<>();
                         CompletableFuture<Void> release = new CompletableFuture<>();
+                        CompletableFuture<Void> retentionEntered = new CompletableFuture<>();
                         Map<String, Object> before = s.stored();
                         s.register(
                             "commit",
@@ -698,6 +703,17 @@ class DynamoDbSnapshotWriteBoundaryTest {
                                   release.join();
                                   return response;
                                 }));
+                        FaultRegistry.Fault retention =
+                            s.c.faults.register(
+                                s.nextOperation,
+                                "retention-query",
+                                1,
+                                FaultRegistry.Injection.REPLACE_RESPONSE,
+                                DynamoDbFaultEffects.response(
+                                    response -> {
+                                      retentionEntered.complete(null);
+                                      return response;
+                                    }));
                         FaultRegistry.Operation operation =
                             s.c.faults.begin(s.nextOperation++, true);
                         CompletableFuture<Void> result =
@@ -722,7 +738,10 @@ class DynamoDbSnapshotWriteBoundaryTest {
                         } finally {
                           release.complete(null);
                           if (!cancel) assertNull(result.get(10, TimeUnit.SECONDS));
+                          retentionEntered.get(10, TimeUnit.SECONDS);
                           s.complete(operation, null, 1, 1, before);
+                          assertEquals(1, s.c.faults.applications(retention));
+                          assertEquals(0, s.c.faults.reservations(retention));
                         }
                         s.observation.put("public_future_cancelled", result.isCancelled());
                         s.assertRequest(s.requests(operation).get(0), event(1), snapshot(1));
@@ -847,7 +866,7 @@ class DynamoDbSnapshotWriteBoundaryTest {
       Throwable failure = call(event, snapshot);
       complete(operation, failure, requests, transmissions, before);
       for (DynamoDbRequestRecorder.Request request : requests(operation))
-        assertRequest(request, event, snapshot);
+        if (request.phase.equals("commit")) assertRequest(request, event, snapshot);
       if (failure != null) assertEquals(before, stored());
       return failure;
     }
@@ -893,9 +912,18 @@ class DynamoDbSnapshotWriteBoundaryTest {
       assertEquals(0, result.path("fault_reservations").intValue());
       assertEquals(0, c.faults.pending(operation));
       assertEquals("passed", c.faults.finish(operation).status);
-      assertEquals(requests, actual.size());
-      assertEquals(transmissions, actual.stream().mapToInt(r -> r.transmissions).sum());
+      List<DynamoDbRequestRecorder.Request> commits =
+          actual.stream()
+              .filter(r -> r.phase.equals("commit"))
+              .collect(java.util.stream.Collectors.toList());
+      assertEquals(requests, commits.size());
+      assertEquals(transmissions, commits.stream().mapToInt(r -> r.transmissions).sum());
+      assertTrue(
+          actual.stream()
+              .allMatch(
+                  r -> Set.of("commit", "retention-query", "retention-delete").contains(r.phase)));
       for (DynamoDbRequestRecorder.Request request : actual) {
+        if (!request.phase.equals("commit")) continue;
         assertEquals("TransactWriteItems", request.api);
         assertEquals("commit", request.phase);
         assertEquals(1, request.httpAttempts);

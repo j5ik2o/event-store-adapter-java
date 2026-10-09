@@ -176,8 +176,7 @@ public final class DynamoDbSnapshotReadFixture {
     }
   }
 
-  private static void compare(
-      JsonNode scenario, JsonNode expected, ObjectNode actual, Throwable failure) {
+  static void compare(JsonNode scenario, JsonNode expected, ObjectNode actual, Throwable failure) {
     if (expected.has("error")) {
       assertNotNull(failure);
       assertEquals(expected.at("/error/category").asText(), category(failure));
@@ -227,7 +226,7 @@ public final class DynamoDbSnapshotReadFixture {
     return AggregateId.of(value.path("type_name").asText(), value.path("value").asText());
   }
 
-  private static EventEnvelope<JsonNode> event(JsonNode value) {
+  static EventEnvelope<JsonNode> event(JsonNode value) {
     return EventEnvelope.<JsonNode>builder()
         .aggregateId(aid(value.path("aggregate_id")))
         .seqNr(value.path("seq_nr").bigIntegerValue().longValueExact())
@@ -237,7 +236,7 @@ public final class DynamoDbSnapshotReadFixture {
         .build();
   }
 
-  private static SnapshotEnvelope<JsonNode> snapshot(JsonNode value) {
+  static SnapshotEnvelope<JsonNode> snapshot(JsonNode value) {
     return SnapshotEnvelope.<JsonNode>builder()
         .seqNr(value.path("seq_nr").bigIntegerValue().longValueExact())
         .manifest(value.path("manifest").asText(""))

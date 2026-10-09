@@ -91,7 +91,8 @@ class CaseClassifierTest {
   }
 
   @Test
-  void requiredListKeepsMemoryAndAddsOnlyVerifiedReadCasesToDynamoDb() throws IOException {
+  void requiredListKeepsMemoryAndAddsOnlyVerifiedReadAndDeleteRetentionCasesToDynamoDb()
+      throws IOException {
     Map<Backend, Set<String>> required = RequiredCases.load();
 
     Set<String> memory =
@@ -112,7 +113,8 @@ class CaseClassifierTest {
     dynamodb.addAll(
         Set.of("core-time-roundtrip-min", "core-time-roundtrip-max", "core-json-root-values"));
     dynamodb.addAll(DynamoDbCaseRunner.SNAPSHOT_CASE_IDS);
-    assertEquals(62, dynamodb.size());
+    dynamodb.addAll(DynamoDbCaseRunner.RETENTION_CASE_IDS);
+    assertEquals(73, dynamodb.size());
     assertEquals(dynamodb, required.get(Backend.DYNAMODB));
     assertFalse(required.get(Backend.DYNAMODB).contains("dynamodb-layout-v1"));
   }

@@ -123,6 +123,17 @@
     "core-zero-snapshot",
     "dynamodb-latest-unprocessed",
     "dynamodb-no-head-with-snapshot",
-    "dynamodb-snapshot-ahead-of-head"
+    "dynamodb-snapshot-ahead-of-head",
+    "core-retention-zero",
+    "core-retention-delete-1",
+    "core-retention-delete-2",
+    "core-retention-default-current-only",
+    "core-retention-failure-after-commit",
+    "core-retention-query-failure",
+    "dynamodb-retention-delete-paginated-batch",
+    "dynamodb-retention-gsi-missing-new",
+    "dynamodb-retention-gsi-deduplicate",
+    "dynamodb-retention-event-only",
+    "dynamodb-retention-failure-delete"
   ]
 }

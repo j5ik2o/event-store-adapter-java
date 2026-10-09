@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.j5ik2o.event.store.adapter.java.dynamodbtest.DynamoDbConfigurationFixture;
 import com.github.j5ik2o.event.store.adapter.java.dynamodbtest.DynamoDbEventReadFixture;
 import com.github.j5ik2o.event.store.adapter.java.dynamodbtest.DynamoDbSnapshotReadFixture;
+import com.github.j5ik2o.event.store.adapter.java.dynamodbtest.DynamoDbSnapshotRetentionFixture;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -27,6 +28,61 @@ class DynamoDbCaseRunnerTest {
         .filter(c -> c.id().equals(id))
         .findFirst()
         .orElseThrow();
+  }
+
+  @TestFactory
+  Stream<DynamicTest> retentionCandidatesExecuteEveryExpectationAndObservation()
+      throws IOException {
+    List<ConformanceCase> cases =
+        ConformanceDataLoader.load(ConformanceTestFiles.REAL_ROOT).cases();
+    return DynamoDbCaseRunner.RETENTION_CASE_IDS.stream()
+        .sorted()
+        .map(
+            id ->
+                DynamicTest.dynamicTest(
+                    id,
+                    () -> {
+                      ConformanceCase c =
+                          cases.stream()
+                              .filter(value -> value.id().equals(id))
+                              .findFirst()
+                              .orElseThrow();
+                      ObjectNode actual = ConformanceJson.mapper().createObjectNode();
+                      ObjectNode receipt =
+                          ConformanceJson.mapper().createObjectNode().put("case_id", id);
+                      try {
+                        CaseResult result = DynamoDbCaseRunner.run(c, fixture);
+                        actual.setAll((ObjectNode) result.actual());
+                        assertEquals(
+                            ConformanceStatus.PASSED,
+                            result.status(),
+                            () -> String.valueOf(result.reason()));
+                        assertFalse(actual.has("unsupported"), () -> actual.toString());
+                        receipt.put("status", "passed");
+                        for (String path : List.of("sync", "async")) {
+                          assertTrue(actual.path(path).path("resources_closed").booleanValue());
+                          if (!c.materialized().has("initialization")) {
+                            assertEquals(
+                                c.materialized().path("steps").size() + 1,
+                                actual.path(path).path("operations").size());
+                            for (JsonNode operation : actual.path(path).path("operations")) {
+                              assertTrue(operation.path("request_terminal").booleanValue());
+                              assertEquals(0, operation.path("pending").intValue());
+                              assertEquals("passed", operation.path("fault_result").asText());
+                            }
+                          }
+                        }
+                      } catch (RuntimeException | AssertionError failure) {
+                        receipt.put("status", "failed").put("reason", failure.toString());
+                        throw failure;
+                      } finally {
+                        receipt.set("actual", actual);
+                        Path directory = Path.of("build/reports/dynamodb-retention-candidates");
+                        Files.createDirectories(directory);
+                        Files.writeString(
+                            directory.resolve(id + ".json"), receipt.toPrettyString());
+                      }
+                    }));
   }
 
   @TestFactory
@@ -210,7 +266,7 @@ class DynamoDbCaseRunnerTest {
   }
 
   @Test
-  void unconnectedSnapshotObservationsAndRetentionStayUnverified() throws IOException {
+  void unconnectedSnapshotObservationsAndTtlStayUnverified() throws IOException {
     ConformanceCase c = find("core-snapshot-behind-head");
     for (String field : List.of("history", "items", "notifications")) {
       ObjectNode altered = c.materialized().deepCopy();
@@ -223,13 +279,121 @@ class DynamoDbCaseRunnerTest {
       assertTrue(result.reason().contains(field));
       assertFalse(result.actual().has("sync"));
     }
-    ConformanceCase retention = find("core-retention-delete-1");
+    ConformanceCase retention = find("dynamodb-retention-ttl-once");
     assertNotNull(DynamoDbSnapshotReadFixture.unsupported(retention.materialized()));
     assertFalse(DynamoDbCaseRunner.supports(retention));
     assertEquals(
         ConformanceStatus.UNVERIFIED,
         CaseClassifier.classify(retention, Backend.DYNAMODB).status());
     assertFalse(RequiredCases.load().get(Backend.DYNAMODB).contains(retention.id()));
+  }
+
+  @Test
+  void unconnectedRetentionObservationsAndConstraintsStayUnverifiedBeforeCreatingResources()
+      throws IOException {
+    ConformanceCase c = find("core-retention-delete-1");
+    for (String field : List.of("items", "unknown-observation")) {
+      ObjectNode altered = c.materialized().deepCopy();
+      ((ObjectNode) altered.at("/steps/0/observe")).putArray(field);
+      CaseResult result =
+          DynamoDbCaseRunner.run(
+              new ConformanceCase(c.id(), c.file(), c.format(), c.rules(), c.raw(), altered),
+              fixture);
+      assertEquals(ConformanceStatus.UNVERIFIED, result.status());
+      assertTrue(result.reason().contains(field));
+      assertFalse(result.actual().has("sync"));
+    }
+    ObjectNode altered =
+        find("dynamodb-retention-delete-paginated-batch").materialized().deepCopy();
+    ((ObjectNode) altered.at("/steps/0/observe/requests/0/constraints"))
+        .put("unknown-constraint", true);
+    assertTrue(
+        DynamoDbSnapshotRetentionFixture.unsupported(altered).contains("unknown-constraint"));
+  }
+
+  @TestFactory
+  Stream<DynamicTest> wrongRetentionExpectationsFailOnBothPathsWithActualObservations() {
+    return Stream.of(
+            "history",
+            "notifications",
+            "initial_batch_sizes",
+            "scan_index_forward",
+            "request_count",
+            "error.rule")
+        .map(
+            field ->
+                DynamicTest.dynamicTest(
+                    field,
+                    () -> {
+                      ConformanceCase c =
+                          find(
+                              field.equals("notifications")
+                                  ? "core-retention-query-failure"
+                                  : field.equals("history")
+                                      ? "core-retention-delete-1"
+                                      : field.equals("error.rule")
+                                          ? "core-retention-zero"
+                                          : "dynamodb-retention-delete-paginated-batch");
+                      ObjectNode altered = c.materialized().deepCopy();
+                      int operation =
+                          field.equals("error.rule") ? 0 : field.equals("notifications") ? 2 : 1;
+                      switch (field) {
+                        case "history":
+                          ((ObjectNode) altered.at("/steps/0/observe/history"))
+                              .putArray("active")
+                              .add(99);
+                          break;
+                        case "notifications":
+                          ((ObjectNode) altered.at("/steps/1/observe")).putArray("notifications");
+                          break;
+                        case "initial_batch_sizes":
+                          ((ObjectNode) altered.at("/steps/0/observe/requests/1/constraints"))
+                              .putArray("initial_batch_sizes")
+                              .add(26)
+                              .add(4);
+                          break;
+                        case "scan_index_forward":
+                          ((ObjectNode) altered.at("/steps/0/observe/requests/0/constraints"))
+                              .put("scan_index_forward", true);
+                          break;
+                        case "request_count":
+                          ((ObjectNode) altered.at("/steps/0/observe"))
+                              .putObject("request_count")
+                              .put("retention-query", 1);
+                          break;
+                        case "error.rule":
+                          ((ObjectNode) altered.at("/initialization/expect/error"))
+                              .put("rule", "W-9");
+                          break;
+                        default:
+                          fail("Unknown expectation");
+                      }
+                      CaseResult result =
+                          DynamoDbCaseRunner.run(
+                              new ConformanceCase(
+                                  c.id(), c.file(), c.format(), c.rules(), c.raw(), altered),
+                              fixture);
+                      assertEquals(ConformanceStatus.FAILED, result.status());
+                      assertEquals(operation, result.failedOperation());
+                      for (String sdk : List.of("sync", "async")) {
+                        assertEquals(
+                            operation,
+                            result.actual().path(sdk).path("failed_operation").intValue());
+                        assertTrue(
+                            result.actual().path(sdk).path("resources_closed").booleanValue());
+                      }
+                      Path directory = Path.of("build/reports/dynamodb-retention-failures", field);
+                      ConformanceData data =
+                          ConformanceDataLoader.load(ConformanceTestFiles.REAL_ROOT);
+                      new ConformanceReport(
+                              data.dataVersion(),
+                              ManifestVerifier.verify(ConformanceTestFiles.REAL_ROOT),
+                              "2.0.0-SNAPSHOT",
+                              null,
+                              List.of(result),
+                              data.coverageExclusions())
+                          .write(directory);
+                    }));
   }
 
   @TestFactory
