@@ -8,7 +8,9 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.github.j5ik2o.event.store.adapter.java.core.*;
 import java.lang.reflect.Proxy;
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.Function;
@@ -63,14 +65,189 @@ class DynamoDbSnapshotRetentionTest {
         s.write(async, false, 1);
         assertTrue(s.queries.isEmpty());
         s.write(async, true, 2);
-        assertEquals(policy.mode().orElse(null) == RetentionMode.DELETE ? 1 : 0, s.queries.size());
+        assertEquals(policy.keepCount().isPresent() ? 1 : 0, s.queries.size());
         s.queries.clear();
         s.commit = request -> CompletableFuture.failedFuture(new IllegalStateException("commit"));
         assertThrows(RuntimeException.class, () -> s.write(async, true, 3));
         assertTrue(s.queries.isEmpty());
         assertTrue(s.deletes.isEmpty());
+        assertTrue(s.marks.isEmpty());
         assertTrue(s.failures.isEmpty());
       }
+    }
+  }
+
+  @Test
+  void ttlUsesTheSharedAllPageCandidatesAndExactClockExpiryOnBothPaths() {
+    for (boolean async : List.of(false, true)) {
+      for (long grace : List.of(0L, 60L, Long.MAX_VALUE)) {
+        Stub s = new Stub(RetentionPolicy.ttl(2, grace));
+        s.tables =
+            DynamoDbTableConfigTest.names()
+                .retentionPolicy(RetentionPolicy.ttl(2, grace))
+                .clock(Clock.fixed(Instant.ofEpochSecond(4102444800L, 999999999), ZoneOffset.UTC))
+                .build();
+        s.query =
+            request ->
+                CompletableFuture.completedFuture(
+                    s.queries.size() == 1
+                        ? QueryResponse.builder()
+                            .items(history(4), history(3))
+                            .lastEvaluatedKey(history(3))
+                            .build()
+                        : QueryResponse.builder()
+                            .items(history(3), history(2), history(1))
+                            .build());
+        s.write(async, true, 5);
+        assertEquals(2, s.queries.size());
+        assertEquals(history(3), s.queries.get(1).exclusiveStartKey());
+        assertEquals(
+            List.of(3L, 2L, 1L),
+            s.marks.stream()
+                .map(request -> Long.parseLong(request.key().get("skey").n()))
+                .collect(Collectors.toList()));
+        for (UpdateItemRequest request : s.marks) {
+          assertEquals("snapshot", request.tableName());
+          assertEquals(ID.asString(), request.key().get("aid").s());
+          assertEquals(
+              "SET #ttl = :expires REMOVE active_history_seq_nr", request.updateExpression());
+          assertEquals("attribute_exists(active_history_seq_nr)", request.conditionExpression());
+          assertEquals(Map.of("#ttl", "ttl"), request.expressionAttributeNames());
+          assertEquals(
+              Map.of(
+                  ":expires",
+                  AttributeValue.fromN(
+                      java.math.BigInteger.valueOf(4102444800L)
+                          .add(java.math.BigInteger.valueOf(grace))
+                          .toString())),
+              request.expressionAttributeValues());
+        }
+        assertTrue(s.deletes.isEmpty());
+        assertTrue(s.failures.isEmpty());
+      }
+    }
+  }
+
+  @Test
+  void ttlFailureWithoutAListenerWarnsOnceAndStillReturnsCommittedSuccess() {
+    Logger logger = (Logger) LoggerFactory.getLogger(DynamoDbSnapshotRetention.class);
+    ListAppender<ILoggingEvent> logs = new ListAppender<>();
+    logs.start();
+    logger.addAppender(logs);
+    try {
+      for (boolean async : List.of(false, true)) {
+        logs.list.clear();
+        Stub s = new Stub(RetentionPolicy.ttl(1, 60));
+        s.query =
+            request ->
+                CompletableFuture.completedFuture(
+                    QueryResponse.builder().items(history(1)).build());
+        s.mark = request -> CompletableFuture.failedFuture(new IllegalStateException("update"));
+        EventStoreConfig<String, String> config =
+            EventStoreConfig.<String, String>builder()
+                .payloadSerializer(JSON)
+                .snapshotSerializer(JSON)
+                .build();
+        assertDoesNotThrow(
+            () -> {
+              if (async)
+                DynamoDbEventStore.createAsync(
+                        s.client(DynamoDbAsyncClient.class, true), s.tables, config)
+                    .join()
+                    .persistEventAndSnapshot(event(2), snapshot(2))
+                    .join();
+              else
+                DynamoDbEventStore.create(s.client(DynamoDbClient.class, false), s.tables, config)
+                    .persistEventAndSnapshot(event(2), snapshot(2));
+            });
+        assertEquals(1, s.marks.size());
+        assertTrue(s.failures.isEmpty());
+        assertEquals(1, logs.list.stream().filter(log -> log.getLevel() == Level.WARN).count());
+        assertTrue(logs.list.get(0).getFormattedMessage().contains("mode=TTL"));
+      }
+    } finally {
+      logger.detachAppender(logs);
+      logs.stop();
+    }
+  }
+
+  @Test
+  void ttlSkipsConditionalFailureButStopsAndNotifiesOnceForOtherFailures() {
+    for (boolean async : List.of(false, true)) {
+      for (boolean startup : List.of(false, true)) {
+        Stub s = new Stub(RetentionPolicy.ttl(1, 60));
+        s.query =
+            request ->
+                CompletableFuture.completedFuture(
+                    QueryResponse.builder().items(history(3), history(2), history(1)).build());
+        IllegalStateException cause = new IllegalStateException("original update failure");
+        s.mark =
+            request -> {
+              Throwable failure =
+                  s.marks.size() == 1 ? ConditionalCheckFailedException.builder().build() : cause;
+              if (startup) throw (RuntimeException) failure;
+              return CompletableFuture.failedFuture(new CompletionException(failure));
+            };
+        Thread caller = Thread.currentThread();
+        s.listener =
+            failure -> {
+              assertEquals(RetentionMode.TTL, failure.mode());
+              assertSame(cause, failure.cause());
+              if (!async) assertSame(caller, Thread.currentThread());
+              throw new IllegalStateException("listener");
+            };
+        assertDoesNotThrow(() -> s.write(async, true, 4));
+        assertEquals(2, s.marks.size());
+        assertEquals(1, s.failures.size());
+        assertTrue(s.waits.isEmpty());
+      }
+      Stub s = new Stub(RetentionPolicy.ttl(1, 60));
+      s.query =
+          request ->
+              CompletableFuture.completedFuture(
+                  QueryResponse.builder().items(history(2), history(1)).build());
+      s.mark =
+          request ->
+              CompletableFuture.failedFuture(ConditionalCheckFailedException.builder().build());
+      assertDoesNotThrow(() -> s.write(async, true, 3));
+      assertEquals(2, s.marks.size());
+      assertTrue(s.failures.isEmpty());
+    }
+  }
+
+  @Test
+  void asynchronousTtlWaitsForEachUpdateAndNotifiesOnSdkThreadBeforePublicFuture()
+      throws Exception {
+    Stub s = new Stub(RetentionPolicy.ttl(1, 60));
+    CompletableFuture<UpdateItemResponse> first = new CompletableFuture<>();
+    CompletableFuture<UpdateItemResponse> second = new CompletableFuture<>();
+    s.query =
+        request ->
+            CompletableFuture.completedFuture(
+                QueryResponse.builder().items(history(2), history(1)).build());
+    s.mark = request -> s.marks.size() == 1 ? first : second;
+    CompletableFuture<Void> result = s.asyncStore().persistEventAndSnapshot(event(3), snapshot(3));
+    assertFalse(result.isDone());
+    assertEquals(1, s.marks.size());
+    first.complete(UpdateItemResponse.builder().build());
+    assertFalse(result.isDone());
+    assertEquals(2, s.marks.size());
+    IllegalStateException cause = new IllegalStateException("update");
+    s.listener =
+        failure -> {
+          assertEquals("ttl-sdk-completion", Thread.currentThread().getName());
+          assertFalse(result.isDone());
+          assertSame(cause, failure.cause());
+        };
+    ExecutorService executor =
+        Executors.newSingleThreadExecutor(task -> new Thread(task, "ttl-sdk-completion"));
+    try {
+      executor.submit(() -> second.completeExceptionally(cause)).get(5, TimeUnit.SECONDS);
+      assertNull(result.get(5, TimeUnit.SECONDS));
+      assertEquals(1, s.failures.size());
+    } finally {
+      executor.shutdown();
+      assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
     }
   }
 
@@ -429,6 +606,7 @@ class DynamoDbSnapshotRetentionTest {
   private static final class Stub {
     final List<QueryRequest> queries = new ArrayList<>();
     final List<BatchWriteItemRequest> deletes = new ArrayList<>();
+    final List<UpdateItemRequest> marks = new ArrayList<>();
     final List<Long> waits = new ArrayList<>();
     final List<RetentionFailure> failures = new ArrayList<>();
     RetentionFailureListener listener = failure -> {};
@@ -439,6 +617,8 @@ class DynamoDbSnapshotRetentionTest {
         request -> CompletableFuture.completedFuture(QueryResponse.builder().build());
     Function<BatchWriteItemRequest, CompletableFuture<BatchWriteItemResponse>> delete =
         request -> CompletableFuture.completedFuture(BatchWriteItemResponse.builder().build());
+    Function<UpdateItemRequest, CompletableFuture<UpdateItemResponse>> mark =
+        request -> CompletableFuture.completedFuture(UpdateItemResponse.builder().build());
     Function<Long, CompletableFuture<Void>> wait = delay -> CompletableFuture.completedFuture(null);
     final Sleeper sleeper =
         new Sleeper() {
@@ -493,6 +673,10 @@ class DynamoDbSnapshotRetentionTest {
           deletes.add((BatchWriteItemRequest) args[0]);
           return sdkCompletion(
               (BatchWriteItemRequest) args[0], delete.apply((BatchWriteItemRequest) args[0]));
+        case "updateItem":
+          marks.add((UpdateItemRequest) args[0]);
+          return sdkCompletion(
+              (UpdateItemRequest) args[0], mark.apply((UpdateItemRequest) args[0]));
         default:
           throw new AssertionError("Unexpected client call: " + method);
       }

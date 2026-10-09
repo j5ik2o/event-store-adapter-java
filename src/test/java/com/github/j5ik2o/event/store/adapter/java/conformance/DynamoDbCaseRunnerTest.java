@@ -266,7 +266,7 @@ class DynamoDbCaseRunnerTest {
   }
 
   @Test
-  void unconnectedSnapshotObservationsAndTtlStayUnverified() throws IOException {
+  void unconnectedSnapshotObservationsStayUnverified() throws IOException {
     ConformanceCase c = find("core-snapshot-behind-head");
     for (String field : List.of("history", "items", "notifications")) {
       ObjectNode altered = c.materialized().deepCopy();
@@ -281,18 +281,15 @@ class DynamoDbCaseRunnerTest {
     }
     ConformanceCase retention = find("dynamodb-retention-ttl-once");
     assertNotNull(DynamoDbSnapshotReadFixture.unsupported(retention.materialized()));
-    assertFalse(DynamoDbCaseRunner.supports(retention));
-    assertEquals(
-        ConformanceStatus.UNVERIFIED,
-        CaseClassifier.classify(retention, Backend.DYNAMODB).status());
-    assertFalse(RequiredCases.load().get(Backend.DYNAMODB).contains(retention.id()));
+    assertTrue(DynamoDbCaseRunner.supports(retention));
+    assertTrue(RequiredCases.load().get(Backend.DYNAMODB).contains(retention.id()));
   }
 
   @Test
   void unconnectedRetentionObservationsAndConstraintsStayUnverifiedBeforeCreatingResources()
       throws IOException {
     ConformanceCase c = find("core-retention-delete-1");
-    for (String field : List.of("items", "unknown-observation")) {
+    for (String field : List.of("unknown-observation")) {
       ObjectNode altered = c.materialized().deepCopy();
       ((ObjectNode) altered.at("/steps/0/observe")).putArray(field);
       CaseResult result =
@@ -309,6 +306,123 @@ class DynamoDbCaseRunnerTest {
         .put("unknown-constraint", true);
     assertTrue(
         DynamoDbSnapshotRetentionFixture.unsupported(altered).contains("unknown-constraint"));
+  }
+
+  @TestFactory
+  Stream<DynamicTest> wrongTtlExpectationsAreRejectedWithActualRequestsAndStoredItems() {
+    return Stream.of(
+            "expiry",
+            "target",
+            "binding",
+            "remove",
+            "condition",
+            "marked-expiry",
+            "attribute-set",
+            "attribute-type",
+            "nested-attribute",
+            "binary-json",
+            "notifications",
+            "error.rule")
+        .map(
+            field ->
+                DynamicTest.dynamicTest(
+                    field,
+                    () -> {
+                      ConformanceCase c =
+                          find(
+                              field.equals("notifications")
+                                  ? "dynamodb-retention-failure-ttl"
+                                  : field.startsWith("attribute")
+                                          || field.equals("nested-attribute")
+                                          || field.equals("binary-json")
+                                      ? "dynamodb-written-item-shapes"
+                                      : "dynamodb-retention-ttl-once");
+                      ObjectNode altered = c.materialized().deepCopy();
+                      int operation = field.equals("notifications") ? 2 : 1;
+                      JsonNode constraints = altered.at("/steps/0/observe/requests/0/constraints");
+                      switch (field) {
+                        case "expiry":
+                          ((ObjectNode) constraints).put("expires", 1);
+                          break;
+                        case "target":
+                          ((ObjectNode) constraints).putArray("target_seq_nrs").add(1);
+                          break;
+                        case "binding":
+                          ((ObjectNode) constraints.path("expression_attribute_names"))
+                              .put("#ttl", "other");
+                          break;
+                        case "remove":
+                          ((ObjectNode) constraints.path("update")).putArray("remove");
+                          break;
+                        case "condition":
+                          ((ObjectNode) constraints.path("condition"))
+                              .put("attribute_exists", "ttl");
+                          break;
+                        case "marked-expiry":
+                          ((ObjectNode) altered.at("/steps/0/observe/history/marked/0"))
+                              .put("ttl", 1);
+                          break;
+                        case "attribute-set":
+                          ((ObjectNode) altered.at("/steps/0/observe/items/2/attributes"))
+                              .put("ttl", "N");
+                          break;
+                        case "attribute-type":
+                          ((ObjectNode) altered.at("/steps/0/observe/items/0/attributes"))
+                              .put("seq_nr", "S");
+                          break;
+                        case "nested-attribute":
+                          ((ObjectNode)
+                                  altered.at(
+                                      "/steps/0/observe/items/1/nested_attributes/events[0]"))
+                              .put("seq_nr", "S");
+                          break;
+                        case "binary-json":
+                          ((ObjectNode) altered.at("/steps/0/observe/items/0/binary_json/payload"))
+                              .put("number", 99);
+                          break;
+                        case "notifications":
+                          ((ObjectNode) altered.at("/steps/1/observe")).putArray("notifications");
+                          break;
+                        case "error.rule":
+                          // The same TTL store receives a real W-9 violation, then compares a wrong
+                          // rule.
+                          ((ObjectNode) altered.at("/fixtures/snapshots/s4")).put("seq_nr", 5);
+                          ((ObjectNode) altered.at("/steps/0")).remove("observe");
+                          altered.putArray("faults");
+                          ((ObjectNode) altered.at("/steps/0"))
+                              .putObject("expect")
+                              .putObject("error")
+                              .put("category", "contract-violation")
+                              .put("rule", "W-8");
+                          break;
+                        default:
+                          fail("Unknown TTL expectation");
+                      }
+                      CaseResult result =
+                          DynamoDbCaseRunner.run(
+                              new ConformanceCase(
+                                  c.id(), c.file(), c.format(), c.rules(), c.raw(), altered),
+                              fixture);
+                      assertEquals(ConformanceStatus.FAILED, result.status());
+                      assertEquals(operation, result.failedOperation());
+                      for (String sdk : List.of("sync", "async")) {
+                        assertEquals(
+                            operation,
+                            result.actual().path(sdk).path("failed_operation").intValue());
+                        assertTrue(
+                            result.actual().path(sdk).path("resources_closed").booleanValue());
+                        JsonNode actual =
+                            result.actual().path(sdk).path("operations").get(operation);
+                        assertTrue(actual.path("request_terminal").booleanValue());
+                        assertEquals(0, actual.path("pending").intValue());
+                        if (field.equals("error.rule"))
+                          assertEquals("W-9", actual.at("/outcome/error/rule").asText());
+                      }
+                      Path directory = Path.of("build/reports/dynamodb-ttl-failures");
+                      Files.createDirectories(directory);
+                      Files.writeString(
+                          directory.resolve(field + ".json"), result.actual().toPrettyString());
+                    }));
   }
 
   @TestFactory

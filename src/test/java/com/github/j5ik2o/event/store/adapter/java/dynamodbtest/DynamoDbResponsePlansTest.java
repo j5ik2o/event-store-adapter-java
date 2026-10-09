@@ -2548,49 +2548,159 @@ class DynamoDbResponsePlansTest {
   }
 
   @Test
+  void ttlHistoryPlansReplayOnlyStoredMarkedHistoryAndDeletePlansStillRejectIt() throws Exception {
+    for (boolean async : new boolean[] {false, true}) {
+      try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+        createHistoryTable(context);
+        Map<String, AttributeValue> marked = new java.util.HashMap<>(item("skey", 1));
+        marked.put("seq_nr", AttributeValue.fromN("1"));
+        marked.put("ttl", AttributeValue.fromN("4102444740"));
+        context.admin.putItem(
+            PutItemRequest.builder().tableName(context.snapshot).item(marked).build());
+        DynamoDbFaultEffects.HistoryPages plan =
+            DynamoDbFaultEffects.ttlHistoryPages(
+                context.admin, context.snapshot, AID, List.of(List.of(1L)), null, false);
+        FaultRegistry.Fault fault =
+            context.faults.register(
+                1, "retention-query", 1, FaultRegistry.Injection.REPLACE_RESPONSE, plan);
+        FaultRegistry.Operation operation = context.faults.begin(1, true);
+        QueryResponse response = query(context, historyQuery(context), async);
+        assertEquals(
+            List.of(
+                Map.of(
+                    "aid",
+                    marked.get("aid"),
+                    "skey",
+                    marked.get("skey"),
+                    "active_history_seq_nr",
+                    AttributeValue.fromN("1"))),
+            response.items());
+        assertEquals(marked, stored(context, 1));
+        assertTrue(context.recorder.requests().get(0).originalResponse.path("Items").isEmpty());
+        assertEquals(1, context.recorder.requests().get(0).transmissions);
+        assertEquals(1, context.faults.applications(fault));
+        assertFalse(plan.hasNext());
+        assertEquals("passed", context.faults.finish(operation).status);
+        int number = 2;
+        for (String invalid :
+            List.of(
+                "delete",
+                "missing-seq",
+                "unequal-seq",
+                "ttl-type",
+                "ttl-fraction",
+                "unmarked",
+                "missing-item")) {
+          Map<String, AttributeValue> item = new java.util.HashMap<>(marked);
+          switch (invalid) {
+            case "missing-seq":
+              item.remove("seq_nr");
+              break;
+            case "unequal-seq":
+              item.put("seq_nr", AttributeValue.fromN("2"));
+              break;
+            case "ttl-type":
+              item.put("ttl", AttributeValue.fromS("4102444740"));
+              break;
+            case "ttl-fraction":
+              item.put("ttl", AttributeValue.fromN("1.5"));
+              break;
+            case "unmarked":
+              item.remove("ttl");
+              break;
+            default:
+              break;
+          }
+          context.admin.putItem(
+              PutItemRequest.builder().tableName(context.snapshot).item(item).build());
+          if (invalid.equals("missing-item"))
+            context.admin.deleteItem(
+                DeleteItemRequest.builder()
+                    .tableName(context.snapshot)
+                    .key(key("skey", 1))
+                    .build());
+          DynamoDbFaultEffects.HistoryPages rejected =
+              invalid.equals("delete")
+                  ? DynamoDbFaultEffects.historyPages(
+                      context.admin, context.snapshot, AID, List.of(List.of(1L)), null, false)
+                  : DynamoDbFaultEffects.ttlHistoryPages(
+                      context.admin, context.snapshot, AID, List.of(List.of(1L)), null, false);
+          FaultRegistry.Fault rejection =
+              context.faults.register(
+                  number, "retention-query", 1, FaultRegistry.Injection.REPLACE_RESPONSE, rejected);
+          FaultRegistry.Operation current = context.faults.begin(number++, true);
+          assertThrows(RuntimeException.class, () -> query(context, historyQuery(context), async));
+          context.recorder.requestsFinished(current).get(10, TimeUnit.SECONDS);
+          assertTrue(rejected.hasNext());
+          assertEquals(1, context.faults.applications(rejection));
+          assertEquals(0, context.faults.reservations(rejection));
+          assertEquals(0, context.faults.pending(current));
+          FaultRegistry.Result result = context.faults.finish(current);
+          assertEquals("failed", result.status);
+          assertTrue(
+              result.reasons.stream().anyMatch(reason -> reason.contains("unconsumed pages")));
+        }
+      }
+    }
+  }
+
+  @Test
   void ttlRequestReplacementLeavesItemUntouchedAndFollowingOperationActuallyMarksIt() {
-    try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
-      context.createMinimalTables();
-      Map<String, AttributeValue> active =
-          Map.of(
-              "aid",
-              AttributeValue.fromS(AID),
-              "skey",
-              AttributeValue.fromN("1"),
-              "active_history_seq_nr",
-              AttributeValue.fromN("1"));
-      context.admin.putItem(
-          PutItemRequest.builder().tableName(context.snapshot).item(active).build());
-      context.faults.register(
-          1,
-          "retention-mark",
-          1,
-          FaultRegistry.Injection.REPLACE_REQUEST,
-          DynamoDbFaultEffects.sdkError("ProvisionedThroughputExceededException"));
-      UpdateItemRequest mark =
-          UpdateItemRequest.builder()
-              .tableName(context.snapshot)
-              .key(key("skey", 1))
-              .updateExpression("SET #ttl=:expires REMOVE active_history_seq_nr")
-              .conditionExpression("attribute_exists(active_history_seq_nr)")
-              .expressionAttributeNames(Map.of("#ttl", "ttl"))
-              .expressionAttributeValues(Map.of(":expires", AttributeValue.fromN("4102444800")))
-              .build();
-      FaultRegistry.Operation failed = context.faults.begin(1, true);
-      assertInstanceOf(
-          ProvisionedThroughputExceededException.class,
-          unwrap(
-              assertThrows(RuntimeException.class, () -> context.async.updateItem(mark).join())));
-      assertEquals(active, stored(context, 1));
-      assertEquals("passed", context.faults.finish(failed).status);
-      FaultRegistry.Operation next = context.faults.begin(2, true);
-      context.async.updateItem(mark).join();
-      assertEquals("4102444800", stored(context, 1).get("ttl").n());
-      assertFalse(stored(context, 1).containsKey("active_history_seq_nr"));
-      assertEquals(
-          "4102444800",
-          context.recorder.requests().get(1).structure.at("/update/set/ttl/N").asText());
-      assertEquals("passed", context.faults.finish(next).status);
+    for (boolean async : new boolean[] {false, true}) {
+      try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+        context.createMinimalTables();
+        Map<String, AttributeValue> active =
+            Map.of(
+                "aid",
+                AttributeValue.fromS(AID),
+                "skey",
+                AttributeValue.fromN("1"),
+                "active_history_seq_nr",
+                AttributeValue.fromN("1"));
+        context.admin.putItem(
+            PutItemRequest.builder().tableName(context.snapshot).item(active).build());
+        FaultRegistry.Fault fault =
+            context.faults.register(
+                1,
+                "retention-mark",
+                1,
+                FaultRegistry.Injection.REPLACE_REQUEST,
+                DynamoDbFaultEffects.sdkError("ProvisionedThroughputExceededException"));
+        UpdateItemRequest mark =
+            UpdateItemRequest.builder()
+                .tableName(context.snapshot)
+                .key(key("skey", 1))
+                .updateExpression("SET #ttl=:expires REMOVE active_history_seq_nr")
+                .conditionExpression("attribute_exists(active_history_seq_nr)")
+                .expressionAttributeNames(Map.of("#ttl", "ttl"))
+                .expressionAttributeValues(Map.of(":expires", AttributeValue.fromN("4102444800")))
+                .build();
+        FaultRegistry.Operation failed = context.faults.begin(1, true);
+        assertInstanceOf(
+            ProvisionedThroughputExceededException.class,
+            unwrap(
+                assertThrows(
+                    RuntimeException.class,
+                    () -> {
+                      if (async) context.async.updateItem(mark).join();
+                      else context.client.updateItem(mark);
+                    })));
+        assertEquals(active, stored(context, 1));
+        assertEquals(1, context.faults.applications(fault));
+        assertEquals(0, context.faults.reservations(fault));
+        assertEquals(0, context.faults.pending(failed));
+        assertEquals(0, context.recorder.requests().get(0).transmissions);
+        assertEquals("passed", context.faults.finish(failed).status);
+        FaultRegistry.Operation next = context.faults.begin(2, true);
+        if (async) context.async.updateItem(mark).join();
+        else context.client.updateItem(mark);
+        assertEquals("4102444800", stored(context, 1).get("ttl").n());
+        assertFalse(stored(context, 1).containsKey("active_history_seq_nr"));
+        assertEquals(
+            "4102444800",
+            context.recorder.requests().get(1).structure.at("/update/set/ttl/N").asText());
+        assertEquals("passed", context.faults.finish(next).status);
+      }
     }
   }
 

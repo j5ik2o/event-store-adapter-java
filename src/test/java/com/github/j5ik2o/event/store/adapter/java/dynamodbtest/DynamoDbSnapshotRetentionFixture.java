@@ -7,16 +7,23 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.j5ik2o.event.store.adapter.java.core.*;
 import com.github.j5ik2o.event.store.adapter.java.dynamodb.*;
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.dynamodb.model.*;
 
-/** DELETE scenes reuse the accepted Local, SDK fault effects and resource ownership. */
+/** Retention scenes reuse the accepted Local, SDK fault effects and resource ownership. */
 public final class DynamoDbSnapshotRetentionFixture {
   private final DynamoDbConfigurationFixture configuration;
   private static final PayloadSerializer<JsonNode> JSON =
@@ -27,9 +34,8 @@ public final class DynamoDbSnapshotRetentionFixture {
   }
 
   public static String unsupported(JsonNode scenario) {
-    if (scenario.at("/store/retention_mode").asText().equals("ttl")) return "TTL方式は未接続";
     for (JsonNode capability : scenario.path("requires"))
-      if (capability.asText().equals("ttl")) return "TTL方式は未接続";
+      if (!capability.asText().equals("ttl")) return "未接続の能力: " + capability.asText();
     if (scenario.has("initialization")) {
       if (!scenario.path("steps").isEmpty()
           || scenario.has("faults")
@@ -47,6 +53,7 @@ public final class DynamoDbSnapshotRetentionFixture {
       for (String field : fields(step.path("observe"))) {
         if (!Set.of(
                 "history",
+                "items",
                 "notifications",
                 "requests",
                 "request_count",
@@ -60,8 +67,8 @@ public final class DynamoDbSnapshotRetentionFixture {
       for (JsonNode request : step.at("/observe/requests")) {
         String api = request.path("api").asText(), phase = request.path("phase").asText();
         if (!(api.equals("Query") && phase.equals("retention-query"))
-            && !(api.equals("BatchWriteItem") && phase.equals("retention-delete")))
-          return "未接続の要求観測";
+            && !(api.equals("BatchWriteItem") && phase.equals("retention-delete"))
+            && !(api.equals("UpdateItem") && phase.equals("retention-mark"))) return "未接続の要求観測";
         for (String constraint : fields(request.path("constraints"))) {
           if (!(api.equals("Query")
                   ? Set.of(
@@ -70,14 +77,21 @@ public final class DynamoDbSnapshotRetentionFixture {
                       "follow_last_evaluated_key",
                       "projection",
                       "include_just_written_history")
-                  : Set.of("retry_unprocessed_items", "initial_batch_sizes"))
+                  : api.equals("UpdateItem")
+                      ? Set.of(
+                          "expression_attribute_names",
+                          "expires",
+                          "target_seq_nrs",
+                          "update",
+                          "condition")
+                      : Set.of("retry_unprocessed_items", "initial_batch_sizes"))
               .contains(constraint)) return "未接続の要求制約: " + constraint;
         }
       }
     }
     for (JsonNode fault : scenario.path("faults")) {
       String phase = fault.path("phase").asText(), kind = fault.path("kind").asText();
-      if (!Set.of("retention-query", "retention-delete").contains(phase))
+      if (!Set.of("retention-query", "retention-delete", "retention-mark").contains(phase))
         return "未接続の障害段階: " + phase;
       Set<String> details = fields(fault.path("details"));
       if (kind.equals("sdk-response")) {
@@ -126,6 +140,9 @@ public final class DynamoDbSnapshotRetentionFixture {
             register(scene, scenario);
             for (JsonNode step : scenario.path("steps")) {
               operation = scene.nextOperation;
+              if (step.has("clock_epoch_seconds"))
+                scene.clock.seconds.set(
+                    step.path("clock_epoch_seconds").bigIntegerValue().longValueExact());
               Throwable failure = null;
               ObjectNode outcome;
               try {
@@ -279,13 +296,21 @@ public final class DynamoDbSnapshotRetentionFixture {
             pages.add(numbers);
           }
           effect =
-              DynamoDbFaultEffects.historyPages(
-                  scene.c.admin,
-                  scene.c.snapshot,
-                  stepAid(scenario, step).asString(),
-                  pages,
-                  committed,
-                  details.path("omit_just_written_history").asBoolean());
+              scene.tables.retentionPolicy().mode().orElseThrow() == RetentionMode.TTL
+                  ? DynamoDbFaultEffects.ttlHistoryPages(
+                      scene.c.admin,
+                      scene.c.snapshot,
+                      stepAid(scenario, step).asString(),
+                      pages,
+                      committed,
+                      details.path("omit_just_written_history").asBoolean())
+                  : DynamoDbFaultEffects.historyPages(
+                      scene.c.admin,
+                      scene.c.snapshot,
+                      stepAid(scenario, step).asString(),
+                      pages,
+                      committed,
+                      details.path("omit_just_written_history").asBoolean());
         } else
           effect =
               DynamoDbFaultEffects.unprocessedFirst(details.path("unprocessed_first_n").intValue());
@@ -329,6 +354,31 @@ public final class DynamoDbSnapshotRetentionFixture {
       scene.failures.forEach(failure -> notifications.add("retention-failure"));
       assertEquals(expected.path("notifications"), notifications);
     }
+    ArrayNode observedItems = scene.last().putArray("observed_items");
+    for (JsonNode definition : expected.path("items")) {
+      String role = definition.path("table").asText();
+      JsonNode values = definition.path("values");
+      String aid = values.path("aid").asText();
+      Map<String, AttributeValue> key = new LinkedHashMap<>();
+      key.put("aid", AttributeValue.fromS(aid));
+      if (!role.equals("head")) {
+        String sort = role.equals("journal") ? "seq_nr" : "skey";
+        key.put(sort, AttributeValue.fromN(values.path(sort).asText()));
+      }
+      Map<String, AttributeValue> item =
+          scene
+              .c
+              .admin
+              .getItem(
+                  GetItemRequest.builder()
+                      .tableName(DynamoDbConfigurationFixture.table(scene.c, role))
+                      .key(key)
+                      .consistentRead(true)
+                      .build())
+              .item();
+      observedItems.addObject().put("table", role).set("item", DynamoDbJson.sdk(item));
+      compareAttributes(scene.attributes(definition), item);
+    }
     int index = 0;
     for (JsonNode exp : expected.path("requests")) {
       while (index < requests.size()
@@ -339,6 +389,53 @@ public final class DynamoDbSnapshotRetentionFixture {
       for (String name : fields(exp.path("constraints"))) {
         JsonNode value = exp.path("constraints").get(name);
         switch (name) {
+          case "expression_attribute_names":
+            compareJson(value, request.structure.path("expression_attribute_names"));
+            break;
+          case "expires":
+            assertEquals(
+                value.bigIntegerValue(),
+                new BigDecimal(
+                        request.structure.at("/expression_attribute_values/:expires/N").asText())
+                    .toBigIntegerExact());
+            break;
+          case "target_seq_nrs":
+            List<DynamoDbRequestRecorder.Request> marks =
+                requests.stream()
+                    .filter(r -> r.phase.equals("retention-mark"))
+                    .collect(Collectors.toList());
+            ArrayNode targets = DynamoDbJson.mapper().createArrayNode();
+            for (DynamoDbRequestRecorder.Request mark : marks) {
+              assertEquals(scene.c.snapshot, mark.original.path("TableName").asText());
+              assertEquals(id.asString(), mark.original.at("/Key/aid/S").asText());
+              targets.add(
+                  new BigDecimal(mark.original.at("/Key/skey/N").asText()).toBigIntegerExact());
+            }
+            compareJson(value, targets);
+            break;
+          case "update":
+            assertEquals(fields(value.path("set")), fields(request.structure.at("/update/set")));
+            for (String attribute : fields(value.path("set"))) {
+              assertEquals(Set.of("value_binding"), fields(value.path("set").path(attribute)));
+              String binding =
+                  ":" + value.path("set").path(attribute).path("value_binding").asText();
+              assertEquals(
+                  request.structure.path("expression_attribute_values").path(binding),
+                  request.structure.path("update").path("set").path(attribute));
+            }
+            compareJson(value.path("remove"), request.structure.at("/update/remove"));
+            break;
+          case "condition":
+            ObjectNode expression =
+                DynamoDbJson.object()
+                    .put(
+                        "ConditionExpression",
+                        "attribute_exists(" + value.path("attribute_exists").asText() + ")");
+            assertEquals(Set.of("attribute_exists"), fields(value));
+            compareJson(
+                DynamoDbRequestStructure.parse(expression).path("condition"),
+                request.structure.path("condition"));
+            break;
           case "index":
             assertEquals("configured-history-index", value.asText());
             assertEquals(scene.c.historyIndex, request.original.path("IndexName").asText());
@@ -429,11 +526,72 @@ public final class DynamoDbSnapshotRetentionFixture {
         DynamoDbJson.read(DynamoDbJson.bytes(actual)));
   }
 
+  private static void compareAttributes(
+      Map<String, AttributeValue> expected, Map<String, AttributeValue> actual) {
+    assertEquals(expected.keySet(), actual.keySet());
+    expected.forEach((name, value) -> compareAttribute(value, actual.get(name)));
+  }
+
+  private static void compareAttribute(AttributeValue expected, AttributeValue actual) {
+    assertEquals(expected.type(), actual.type());
+    switch (expected.type()) {
+      case N:
+        assertEquals(
+            new BigDecimal(expected.n()).toBigIntegerExact(),
+            new BigDecimal(actual.n()).toBigIntegerExact());
+        break;
+      case B:
+        compareJson(
+            JSON.deserialize(expected.b().asByteArray()),
+            JSON.deserialize(actual.b().asByteArray()));
+        break;
+      case L:
+        assertEquals(expected.l().size(), actual.l().size());
+        for (int i = 0; i < expected.l().size(); i++)
+          compareAttribute(expected.l().get(i), actual.l().get(i));
+        break;
+      case M:
+        compareAttributes(expected.m(), actual.m());
+        break;
+      default:
+        assertEquals(expected, actual);
+    }
+  }
+
+  private static final class MutableClock extends Clock {
+    final AtomicLong seconds;
+    private final ZoneId zone;
+
+    MutableClock(long seconds) {
+      this(new AtomicLong(seconds), ZoneOffset.UTC);
+    }
+
+    private MutableClock(AtomicLong seconds, ZoneId zone) {
+      this.seconds = seconds;
+      this.zone = zone;
+    }
+
+    public ZoneId getZone() {
+      return zone;
+    }
+
+    public Clock withZone(ZoneId zone) {
+      return new MutableClock(seconds, zone);
+    }
+
+    public Instant instant() {
+      return Instant.ofEpochSecond(seconds.get());
+    }
+  }
+
   Scene scene(String name, boolean async, RetentionPolicy policy) {
     ObjectNode settings = DynamoDbJson.object();
     ObjectNode store = settings.putObject("store");
     if (policy.keepCount().isPresent()) store.put("retention_count", policy.keepCount().getAsInt());
-    store.put("retention_mode", "delete");
+    store.put(
+        "retention_mode",
+        policy.mode().orElse(RetentionMode.DELETE).name().toLowerCase(Locale.ROOT));
+    policy.graceSeconds().ifPresent(seconds -> store.put("ttl_grace_seconds", seconds));
     return scene(name, async, settings, DynamoDbJson.object());
   }
 
@@ -453,6 +611,8 @@ public final class DynamoDbSnapshotRetentionFixture {
     final Map<Integer, List<FaultRegistry.Fault>> registered = new LinkedHashMap<>();
     final EventStore<JsonNode, JsonNode> syncStore;
     final AsyncEventStore<JsonNode, JsonNode> asyncStore;
+    final DynamoDbTableConfig tables;
+    final MutableClock clock;
     RetentionFailureListener listener = failure -> {};
     int nextOperation = 1;
 
@@ -461,6 +621,11 @@ public final class DynamoDbSnapshotRetentionFixture {
       asynchronous = async;
       observation = actual;
       operations = actual.putArray("operations");
+      clock =
+          new MutableClock(
+              settings.has("clock")
+                  ? settings.at("/clock/epoch_seconds").bigIntegerValue().longValueExact()
+                  : 4102444800L);
       actual.put("case", name).put("sdk_path", async ? "async" : "sync");
       actual.set("tables", DynamoDbJson.sdk(DynamoDbConfigurationTables.names(c)));
       try {
@@ -478,8 +643,7 @@ public final class DynamoDbSnapshotRetentionFixture {
                       listener.onRetentionFailure(failure);
                     })
                 .build();
-        DynamoDbTableConfig tables =
-            DynamoDbConfigurationTables.config(c).retentionPolicy(policy).build();
+        tables = DynamoDbConfigurationTables.config(c).retentionPolicy(policy).clock(clock).build();
         FaultRegistry.Operation operation = c.faults.begin(0, false);
         if (async) {
           asyncStore =
@@ -632,6 +796,10 @@ public final class DynamoDbSnapshotRetentionFixture {
       else syncStore.persistEventAndSnapshot(event, snapshot);
     }
 
+    void advanceClock(long epochSeconds) {
+      clock.seconds.set(epochSeconds);
+    }
+
     void write(EventEnvelope<JsonNode> event, SnapshotEnvelope<JsonNode> snapshot) {
       operate(
           true,
@@ -663,6 +831,7 @@ public final class DynamoDbSnapshotRetentionFixture {
           operations
               .addObject()
               .put("operation", operation.number)
+              .put("clock_epoch_seconds", clock.instant().getEpochSecond())
               .put("result", failure == null ? "success" : failure.getClass().getName());
       List<DynamoDbRequestRecorder.Request> requests = requests(operation.number);
       ArrayNode actualRequests = DynamoDbConfigurationFixture.requestsJson(requests);
@@ -778,7 +947,7 @@ public final class DynamoDbSnapshotRetentionFixture {
         if (key == 0) continue;
         if (item.containsKey("active_history_seq_nr")) active.add(key);
         if (item.containsKey("ttl"))
-          marked.addObject().put("seq_nr", key).put("ttl", Long.parseLong(item.get("ttl").n()));
+          marked.addObject().put("seq_nr", key).put("ttl", new BigInteger(item.get("ttl").n()));
       }
       return history;
     }

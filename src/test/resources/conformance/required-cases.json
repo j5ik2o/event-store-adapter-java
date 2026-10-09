@@ -134,6 +134,10 @@
     "dynamodb-retention-gsi-missing-new",
     "dynamodb-retention-gsi-deduplicate",
     "dynamodb-retention-event-only",
-    "dynamodb-retention-failure-delete"
+    "dynamodb-retention-failure-delete",
+    "dynamodb-retention-ttl-once",
+    "dynamodb-retention-ttl-stale-marked",
+    "dynamodb-retention-failure-ttl",
+    "dynamodb-written-item-shapes"
   ]
 }
