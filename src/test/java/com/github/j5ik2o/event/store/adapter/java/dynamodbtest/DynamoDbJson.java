@@ -1,10 +1,15 @@
 package com.github.j5ik2o.event.store.adapter.java.dynamodbtest;
 
+import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Collection;
 import java.util.Map;
 import software.amazon.awssdk.core.SdkBytes;
@@ -39,6 +44,29 @@ final class DynamoDbJson {
       return MAPPER.writeValueAsBytes(json);
     } catch (JsonProcessingException error) {
       throw new IllegalArgumentException("Invalid SDK JSON", error);
+    }
+  }
+
+  /** Streams the full evidence and verifies the saved tokens without another large JSON string. */
+  static void write(Path evidence, JsonNode observation) throws IOException {
+    try (OutputStream output = Files.newOutputStream(evidence)) {
+      MAPPER.writerWithDefaultPrettyPrinter().writeValue(output, observation);
+    }
+    try (JsonParser saved = MAPPER.getFactory().createParser(evidence.toFile());
+        JsonParser observed = observation.traverse(MAPPER)) {
+      JsonToken token;
+      while ((token = observed.nextToken()) != null) {
+        if (token == JsonToken.VALUE_EMBEDDED_OBJECT) {
+          org.junit.jupiter.api.Assertions.assertEquals(JsonToken.VALUE_STRING, saved.nextToken());
+          org.junit.jupiter.api.Assertions.assertArrayEquals(
+              observed.getBinaryValue(), saved.getBinaryValue());
+        } else {
+          org.junit.jupiter.api.Assertions.assertEquals(token, saved.nextToken());
+          if (token == JsonToken.FIELD_NAME || token.isScalarValue())
+            org.junit.jupiter.api.Assertions.assertEquals(observed.getText(), saved.getText());
+        }
+      }
+      org.junit.jupiter.api.Assertions.assertNull(saved.nextToken());
     }
   }
 

@@ -2,6 +2,7 @@ package com.github.j5ik2o.event.store.adapter.java.conformance;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -14,23 +15,13 @@ final class CaseClassifier {
   static final String REASON_LAYOUT = "DynamoDB の配置の照合であり、メモリに該当しない（設計文書 5.4）";
   static final String REASON_MILLISECONDS =
       "標準時刻型 Instant はナノ秒を表せるため、milliseconds のケースは対象外（設計文書 5.2）";
-  static final String REASON_NOT_EXECUTED = "中核の段階では保存先がなく、このケースを実行していない（設計文書 7.1 の 3・7.3）";
+  static final String REASON_NOT_EXECUTED = "この分類経路では保存先の公開操作を実行していない（設計文書 5.3）";
 
   private CaseClassifier() {}
 
   static CaseResult classify(ConformanceCase c, Backend backend) {
-    if (c.operation().map("fnv1a64"::equals).orElse(false)) {
-      return result(c, backend, ConformanceStatus.NOT_APPLICABLE, REASON_HASH);
-    }
-    if (c.backends().map(names -> !names.contains(backend.dataName())).orElse(false)) {
-      return result(c, backend, ConformanceStatus.NOT_APPLICABLE, REASON_BACKEND);
-    }
-    if ("layout".equals(c.format()) && backend == Backend.MEMORY) {
-      return result(c, backend, ConformanceStatus.NOT_APPLICABLE, REASON_LAYOUT);
-    }
-    if (c.timePrecision().map("milliseconds"::equals).orElse(false)) {
-      return result(c, backend, ConformanceStatus.NOT_APPLICABLE, REASON_MILLISECONDS);
-    }
+    Optional<CaseResult> excluded = exclusion(c, backend);
+    if (excluded.isPresent()) return excluded.get();
     if (ValueCaseRunner.supports(c)) {
       return ValueCaseRunner.run(c, backend);
     }
@@ -38,6 +29,23 @@ final class CaseClassifier {
       return MemoryCaseRunner.run(c);
     }
     return result(c, backend, ConformanceStatus.UNVERIFIED, REASON_NOT_EXECUTED);
+  }
+
+  /** Capability selection is independent of which cases have been connected to a runner. */
+  static Optional<CaseResult> exclusion(ConformanceCase c, Backend backend) {
+    if (c.operation().map("fnv1a64"::equals).orElse(false)) {
+      return Optional.of(result(c, backend, ConformanceStatus.NOT_APPLICABLE, REASON_HASH));
+    }
+    if (c.backends().map(names -> !names.contains(backend.dataName())).orElse(false)) {
+      return Optional.of(result(c, backend, ConformanceStatus.NOT_APPLICABLE, REASON_BACKEND));
+    }
+    if ("layout".equals(c.format()) && backend == Backend.MEMORY) {
+      return Optional.of(result(c, backend, ConformanceStatus.NOT_APPLICABLE, REASON_LAYOUT));
+    }
+    if (c.timePrecision().map("milliseconds"::equals).orElse(false)) {
+      return Optional.of(result(c, backend, ConformanceStatus.NOT_APPLICABLE, REASON_MILLISECONDS));
+    }
+    return Optional.empty();
   }
 
   /** その保存先の一覧にあるのに成功していないケースか。判定はケース ID と保存先の組で行う。 */

@@ -41,10 +41,6 @@ final class DynamoDbTestClients {
         .build();
   }
 
-  static NettyNioAsyncHttpClient.Builder asyncHttp() {
-    return asyncHttp(null);
-  }
-
   static NettyNioAsyncHttpClient.Builder asyncHttp(SdkEventLoopGroup borrowedEventLoop) {
     NettyNioAsyncHttpClient.Builder builder = NettyNioAsyncHttpClient.builder().maxConcurrency(8);
     return borrowedEventLoop == null

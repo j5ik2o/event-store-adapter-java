@@ -7,12 +7,16 @@ import com.github.j5ik2o.event.store.adapter.java.dynamodbtest.DynamoDbSnapshotR
 import com.github.j5ik2o.event.store.adapter.java.dynamodbtest.DynamoDbSnapshotRetentionFixture;
 import java.util.Set;
 
-/** Connects configuration, partial layout, verified reads and retention to real Local. */
+/** Connects applicable cases to the public stores through both real SDK clients. */
 final class DynamoDbCaseRunner {
   private DynamoDbCaseRunner() {}
 
   private static final Set<String> READ_CASE_IDS =
-      Set.of("core-time-roundtrip-min", "core-time-roundtrip-max", "core-json-root-values");
+      Set.of(
+          "core-time-roundtrip-min",
+          "core-time-roundtrip-max",
+          "core-json-root-values",
+          "dynamodb-events-over-one-megabyte");
 
   static final Set<String> RETENTION_CASE_IDS =
       Set.of(
@@ -35,10 +39,12 @@ final class DynamoDbCaseRunner {
   static final Set<String> SNAPSHOT_CASE_IDS =
       Set.of(
           "core-serialize-event",
+          "core-deserialize-event",
           "core-serialize-snapshot",
           "core-deserialize-snapshot",
           "core-storage-commit-failure",
           "core-storage-read-snapshot",
+          "core-storage-read-events",
           "core-replay-without-snapshot",
           "core-snapshot-behind-head",
           "core-default-manifests",
@@ -68,6 +74,8 @@ final class DynamoDbCaseRunner {
   static boolean supports(ConformanceCase c) {
     return c.file().equals("dynamodb/configuration.json")
         || c.file().equals("dynamodb/layout.json")
+        || c.file().equals("dynamodb/write-errors.json")
+        || c.operation().map("validateOccurredAt"::equals).orElse(false)
         || READ_CASE_IDS.contains(c.id())
         || SNAPSHOT_CASE_IDS.contains(c.id())
         || RETENTION_CASE_IDS.contains(c.id());
@@ -78,36 +86,40 @@ final class DynamoDbCaseRunner {
     ObjectNode actual = ConformanceJson.mapper().createObjectNode();
     try {
       boolean layout = c.format().equals("layout");
-      if (READ_CASE_IDS.contains(c.id())
+      if (c.operation().map("validateOccurredAt"::equals).orElse(false)) {
+        new DynamoDbEventReadFixture(fixture).validateOccurredAt(c.materialized(), actual);
+      } else if (READ_CASE_IDS.contains(c.id())
           || SNAPSHOT_CASE_IDS.contains(c.id())
+          || c.file().equals("dynamodb/write-errors.json")
           || RETENTION_CASE_IDS.contains(c.id())) {
         if (RETENTION_CASE_IDS.contains(c.id()))
           new DynamoDbSnapshotRetentionFixture(fixture).execute(c.materialized(), actual);
-        else if (SNAPSHOT_CASE_IDS.contains(c.id()))
+        else if (SNAPSHOT_CASE_IDS.contains(c.id())
+            || c.file().equals("dynamodb/write-errors.json"))
           new DynamoDbSnapshotReadFixture(fixture).execute(c.materialized(), actual);
         else new DynamoDbEventReadFixture(fixture).execute(c.materialized(), actual);
-        if (actual.has("unsupported"))
-          return new CaseResult(
-              c.id(),
-              c.file(),
-              c.rules(),
-              Backend.DYNAMODB,
-              ConformanceStatus.UNVERIFIED,
-              actual.path("unsupported").asText(),
-              null,
-              null,
-              actual);
       } else if (layout) fixture.layout(c.materialized(), actual);
       else fixture.configuration(c.materialized(), actual);
+      if (actual.has("unsupported"))
+        return new CaseResult(
+            c.id(),
+            c.file(),
+            c.rules(),
+            Backend.DYNAMODB,
+            ConformanceStatus.UNVERIFIED,
+            actual.path("unsupported").asText(),
+            null,
+            c.materialized(),
+            actual);
       return new CaseResult(
           c.id(),
           c.file(),
           c.rules(),
           Backend.DYNAMODB,
-          layout ? ConformanceStatus.UNVERIFIED : ConformanceStatus.PASSED,
-          layout ? "3テーブル・索引・Streams・TTL・設定項目を実確認。全データ項目形状と操作本体は未検証" : null,
+          ConformanceStatus.PASSED,
           null,
           null,
+          c.materialized(),
           actual);
     } catch (RuntimeException | AssertionError failure) {
       return new CaseResult(

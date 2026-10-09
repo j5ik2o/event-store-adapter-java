@@ -91,8 +91,7 @@ class CaseClassifierTest {
   }
 
   @Test
-  void requiredListKeepsMemoryAndAddsOnlyVerifiedReadAndRetentionCasesToDynamoDb()
-      throws IOException {
+  void requiredListKeepsExistingCasesAndIncludesSuccessfulConnections() throws IOException {
     Map<Backend, Set<String>> required = RequiredCases.load();
 
     Set<String> memory =
@@ -114,9 +113,22 @@ class CaseClassifierTest {
         Set.of("core-time-roundtrip-min", "core-time-roundtrip-max", "core-json-root-values"));
     dynamodb.addAll(DynamoDbCaseRunner.SNAPSHOT_CASE_IDS);
     dynamodb.addAll(DynamoDbCaseRunner.RETENTION_CASE_IDS);
-    assertEquals(77, dynamodb.size());
-    assertEquals(dynamodb, required.get(Backend.DYNAMODB));
-    assertFalse(required.get(Backend.DYNAMODB).contains("dynamodb-layout-v1"));
+    assertTrue(required.get(Backend.DYNAMODB).containsAll(dynamodb));
+    Set<String> targets =
+        data.cases().stream()
+            .filter(c -> CaseClassifier.exclusion(c, Backend.DYNAMODB).isEmpty())
+            .map(ConformanceCase::id)
+            .collect(Collectors.toSet());
+    assertEquals(104, targets.size());
+    assertEquals(targets, required.get(Backend.DYNAMODB));
+    Set<String> connections =
+        data.cases().stream()
+            .filter(c -> CaseClassifier.exclusion(c, Backend.DYNAMODB).isEmpty())
+            .filter(c -> ValueCaseRunner.supports(c) || DynamoDbCaseRunner.supports(c))
+            .map(ConformanceCase::id)
+            .collect(Collectors.toSet());
+    assertEquals(targets, connections);
+    assertTrue(required.get(Backend.DYNAMODB).contains("dynamodb-layout-v1"));
   }
 
   @Test

@@ -44,6 +44,8 @@ public final class DynamoDbSnapshotRetentionFixture {
           || scenario.path("initialization").has("observe")) return "未接続の初期化期待";
     }
     for (JsonNode step : scenario.path("steps")) {
+      String binding = unsupportedBindings(step.at("/observe/items"));
+      if (binding != null) return binding;
       if (!Set.of(
               "persistEvent",
               "persistEventAndSnapshot",
@@ -159,16 +161,21 @@ public final class DynamoDbSnapshotRetentionFixture {
                         .put(
                             "category",
                             DynamoDbConfigurationFixture.category(failure).replace('_', '-'));
+                actualError.put("message", failure.getMessage());
                 if (failure instanceof ContractViolationException)
                   actualError.put("rule", ((ContractViolationException) failure).rule());
               }
               scene.last().set("outcome", outcome);
+              path.put("comparison_position", "/steps/" + (operation - 1) + "/expect");
               DynamoDbSnapshotReadFixture.compare(scenario, step.path("expect"), outcome, failure);
+              path.put("comparison_position", "/steps/" + (operation - 1) + "/observe");
               observe(scene, step, scenario);
+              path.remove("comparison_position");
             }
           }
       } catch (Exception | AssertionError failure) {
         path.put("failed_operation", operation);
+        DynamoDbConfigurationFixture.recordComparisonFailure(path, failure);
         if (firstFailure == null) {
           actual.put("failed_operation", operation);
           firstFailure = failure;
@@ -219,8 +226,10 @@ public final class DynamoDbSnapshotRetentionFixture {
         if (failure instanceof ContractViolationException)
           error.put("rule", ((ContractViolationException) failure).rule());
       } else outcome.put("result", "success");
+      actual.put("comparison_position", "/initialization/expect");
       DynamoDbSnapshotReadFixture.compare(
           scenario, scenario.at("/initialization/expect"), outcome, failure);
+      actual.remove("comparison_position");
     } finally {
       DynamoDbConfigurationFixture.close(c);
       actual.put("resources_closed", c.closed());
@@ -319,7 +328,8 @@ public final class DynamoDbSnapshotRetentionFixture {
             DynamoDbFaultEffects.sdkError(
                 fault.path("kind").asText().equals("sdk-error")
                     ? details.path("code").asText()
-                    : "InternalServerError");
+                    : "InternalServerError",
+                details.path("message").asText("Injected DynamoDB test failure"));
       scene.register(
           operation,
           fault.path("phase").asText(),
@@ -355,6 +365,7 @@ public final class DynamoDbSnapshotRetentionFixture {
       assertEquals(expected.path("notifications"), notifications);
     }
     ArrayNode observedItems = scene.last().putArray("observed_items");
+    Map<String, AttributeValue> bindings = new LinkedHashMap<>();
     for (JsonNode definition : expected.path("items")) {
       String role = definition.path("table").asText();
       JsonNode values = definition.path("values");
@@ -377,7 +388,7 @@ public final class DynamoDbSnapshotRetentionFixture {
                       .build())
               .item();
       observedItems.addObject().put("table", role).set("item", DynamoDbJson.sdk(item));
-      compareAttributes(scene.attributes(definition), item);
+      compareAttributes(definition, item, bindings);
     }
     int index = 0;
     for (JsonNode exp : expected.path("requests")) {
@@ -526,10 +537,40 @@ public final class DynamoDbSnapshotRetentionFixture {
         DynamoDbJson.read(DynamoDbJson.bytes(actual)));
   }
 
-  private static void compareAttributes(
+  static void compareAttributes(
       Map<String, AttributeValue> expected, Map<String, AttributeValue> actual) {
     assertEquals(expected.keySet(), actual.keySet());
     expected.forEach((name, value) -> compareAttribute(value, actual.get(name)));
+  }
+
+  static String unsupportedBindings(JsonNode items) {
+    for (JsonNode item : items) {
+      for (Iterator<Map.Entry<String, JsonNode>> fields = item.path("bindings").fields();
+          fields.hasNext(); ) {
+        Map.Entry<String, JsonNode> binding = fields.next();
+        if (!binding.getKey().equals("store_id")
+            || !binding.getValue().asText().equals("generated-store-id"))
+          return "未接続の項目束縛: " + binding.getKey() + "=" + binding.getValue().asText();
+      }
+    }
+    return null;
+  }
+
+  static void compareAttributes(
+      JsonNode definition,
+      Map<String, AttributeValue> actual,
+      Map<String, AttributeValue> bindings) {
+    Map<String, AttributeValue> expected = attributes(definition);
+    if (definition.path("bindings").has("store_id")) {
+      assertEquals("S", definition.at("/attributes/store_id").asText());
+      AttributeValue observed = actual.get("store_id");
+      assertNotNull(observed);
+      assertNotNull(observed.s());
+      assertFalse(observed.s().isEmpty());
+      bindings.putIfAbsent("store_id", observed);
+      expected.put("store_id", bindings.get("store_id"));
+    }
+    compareAttributes(expected, actual);
   }
 
   private static void compareAttribute(AttributeValue expected, AttributeValue actual) {
@@ -556,6 +597,76 @@ public final class DynamoDbSnapshotRetentionFixture {
       default:
         assertEquals(expected, actual);
     }
+  }
+
+  static Map<String, AttributeValue> attributes(JsonNode definition) {
+    JsonNode types = definition.path("attributes"),
+        values = definition.path("values"),
+        binary = definition.path("binary_json");
+    Map<String, AttributeValue> item = new LinkedHashMap<>();
+    types
+        .fields()
+        .forEachRemaining(
+            entry -> {
+              String attr = entry.getKey();
+              switch (entry.getValue().asText()) {
+                case "S":
+                  item.put(attr, AttributeValue.fromS(values.path(attr).asText()));
+                  break;
+                case "N":
+                  item.put(attr, AttributeValue.fromN(values.path(attr).asText()));
+                  break;
+                case "B":
+                  item.put(
+                      attr,
+                      AttributeValue.fromB(
+                          SdkBytes.fromByteArray(JSON.serialize(binary.get(attr)))));
+                  break;
+                case "L":
+                  List<AttributeValue> list = new ArrayList<>();
+                  int index = 0;
+                  for (JsonNode member : values.path(attr)) {
+                    Map<String, AttributeValue> nested = new LinkedHashMap<>();
+                    String memberPath = attr + "[" + index++ + "]";
+                    definition
+                        .path("nested_attributes")
+                        .path(memberPath)
+                        .fields()
+                        .forEachRemaining(
+                            field -> {
+                              switch (field.getValue().asText()) {
+                                case "S":
+                                  nested.put(
+                                      field.getKey(),
+                                      AttributeValue.fromS(member.path(field.getKey()).asText()));
+                                  break;
+                                case "N":
+                                  nested.put(
+                                      field.getKey(),
+                                      AttributeValue.fromN(member.path(field.getKey()).asText()));
+                                  break;
+                                case "B":
+                                  nested.put(
+                                      field.getKey(),
+                                      AttributeValue.fromB(
+                                          SdkBytes.fromByteArray(
+                                              JSON.serialize(
+                                                  binary.get(memberPath + "." + field.getKey())))));
+                                  break;
+                                default:
+                                  throw new IllegalArgumentException(
+                                      "Unsupported nested seed type");
+                              }
+                            });
+                    list.add(AttributeValue.fromM(nested));
+                  }
+                  item.put(attr, AttributeValue.fromL(list));
+                  break;
+                default:
+                  throw new IllegalArgumentException("Unsupported seed type");
+              }
+            });
+    return item;
   }
 
   private static final class MutableClock extends Clock {
@@ -699,77 +810,6 @@ public final class DynamoDbSnapshotRetentionFixture {
       }
     }
 
-    private Map<String, AttributeValue> attributes(JsonNode definition) {
-      JsonNode types = definition.path("attributes"),
-          values = definition.path("values"),
-          binary = definition.path("binary_json");
-      Map<String, AttributeValue> item = new LinkedHashMap<>();
-      types
-          .fields()
-          .forEachRemaining(
-              entry -> {
-                String attr = entry.getKey();
-                switch (entry.getValue().asText()) {
-                  case "S":
-                    item.put(attr, AttributeValue.fromS(values.path(attr).asText()));
-                    break;
-                  case "N":
-                    item.put(attr, AttributeValue.fromN(values.path(attr).asText()));
-                    break;
-                  case "B":
-                    item.put(
-                        attr,
-                        AttributeValue.fromB(
-                            SdkBytes.fromByteArray(JSON.serialize(binary.get(attr)))));
-                    break;
-                  case "L":
-                    List<AttributeValue> list = new ArrayList<>();
-                    int index = 0;
-                    for (JsonNode member : values.path(attr)) {
-                      Map<String, AttributeValue> nested = new LinkedHashMap<>();
-                      String memberPath = attr + "[" + index++ + "]";
-                      definition
-                          .path("nested_attributes")
-                          .path(memberPath)
-                          .fields()
-                          .forEachRemaining(
-                              field -> {
-                                switch (field.getValue().asText()) {
-                                  case "S":
-                                    nested.put(
-                                        field.getKey(),
-                                        AttributeValue.fromS(member.path(field.getKey()).asText()));
-                                    break;
-                                  case "N":
-                                    nested.put(
-                                        field.getKey(),
-                                        AttributeValue.fromN(member.path(field.getKey()).asText()));
-                                    break;
-                                  case "B":
-                                    nested.put(
-                                        field.getKey(),
-                                        AttributeValue.fromB(
-                                            SdkBytes.fromByteArray(
-                                                JSON.serialize(
-                                                    binary.get(
-                                                        memberPath + "." + field.getKey())))));
-                                    break;
-                                  default:
-                                    throw new IllegalArgumentException(
-                                        "Unsupported nested seed type");
-                                }
-                              });
-                      list.add(AttributeValue.fromM(nested));
-                    }
-                    item.put(attr, AttributeValue.fromL(list));
-                    break;
-                  default:
-                    throw new IllegalArgumentException("Unsupported seed type");
-                }
-              });
-      return item;
-    }
-
     void register(
         int operation,
         String phase,
@@ -838,7 +878,6 @@ public final class DynamoDbSnapshotRetentionFixture {
       for (int i = 0; i < requests.size(); i++) {
         DynamoDbRequestRecorder.Request request = requests.get(i);
         ((ObjectNode) actualRequests.get(i)).set("original_sdk_response", request.originalResponse);
-        ((ObjectNode) actualRequests.get(i)).set("effective_response", request.effectiveResponse);
         ((ObjectNode) actualRequests.get(i))
             .put("response_from_transmission", request.transmissions > 0);
       }
@@ -856,6 +895,7 @@ public final class DynamoDbSnapshotRetentionFixture {
             .put("aid", notified.aggregateId().asString())
             .put("mode", notified.mode().name())
             .put("cause", notified.cause().getClass().getName())
+            .put("cause_message", notified.cause().getMessage())
             .put("thread", notificationThreads.get(i));
       }
       ArrayNode faultObservations = entry.putArray("faults");
@@ -962,9 +1002,8 @@ public final class DynamoDbSnapshotRetentionFixture {
             .put("sdk_clients_and_http_pools_closed", c.closed());
         Path directory = Path.of("build/reports/dynamodb-snapshot-retention");
         Files.createDirectories(directory);
-        Files.writeString(
-            directory.resolve(name + (asynchronous ? "-async" : "-sync") + ".json"),
-            observation.toPrettyString());
+        DynamoDbJson.write(
+            directory.resolve(name + (asynchronous ? "-async" : "-sync") + ".json"), observation);
       }
     }
   }

@@ -28,9 +28,11 @@ public final class DynamoDbSnapshotReadFixture {
 
   /** Checks connection of every operation and observation before running either SDK path. */
   public static String unsupported(JsonNode scenario) {
-    if (scenario.path("store").hasNonNull("retention_count") || scenario.has("initialization"))
-      return "保持整理または初期化期待はこの最新snapshot実行器に未接続";
+    if (scenario.has("initialization")) return "初期化期待はこの実行器に未接続";
     for (JsonNode step : scenario.path("steps")) {
+      String binding =
+          DynamoDbSnapshotRetentionFixture.unsupportedBindings(step.at("/observe/items"));
+      if (binding != null) return binding;
       if (!Set.of(
               "persistEvent",
               "persistEventAndSnapshot",
@@ -40,25 +42,37 @@ public final class DynamoDbSnapshotReadFixture {
       Iterator<String> fields = step.path("observe").fieldNames();
       while (fields.hasNext()) {
         String field = fields.next();
-        if (!Set.of("requests", "request_count", "no_requests_in_phases").contains(field))
-          return "未接続の観測: " + field;
+        if (!Set.of(
+                "requests",
+                "request_count",
+                "minimum_request_count",
+                "no_requests_in_phases",
+                "notifications",
+                "items")
+            .contains(field)) return "未接続の観測: " + field;
       }
       for (JsonNode request : step.at("/observe/requests")) {
-        if (!request.path("api").asText().equals("BatchGetItem")
-            || !request.path("phase").asText().equals("read-snapshot")) return "未接続の要求観測";
+        String api = request.path("api").asText(), phase = request.path("phase").asText();
+        if (!(api.equals("BatchGetItem") && phase.equals("read-snapshot"))
+            && !(api.equals("TransactWriteItems") && phase.equals("commit"))) return "未接続の要求観測";
         Iterator<String> constraints = request.path("constraints").fieldNames();
         while (constraints.hasNext()) {
           String constraint = constraints.next();
-          if (!Set.of(
-                  "consistent_read_all_tables",
-                  "head_and_current_snapshot",
-                  "only_unprocessed_keys")
+          if (!(api.equals("TransactWriteItems")
+                  ? Set.of("head_return_values_on_condition_check_failure")
+                  : Set.of(
+                      "consistent_read_all_tables",
+                      "head_and_current_snapshot",
+                      "only_unprocessed_keys"))
               .contains(constraint)) return "未接続の要求制約: " + constraint;
         }
       }
     }
     for (JsonNode fault : scenario.path("faults")) {
       String kind = fault.path("kind").asText(), phase = fault.path("phase").asText();
+      Set<String> details = DynamoDbConfigurationFixture.stringsFromFields(fault.path("details"));
+      if ((kind.equals("serialization-error") || kind.equals("storage-error"))
+          && !Set.of("message").containsAll(details)) return "未接続の障害条件";
       if (kind.equals("serialization-error")
           && Set.of(
                   "serialize-event",
@@ -68,13 +82,50 @@ public final class DynamoDbSnapshotReadFixture {
               .contains(phase)) continue;
       if (kind.equals("storage-error")
           && Set.of("commit", "read-events", "read-snapshot").contains(phase)) continue;
+      if (kind.equals("sdk-error")
+          && Set.of("commit", "read-events", "read-snapshot").contains(phase)
+          && Set.of("code", "message", "cancellation_reasons").containsAll(details)
+          && fault.path("injection").asText().equals("replace-request")
+          && Set.of(
+                  "TransactionCanceledException",
+                  "InternalServerError",
+                  "ProvisionedThroughputExceededException")
+              .contains(fault.at("/details/code").asText())) {
+        if (!fault.at("/details/code").asText().equals("TransactionCanceledException")
+            && details.contains("cancellation_reasons")) return "未接続の取消理由条件";
+        for (JsonNode reason : fault.at("/details/cancellation_reasons"))
+          if (!Set.of("target", "code", "old_head_seq_nr")
+                  .containsAll(DynamoDbConfigurationFixture.stringsFromFields(reason))
+              || (reason.has("old_head_seq_nr") && !reason.path("target").asText().equals("head")))
+            return "未接続の取消理由条件";
+        continue;
+      }
       if (kind.equals("sdk-response")
           && phase.equals("read-snapshot")
           && fault.at("/details/unprocessed_keys").isArray()
           && DynamoDbConfigurationFixture.stringsFromFields(fault.path("details"))
-              .equals(Set.of("responses", "unprocessed_keys"))) continue;
+              .equals(Set.of("responses", "unprocessed_keys"))) {
+        for (Iterator<Map.Entry<String, JsonNode>> it = fault.at("/details/responses").fields();
+            it.hasNext(); ) {
+          Map.Entry<String, JsonNode> entry = it.next();
+          if (!entry.getKey().equals("head") || !entry.getValue().asText().equals("stored-head"))
+            return "未接続の障害応答";
+        }
+        for (JsonNode token : fault.at("/details/unprocessed_keys")) {
+          String[] parts = token.asText().split(":", -1);
+          if (!(parts.length == 2 && parts[0].equals("head"))
+              && !(parts.length == 3 && parts[0].equals("snapshot") && parts[2].equals("0")))
+            return "未接続の未処理キー";
+        }
+        continue;
+      }
       if (kind.equals("read-interleave")
           && phase.equals("read-snapshot")
+          && details.equals(Set.of("after", "then", "interleaved_operation"))
+          && DynamoDbConfigurationFixture.stringsFromFields(
+                  fault.at("/details/interleaved_operation"))
+              .equals(Set.of("op", "arguments"))
+          && fault.path("injection").asText().equals("replace-response")
           && fault.at("/details/after").asText().equals("capture-head-before-batch")
           && fault.at("/details/then").asText().equals("replace-batch-response-head")
           && fault
@@ -123,19 +174,25 @@ public final class DynamoDbSnapshotReadFixture {
             ObjectNode actualError = outcome.putObject("error").put("category", category(failure));
             if (failure instanceof ContractViolationException)
               actualError.put("rule", ((ContractViolationException) failure).rule());
+            actualError.put("message", failure.getMessage());
           }
           scene.last().set("outcome", outcome);
+          path.put("comparison_position", "/steps/" + (scene.nextOperation - 2) + "/expect");
           compare(scenario, step.path("expect"), outcome, failure);
+          path.put("comparison_position", "/steps/" + (scene.nextOperation - 2) + "/observe");
           observe(scene, step, scenario);
+          path.remove("comparison_position");
         }
       } catch (RuntimeException | AssertionError failure) {
         path.put("failed_operation", actual.path("current_operation").intValue());
+        DynamoDbConfigurationFixture.recordComparisonFailure(path, failure);
         if (firstFailure == null) {
           actual.put("failed_operation", actual.path("current_operation").intValue());
           firstFailure = failure;
         } else firstFailure.addSuppressed(failure);
       } catch (Exception failure) {
         path.put("failed_operation", actual.path("current_operation").intValue());
+        DynamoDbConfigurationFixture.recordComparisonFailure(path, failure);
         if (firstFailure == null) {
           actual.put("failed_operation", actual.path("current_operation").intValue());
           firstFailure = new IllegalStateException("Snapshot-read scene failed", failure);
@@ -271,7 +328,32 @@ public final class DynamoDbSnapshotReadFixture {
                   new SerializationException(details.path("message").asText()));
           break;
         case "storage-error":
-          effect = DynamoDbFaultEffects.sdkError("InternalServerError");
+          effect =
+              DynamoDbFaultEffects.sdkError(
+                  "InternalServerError", details.path("message").asText());
+          break;
+        case "sdk-error":
+          if (details.path("code").asText().equals("TransactionCanceledException")) {
+            Map<String, String> codes = new LinkedHashMap<>();
+            Long oldHead = null;
+            for (JsonNode reason : details.path("cancellation_reasons")) {
+              if (codes.put(reason.path("target").asText(), reason.path("code").asText()) != null)
+                throw new IllegalArgumentException("Duplicate cancellation target");
+              if (reason.hasNonNull("old_head_seq_nr"))
+                oldHead = reason.path("old_head_seq_nr").bigIntegerValue().longValueExact();
+            }
+            effect =
+                DynamoDbFaultEffects.transactionCanceled(
+                    scene.c.targets,
+                    codes,
+                    oldHead,
+                    details.path("message").asText("Injected DynamoDB test failure"),
+                    () -> {});
+          } else
+            effect =
+                DynamoDbFaultEffects.sdkError(
+                    details.path("code").asText(),
+                    details.path("message").asText("Injected DynamoDB test failure"));
           break;
         case "sdk-response":
           Map<String, List<Map<String, AttributeValue>>> pending = new LinkedHashMap<>();
@@ -283,7 +365,13 @@ public final class DynamoDbSnapshotReadFixture {
                     ignored -> new ArrayList<>())
                 .add(dataKey(parts[0], parts[1]));
           }
-          effect = DynamoDbFaultEffects.partialBatchGet(scene.c.admin, pending);
+          Set<String> responseTables = new HashSet<>();
+          details
+              .path("responses")
+              .fieldNames()
+              .forEachRemaining(
+                  role -> responseTables.add(DynamoDbConfigurationFixture.table(scene.c, role)));
+          effect = DynamoDbFaultEffects.partialBatchGet(scene.c.admin, pending, responseTables);
           break;
         case "read-interleave":
           JsonNode arguments = details.at("/interleaved_operation/arguments");
@@ -355,17 +443,26 @@ public final class DynamoDbSnapshotReadFixture {
       for (Iterator<Map.Entry<String, JsonNode>> entries = exp.path("constraints").fields();
           entries.hasNext(); ) {
         Map.Entry<String, JsonNode> constraint = entries.next();
-        assertTrue(constraint.getValue().booleanValue());
         switch (constraint.getKey()) {
+          case "head_return_values_on_condition_check_failure":
+            List<String> targets = scene.c.targets.transactionTargets(request.original);
+            JsonNode action = request.original.path("TransactItems").get(targets.indexOf("head"));
+            assertEquals(
+                constraint.getValue().asText(),
+                action.elements().next().path("ReturnValuesOnConditionCheckFailure").asText());
+            break;
           case "head_and_current_snapshot":
+            assertTrue(constraint.getValue().booleanValue());
             assertEquals(
                 Set.of(scene.c.head, scene.c.snapshot),
                 fields(request.original.path("RequestItems")));
             break;
           case "consistent_read_all_tables":
+            assertTrue(constraint.getValue().booleanValue());
             DynamoDbConfigurationFixture.strong(request.original);
             break;
           case "only_unprocessed_keys":
+            assertTrue(constraint.getValue().booleanValue());
             Map<String, List<Map<String, AttributeValue>>> pending = new LinkedHashMap<>();
             for (JsonNode fault : scenario.path("faults"))
               if (fault.path("operation").intValue() == scene.nextOperation - 1)
@@ -397,6 +494,44 @@ public final class DynamoDbSnapshotReadFixture {
                 assertEquals(
                     entry.getValue().longValue(),
                     requests.stream().filter(r -> r.phase.equals(entry.getKey())).count()));
+    expected
+        .path("minimum_request_count")
+        .fields()
+        .forEachRemaining(
+            entry ->
+                assertTrue(
+                    requests.stream().filter(r -> r.phase.equals(entry.getKey())).count()
+                        >= entry.getValue().longValue()));
+    ArrayNode notifications = DynamoDbJson.mapper().createArrayNode();
+    scene.notifications.forEach(failure -> notifications.add("retention-failure"));
+    scene.last().set("notifications", notifications);
+    if (expected.has("notifications")) assertEquals(expected.path("notifications"), notifications);
+    ArrayNode items = scene.last().putArray("observed_items");
+    Map<String, AttributeValue> bindings = new LinkedHashMap<>();
+    for (JsonNode definition : expected.path("items")) {
+      String role = definition.path("table").asText();
+      Map<String, AttributeValue> required =
+          DynamoDbSnapshotRetentionFixture.attributes(definition);
+      Map<String, AttributeValue> key = new LinkedHashMap<>();
+      key.put("aid", required.get("aid"));
+      if (!role.equals("head")) {
+        String sort = role.equals("journal") ? "seq_nr" : "skey";
+        key.put(sort, required.get(sort));
+      }
+      Map<String, AttributeValue> item =
+          scene
+              .c
+              .admin
+              .getItem(
+                  GetItemRequest.builder()
+                      .tableName(DynamoDbConfigurationFixture.table(scene.c, role))
+                      .key(key)
+                      .consistentRead(true)
+                      .build())
+              .item();
+      items.addObject().put("table", role).set("item", DynamoDbJson.sdk(item));
+      DynamoDbSnapshotRetentionFixture.compareAttributes(definition, item, bindings);
+    }
     for (JsonNode phase : expected.path("no_requests_in_phases"))
       assertEquals(0, requests.stream().filter(r -> r.phase.equals(phase.asText())).count());
   }
@@ -426,6 +561,7 @@ public final class DynamoDbSnapshotReadFixture {
     final String name;
     final Map<Integer, List<FaultRegistry.Fault>> registered = new LinkedHashMap<>();
     final List<Long> waits = new ArrayList<>();
+    final List<RetentionFailure> notifications = new ArrayList<>();
     final EventStoreConfig<P, A> config;
     final EventStore<P, A> syncStore;
     final AsyncEventStore<P, A> asyncStore;
@@ -448,9 +584,11 @@ public final class DynamoDbSnapshotReadFixture {
           EventStoreConfig.<P, A>builder()
               .payloadSerializer(new FaultPayloadSerializer<>(events, c.faults, false))
               .snapshotSerializer(new FaultPayloadSerializer<>(snapshots, c.faults, true))
+              .retentionFailureListener(notifications::add)
               .build();
       try {
-        DynamoDbConfigurationTables.create(c, RetentionPolicy.none());
+        RetentionPolicy policy = DynamoDbConfigurationFixture.retention(settings.path("store"));
+        DynamoDbConfigurationTables.create(c, policy);
         for (JsonNode definition : settings.at("/seed/items")) {
           Map<String, AttributeValue> item = new LinkedHashMap<>();
           definition
@@ -484,6 +622,7 @@ public final class DynamoDbSnapshotReadFixture {
         }
         DynamoDbTableConfig tables =
             DynamoDbConfigurationTables.config(c)
+                .retentionPolicy(policy)
                 .configurationReadRetryLimit(settings.at("/store/retry_limit").asInt(10))
                 .build();
         FaultRegistry.Operation operation = c.faults.begin(0, false);
@@ -579,6 +718,7 @@ public final class DynamoDbSnapshotReadFixture {
     <T> T operate(boolean writing, Supplier<T> action) {
       FaultRegistry.Operation operation = c.faults.begin(nextOperation++, writing);
       waits.clear();
+      notifications.clear();
       Throwable failure = null;
       T result = null;
       try {
@@ -602,7 +742,13 @@ public final class DynamoDbSnapshotReadFixture {
               : failure instanceof EventStoreException
                   ? category(failure)
                   : failure.getClass().getName());
-      if (failure != null) entry.put("exception", failure.getClass().getName());
+      if (failure != null) {
+        entry.put("exception", failure.getClass().getName()).put("message", failure.getMessage());
+        if (failure.getCause() != null) {
+          entry.put("cause", failure.getCause().getClass().getName());
+          entry.put("cause_message", failure.getCause().getMessage());
+        }
+      }
       if (result instanceof Optional) {
         @SuppressWarnings("unchecked")
         Optional<SnapshotReadResult<A>> snapshot = (Optional<SnapshotReadResult<A>>) result;
@@ -702,9 +848,8 @@ public final class DynamoDbSnapshotReadFixture {
             .put("sdk_clients_and_http_pools_closed", c.closed());
         Path directory = Path.of("build/reports/dynamodb-snapshot-read");
         Files.createDirectories(directory);
-        Files.writeString(
-            directory.resolve(name + (asynchronous ? "-async" : "-sync") + ".json"),
-            observation.toPrettyString());
+        DynamoDbJson.write(
+            directory.resolve(name + (asynchronous ? "-async" : "-sync") + ".json"), observation);
       }
     }
   }

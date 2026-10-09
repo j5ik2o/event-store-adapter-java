@@ -48,10 +48,14 @@ final class DynamoDbFaultEffects {
   }
 
   static FaultRegistry.Effect sdkError(String code) {
+    return sdkError(code, "Injected DynamoDB test failure");
+  }
+
+  static FaultRegistry.Effect sdkError(String code, String message) {
     return new RequestEffect() {
       @Override
       public HttpReply reply(DynamoDbRequestRecorder.Request request) {
-        return error(code, DynamoDbJson.object());
+        return error(code, DynamoDbJson.object().put("Message", message));
       }
     };
   }
@@ -60,6 +64,16 @@ final class DynamoDbFaultEffects {
       DynamoDbRequestTargets targets,
       Map<String, String> codes,
       Long oldHeadSeqNr,
+      Runnable installItems) {
+    return transactionCanceled(
+        targets, codes, oldHeadSeqNr, "Injected DynamoDB test failure", installItems);
+  }
+
+  static FaultRegistry.Effect transactionCanceled(
+      DynamoDbRequestTargets targets,
+      Map<String, String> codes,
+      Long oldHeadSeqNr,
+      String message,
       Runnable installItems) {
     return new RequestEffect() {
       @Override
@@ -74,7 +88,7 @@ final class DynamoDbFaultEffects {
           throw new IllegalArgumentException(
               "Cancellation reasons do not match actual transaction targets");
         }
-        ObjectNode body = DynamoDbJson.object();
+        ObjectNode body = DynamoDbJson.object().put("Message", message);
         ArrayNode reasons = body.putArray("CancellationReasons");
         for (String target : actual) {
           ObjectNode reason = reasons.addObject().put("Code", codes.get(target));
@@ -103,7 +117,6 @@ final class DynamoDbFaultEffects {
         throw new IllegalArgumentException("Unsupported SDK error code: " + code);
     }
     body.put("__type", "com.amazonaws.dynamodb.v20120810#" + code);
-    body.put("Message", "Injected DynamoDB test failure");
     return new HttpReply(status, body);
   }
 
@@ -182,6 +195,13 @@ final class DynamoDbFaultEffects {
 
   static FaultRegistry.Effect partialBatchGet(
       DynamoDbClient admin, Map<String, List<Map<String, AttributeValue>>> unprocessed) {
+    return partialBatchGet(admin, unprocessed, null);
+  }
+
+  static FaultRegistry.Effect partialBatchGet(
+      DynamoDbClient admin,
+      Map<String, List<Map<String, AttributeValue>>> unprocessed,
+      Set<String> responseTables) {
     Map<String, List<Map<String, AttributeValue>>> plan = new LinkedHashMap<>();
     unprocessed.forEach(
         (table, keys) -> {
@@ -189,23 +209,27 @@ final class DynamoDbFaultEffects {
           keys.forEach(key -> copy.add(Map.copyOf(key)));
           plan.put(table, List.copyOf(copy));
         });
-    return new PartialBatchGet(admin, Map.copyOf(plan));
+    return new PartialBatchGet(admin, Map.copyOf(plan), responseTables);
   }
 
   static final class PartialBatchGet implements FaultRegistry.Effect {
     private final DynamoDbClient admin;
     private final Map<String, List<Map<String, AttributeValue>>> plan;
+    private final Set<String> responseTables;
     private BatchGetItemRequest original;
     private Map<String, List<String>> addedAttributes;
 
     private PartialBatchGet(
-        DynamoDbClient admin, Map<String, List<Map<String, AttributeValue>>> plan) {
+        DynamoDbClient admin,
+        Map<String, List<Map<String, AttributeValue>>> plan,
+        Set<String> responseTables) {
       this.admin = admin;
       this.plan = plan;
+      this.responseTables = responseTables == null ? null : Set.copyOf(responseTables);
     }
 
     PartialBatchGet forRequest() {
-      return new PartialBatchGet(admin, plan);
+      return new PartialBatchGet(admin, plan, responseTables);
     }
 
     @Override
@@ -303,7 +327,24 @@ final class DynamoDbFaultEffects {
             for (Map<String, AttributeValue> key : omitted) if (!keys.contains(key)) keys.add(key);
             pending.put(table, originalKeys.toBuilder().keys(keys).build());
           });
-      return batch.toBuilder().responses(responses).unprocessedKeys(pending).build();
+      return checkResponses(
+          batch.toBuilder().responses(responses).unprocessedKeys(pending).build());
+    }
+
+    private BatchGetItemResponse checkResponses(BatchGetItemResponse response) {
+      if (responseTables != null) {
+        Set<String> actual = new LinkedHashSet<>();
+        response
+            .responses()
+            .forEach(
+                (table, items) -> {
+                  if (!items.isEmpty()) actual.add(table);
+                });
+        if (!responseTables.equals(actual))
+          throw new IllegalStateException(
+              "Declared BatchGet response tables differ from real stored items: " + actual);
+      }
+      return response;
     }
 
     @Override
@@ -337,10 +378,11 @@ final class DynamoDbFaultEffects {
       return new HttpReply(
           200,
           DynamoDbJson.sdk(
-              BatchGetItemResponse.builder()
-                  .responses(responses)
-                  .unprocessedKeys(pending)
-                  .build()));
+              checkResponses(
+                  BatchGetItemResponse.builder()
+                      .responses(responses)
+                      .unprocessedKeys(pending)
+                      .build())));
     }
   }
 

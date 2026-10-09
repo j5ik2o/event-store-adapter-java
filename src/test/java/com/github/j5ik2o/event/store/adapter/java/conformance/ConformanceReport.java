@@ -5,10 +5,12 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.EnumMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -72,6 +74,33 @@ final class ConformanceReport {
       ObjectNode counts = backends.putObject(entry.getKey().reportName());
       for (ConformanceStatus status : ConformanceStatus.values()) {
         counts.put(status.label(), entry.getValue().get(status));
+      }
+    }
+    ObjectNode targets = root.putObject("target_cases");
+    ObjectNode reasons = root.putObject("reasons");
+    for (Backend backend : Backend.values()) {
+      ArrayNode ids = targets.putArray(backend.reportName());
+      ObjectNode backendReasons = reasons.putObject(backend.reportName());
+      for (ConformanceStatus status : ConformanceStatus.values()) {
+        Map<String, List<CaseResult>> groups = new LinkedHashMap<>();
+        for (CaseResult result : results) {
+          if (result.backend() == backend && result.status() == status) {
+            if (status != ConformanceStatus.NOT_APPLICABLE
+                && status != ConformanceStatus.UNREPRESENTABLE) ids.add(result.caseId());
+            if (result.reason() != null)
+              groups
+                  .computeIfAbsent(result.reason(), ignored -> new java.util.ArrayList<>())
+                  .add(result);
+          }
+        }
+        ArrayNode entries = backendReasons.putArray(status.label());
+        groups.forEach(
+            (reason, casesWithReason) -> {
+              ObjectNode entry =
+                  entries.addObject().put("reason", reason).put("count", casesWithReason.size());
+              ArrayNode caseIds = entry.putArray("case_ids");
+              casesWithReason.forEach(result -> caseIds.add(result.caseId()));
+            });
       }
     }
 
@@ -153,9 +182,9 @@ final class ConformanceReport {
 
   void write(Path dir) throws IOException {
     Files.createDirectories(dir);
-    Files.write(
-        dir.resolve("report.json"),
-        ConformanceJson.mapper().writerWithDefaultPrettyPrinter().writeValueAsBytes(toJson()));
+    try (OutputStream output = Files.newOutputStream(dir.resolve("report.json"))) {
+      ConformanceJson.mapper().writerWithDefaultPrettyPrinter().writeValue(output, toJson());
+    }
     Files.write(dir.resolve("summary.md"), summary().getBytes(StandardCharsets.UTF_8));
   }
 

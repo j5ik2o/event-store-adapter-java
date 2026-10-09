@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DynamicNode;
@@ -32,9 +33,12 @@ class ConformanceRunnerTest {
     for (ConformanceCase c : data.cases()) {
       for (Backend backend : Backend.values()) {
         results.add(
-            backend == Backend.DYNAMODB && DynamoDbCaseRunner.supports(c)
-                ? DynamoDbCaseRunner.run(c, dynamodb)
-                : CaseClassifier.classify(c, backend));
+            CaseClassifier.exclusion(c, backend)
+                .orElseGet(
+                    () ->
+                        backend == Backend.DYNAMODB && DynamoDbCaseRunner.supports(c)
+                            ? DynamoDbCaseRunner.run(c, dynamodb)
+                            : CaseClassifier.classify(c, backend)));
       }
     }
 
@@ -68,6 +72,23 @@ class ConformanceRunnerTest {
                     CaseClassifier.unknownRequiredIds(required.get(backend), data.cases());
                 if (!unknown.isEmpty()) {
                   fail(backend.reportName() + ": unknown required case ids " + unknown);
+                }
+                Set<String> targets =
+                    data.cases().stream()
+                        .filter(c -> CaseClassifier.exclusion(c, backend).isEmpty())
+                        .map(ConformanceCase::id)
+                        .collect(Collectors.toSet());
+                if (!targets.equals(required.get(backend))) {
+                  Set<String> missing = new java.util.HashSet<>(targets);
+                  missing.removeAll(required.get(backend));
+                  Set<String> extra = new java.util.HashSet<>(required.get(backend));
+                  extra.removeAll(targets);
+                  fail(
+                      backend.reportName()
+                          + ": applicable cases not required="
+                          + missing
+                          + ", inapplicable required cases="
+                          + extra);
                 }
               }
             }));

@@ -23,6 +23,10 @@ import software.amazon.awssdk.services.dynamodb.model.*;
 
 class DynamoDbFaultFoundationTest {
   @RegisterExtension static final DynamoDbLocalExtension local = new DynamoDbLocalExtension();
+
+  @RegisterExtension
+  static final DynamoDbConfigurationFixture fixture = new DynamoDbConfigurationFixture();
+
   private static final String AID = "User-A";
 
   static Map<String, AttributeValue> key(String sort, long seq) {
@@ -66,8 +70,8 @@ class DynamoDbFaultFoundationTest {
   }
 
   @Test
-  void localUsesPinnedVersionDynamicEndpointAndRealSyncAndAsyncClients() {
-    try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+  void localUsesPinnedVersionDynamicEndpointAndRealSyncAndAsyncClients() throws Exception {
+    try (DynamoDbTestContext context = fixture.createContext(local.endpoint())) {
       context.acquire(DynamoDbTestContext.table(context.head, null));
       assertTrue(local.logs().contains("3.3.1"), local.logs());
       assertEquals("http", local.endpoint().getScheme());
@@ -76,13 +80,28 @@ class DynamoDbFaultFoundationTest {
       assertTrue(context.adminAsync.listTables().join().tableNames().contains(context.head));
       // With -inMemory and no -sharedDb, the explicit credential/region pair sees the same data.
       assertEquals(0, context.recorder.requests().size());
+      DynamoDbConfigurationFixture.close(context);
     }
+    assertFalse(fixture.eventLoop().eventLoopGroup().isShuttingDown());
+    assertFalse(fixture.eventLoop().eventLoopGroup().terminationFuture().isDone());
+    try (DynamoDbTestContext next = fixture.createContext(local.endpoint())) {
+      next.createMinimalTables();
+      FaultRegistry.Operation operation = next.faults.begin(1, false);
+      assertTrue(next.async.query(events(next)).get(10, TimeUnit.SECONDS).items().isEmpty());
+      next.recorder.requestsFinished(operation).get(10, TimeUnit.SECONDS);
+      assertEquals(1, next.recorder.requests().get(0).transmissions);
+      assertEquals(0, next.faults.pending(operation));
+      assertEquals("passed", next.faults.finish(operation).status);
+      DynamoDbConfigurationFixture.close(next);
+    }
+    assertFalse(fixture.eventLoop().eventLoopGroup().isShuttingDown());
+    assertFalse(fixture.eventLoop().eventLoopGroup().terminationFuture().isDone());
   }
 
   @Test
   void replaceRequestSkipsBothTransportsAndSdkBuildsCancellationReasonsInActualOrder() {
     for (boolean async : new boolean[] {false, true}) {
-      try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+      try (DynamoDbTestContext context = fixture.createContext(local.endpoint())) {
         context.createMinimalTables();
         context.faults.register(
             1,
@@ -93,6 +112,7 @@ class DynamoDbFaultFoundationTest {
                 context.targets,
                 Map.of("head", "ConditionalCheckFailed", "journal", "None"),
                 7L,
+                "PRIVATE-SENTINEL cancellation",
                 () -> {}));
         FaultRegistry.Operation operation = context.faults.begin(1, true);
         TransactWriteItemsRequest request =
@@ -125,6 +145,7 @@ class DynamoDbFaultFoundationTest {
         TransactionCanceledException canceled = (TransactionCanceledException) error;
         assertEquals(400, canceled.statusCode());
         assertEquals("TransactionCanceledException", canceled.awsErrorDetails().errorCode());
+        assertEquals("PRIVATE-SENTINEL cancellation", canceled.awsErrorDetails().errorMessage());
         assertEquals(
             List.of("ConditionalCheckFailed", "None"),
             canceled.cancellationReasons().stream()
@@ -175,7 +196,7 @@ class DynamoDbFaultFoundationTest {
   }
 
   private static void assertSdkErrors(boolean async) {
-    try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+    try (DynamoDbTestContext context = fixture.createContext(local.endpoint())) {
       context.createMinimalTables();
       String[] codes = {"InternalServerError", "ProvisionedThroughputExceededException"};
       for (int i = 0; i < codes.length; i++) {
@@ -186,7 +207,7 @@ class DynamoDbFaultFoundationTest {
                 "read-events",
                 1,
                 FaultRegistry.Injection.REPLACE_REQUEST,
-                DynamoDbFaultEffects.sdkError(code));
+                DynamoDbFaultEffects.sdkError(code, "PRIVATE-SENTINEL " + code));
         FaultRegistry.Operation operation = context.faults.begin(i + 1, false);
         Throwable failure =
             unwrap(
@@ -199,6 +220,7 @@ class DynamoDbFaultFoundationTest {
         DynamoDbException error = (DynamoDbException) failure;
         assertEquals(i == 0 ? 500 : 400, error.statusCode());
         assertEquals(code, error.awsErrorDetails().errorCode());
+        assertEquals("PRIVATE-SENTINEL " + code, error.awsErrorDetails().errorMessage());
         assertEquals(1, context.faults.applications(fault));
         DynamoDbRequestRecorder.Request observed = context.recorder.requests().get(i);
         assertEquals(1, observed.httpAttempts);
@@ -221,7 +243,7 @@ class DynamoDbFaultFoundationTest {
 
   private static void assertFiniteCount(boolean async) {
     for (FaultRegistry.Injection injection : FaultRegistry.Injection.values()) {
-      try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+      try (DynamoDbTestContext context = fixture.createContext(local.endpoint())) {
         context.createMinimalTables();
         context.admin.putItem(
             PutItemRequest.builder().tableName(context.journal).item(item("seq_nr", 1)).build());
@@ -279,7 +301,7 @@ class DynamoDbFaultFoundationTest {
   @Test
   void sdkDoesNotRetryRetryableFailuresInEitherTransport() {
     for (boolean async : new boolean[] {false, true}) {
-      try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+      try (DynamoDbTestContext context = fixture.createContext(local.endpoint())) {
         context.createMinimalTables();
         FaultRegistry.Fault fault =
             context.faults.register(
@@ -304,7 +326,7 @@ class DynamoDbFaultFoundationTest {
   @Test
   void responseReplacementLeavesRealCommitAndIndependentRequestRecords() {
     for (boolean async : new boolean[] {false, true}) {
-      try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+      try (DynamoDbTestContext context = fixture.createContext(local.endpoint())) {
         context.createMinimalTables();
         RuntimeException lost = new IllegalStateException("response lost after commit");
         context.faults.register(
@@ -381,7 +403,7 @@ class DynamoDbFaultFoundationTest {
   @Test
   void countAndContinuousFaultsExpireBeforeTheNextOperationOnTheSameClients() {
     for (boolean async : new boolean[] {false, true}) {
-      try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+      try (DynamoDbTestContext context = fixture.createContext(local.endpoint())) {
         context.createMinimalTables();
         context.admin.putItem(
             PutItemRequest.builder().tableName(context.journal).item(item("seq_nr", 1)).build());
@@ -427,7 +449,7 @@ class DynamoDbFaultFoundationTest {
 
   @Test
   void readResponseCanBeReplacedAfterRealTransmission() {
-    try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+    try (DynamoDbTestContext context = fixture.createContext(local.endpoint())) {
       context.createMinimalTables();
       context.admin.putItem(
           PutItemRequest.builder().tableName(context.journal).item(item("seq_nr", 1)).build());
@@ -747,7 +769,7 @@ class DynamoDbFaultFoundationTest {
   @Test
   void cancelledSdkOperationDrainsItsCapturedRequestAndCannotAffectTheNextOperation()
       throws Exception {
-    try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+    try (DynamoDbTestContext context = fixture.createContext(local.endpoint())) {
       context.createMinimalTables();
       context.admin.putItem(
           PutItemRequest.builder().tableName(context.journal).item(item("seq_nr", 1)).build());

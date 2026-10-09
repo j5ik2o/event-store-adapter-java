@@ -26,7 +26,70 @@ import software.amazon.awssdk.services.dynamodb.model.*;
 
 class DynamoDbResponsePlansTest {
   @RegisterExtension static final DynamoDbLocalExtension local = new DynamoDbLocalExtension();
+
+  @RegisterExtension
+  static final DynamoDbConfigurationFixture fixture = new DynamoDbConfigurationFixture();
+
   private static final String AID = "User-A";
+
+  @Test
+  void partialBatchGetValidatesDeclaredResponseTablesInBothInjectionModesAndRequestCopies() {
+    Map<String, AttributeValue> storedHead =
+        Map.of("aid", AttributeValue.fromS(AID), "seq_nr", AttributeValue.fromN("7"));
+    try (DynamoDbClient admin =
+        new DynamoDbClient() {
+          @Override
+          public GetItemResponse getItem(GetItemRequest request) {
+            assertEquals("head", request.tableName());
+            return GetItemResponse.builder().item(storedHead).build();
+          }
+
+          @Override
+          public String serviceName() {
+            return "dynamodb";
+          }
+
+          @Override
+          public void close() {}
+        }) {
+      BatchGetItemRequest request =
+          BatchGetItemRequest.builder()
+              .requestItems(
+                  Map.of(
+                      "head",
+                          KeysAndAttributes.builder()
+                              .keys(Map.of("aid", AttributeValue.fromS(AID)))
+                              .build(),
+                      "snapshot", KeysAndAttributes.builder().keys(key("skey", 1)).build()))
+              .build();
+      BatchGetItemResponse serviceResponse =
+          BatchGetItemResponse.builder()
+              .responses(Map.of("head", List.of(storedHead), "snapshot", List.of(item("skey", 1))))
+              .build();
+      for (FaultRegistry.Injection injection : FaultRegistry.Injection.values()) {
+        for (java.util.Set<String> declared :
+            List.of(java.util.Set.of("head"), java.util.Set.<String>of())) {
+          DynamoDbFaultEffects.PartialBatchGet plan =
+              (DynamoDbFaultEffects.PartialBatchGet)
+                  DynamoDbFaultEffects.partialBatchGet(
+                      admin, Map.of("snapshot", List.of(key("skey", 1))), declared);
+          FaultRegistry.Effect effect = plan.forRequest();
+          effect.prepare(request, injection);
+          org.junit.jupiter.api.function.Executable run =
+              () -> {
+                com.fasterxml.jackson.databind.JsonNode response =
+                    injection == FaultRegistry.Injection.REPLACE_REQUEST
+                        ? DynamoDbJson.read(effect.reply(null).body())
+                        : DynamoDbJson.sdk(effect.response(null, serviceResponse));
+                assertEquals(DynamoDbJson.sdk(storedHead), response.at("/Responses/head/0"));
+                assertEquals(0, response.at("/Responses/snapshot").size());
+              };
+          if (declared.isEmpty()) assertThrows(IllegalStateException.class, run);
+          else assertDoesNotThrow(run);
+        }
+      }
+    }
+  }
 
   @Test
   void readInterleaveRequestEffectsRetainTheirOwnCapturedHead() {
@@ -120,7 +183,7 @@ class DynamoDbResponsePlansTest {
       throws Exception {
     List<org.junit.jupiter.api.function.Executable> checks = new ArrayList<>();
     for (FaultRegistry.Injection injection : FaultRegistry.Injection.values()) {
-      try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+      try (DynamoDbTestContext context = fixture.createContext(local.endpoint())) {
         createHistoryTable(context);
         for (int seq = 1; seq <= 2; seq++) {
           Map<String, AttributeValue> history = new java.util.HashMap<>(item("skey", seq));
@@ -213,7 +276,7 @@ class DynamoDbResponsePlansTest {
 
   @Test
   void asyncReadInterleaveKeepsOverlappingCapturesRequestLocal() throws Exception {
-    try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+    try (DynamoDbTestContext context = fixture.createContext(local.endpoint())) {
       context.createMinimalTables();
       Map<String, AttributeValue> headKey = Map.of("aid", AttributeValue.fromS(AID));
       context.admin.putItem(
@@ -356,7 +419,7 @@ class DynamoDbResponsePlansTest {
   private static void assertHistoryPlanResolvesItemsWrittenByItsOperation(boolean async)
       throws Exception {
     for (FaultRegistry.Injection injection : FaultRegistry.Injection.values()) {
-      try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+      try (DynamoDbTestContext context = fixture.createContext(local.endpoint())) {
         createHistoryTable(context);
         Map<String, AttributeValue> first = new java.util.HashMap<>(item("skey", 1));
         first.put("active_history_seq_nr", AttributeValue.fromN("1"));
@@ -451,7 +514,7 @@ class DynamoDbResponsePlansTest {
   private static void assertHistoryPlanRequiresAllPagesBeforeFinish(boolean async)
       throws Exception {
     for (FaultRegistry.Injection injection : FaultRegistry.Injection.values()) {
-      try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+      try (DynamoDbTestContext context = fixture.createContext(local.endpoint())) {
         createHistoryTable(context);
         for (int seq = 1; seq <= 2; seq++) {
           Map<String, AttributeValue> history = new java.util.HashMap<>(item("skey", seq));
@@ -592,7 +655,7 @@ class DynamoDbResponsePlansTest {
   void historyPlanChecksCurrentActiveItemsAtQueryAndDoesNotAdvanceOnRejection() throws Exception {
     for (boolean async : new boolean[] {false, true}) {
       for (FaultRegistry.Injection injection : FaultRegistry.Injection.values()) {
-        try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+        try (DynamoDbTestContext context = fixture.createContext(local.endpoint())) {
           createHistoryTable(context);
           Map<String, AttributeValue> history = new java.util.HashMap<>(item("skey", 1));
           history.put("active_history_seq_nr", AttributeValue.fromN("1"));
@@ -711,7 +774,7 @@ class DynamoDbResponsePlansTest {
   }
 
   private static void assertOverlappingBatchWrite(boolean firstAll) throws Exception {
-    try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+    try (DynamoDbTestContext context = fixture.createContext(local.endpoint())) {
       context.createMinimalTables();
       for (int seq = 1; seq <= 4; seq++)
         context.admin.putItem(
@@ -746,7 +809,8 @@ class DynamoDbResponsePlansTest {
       ExecutorService callers = Executors.newFixedThreadPool(2);
       FaultRegistry.Operation operation = context.faults.begin(1, true);
       try (FaultAsyncHttpClient http =
-              new FaultAsyncHttpClient(DynamoDbTestClients.asyncHttp().build(), context.recorder);
+              new FaultAsyncHttpClient(
+                  DynamoDbTestClients.asyncHttp(fixture.eventLoop()).build(), context.recorder);
           DynamoDbAsyncClient client =
               DynamoDbTestClients.observedAsync(local.endpoint(), context.recorder, http, gate)) {
         try {
@@ -909,7 +973,7 @@ class DynamoDbResponsePlansTest {
 
   private static void assertHistoryRetryAfterUnappliedTerminal(
       FaultRegistry.Injection injection, boolean cancel) throws Exception {
-    try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+    try (DynamoDbTestContext context = fixture.createContext(local.endpoint())) {
       createHistoryTable(context);
       for (int seq = 1; seq <= 2; seq++) {
         java.util.HashMap<String, AttributeValue> history =
@@ -968,7 +1032,8 @@ class DynamoDbResponsePlansTest {
               .limit(1)
               .build();
       try (FaultAsyncHttpClient http =
-              new FaultAsyncHttpClient(DynamoDbTestClients.asyncHttp().build(), context.recorder);
+              new FaultAsyncHttpClient(
+                  DynamoDbTestClients.asyncHttp(fixture.eventLoop()).build(), context.recorder);
           DynamoDbAsyncClient client =
               DynamoDbTestClients.observedAsync(local.endpoint(), context.recorder, http, gate)) {
         CompletableFuture<QueryResponse> initial = client.query(request);
@@ -1096,7 +1161,7 @@ class DynamoDbResponsePlansTest {
   }
 
   private static void assertZeroUnprocessedPlan(boolean async) throws Exception {
-    try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+    try (DynamoDbTestContext context = fixture.createContext(local.endpoint())) {
       context.createMinimalTables();
       for (int seq = 1; seq <= 2; seq++)
         context.admin.putItem(
@@ -1132,6 +1197,21 @@ class DynamoDbResponsePlansTest {
       System.out.println(
           "Zero unprocessed async=" + async + " response=" + response + " finish=passed");
       printOverlapObservations(context, fault, operation);
+      DynamoDbConfigurationFixture.close(context);
+      assertFalse(fixture.eventLoop().eventLoopGroup().isShuttingDown());
+      assertFalse(fixture.eventLoop().eventLoopGroup().terminationFuture().isDone());
+      try (DynamoDbTestContext next = fixture.createContext(local.endpoint())) {
+        next.createMinimalTables();
+        FaultRegistry.Operation nextOperation = next.faults.begin(1, false);
+        assertTrue(next.async.query(events(next)).get(10, TimeUnit.SECONDS).items().isEmpty());
+        next.recorder.requestsFinished(nextOperation).get(10, TimeUnit.SECONDS);
+        assertEquals(1, next.recorder.requests().get(0).transmissions);
+        assertEquals(0, next.faults.pending(nextOperation));
+        assertEquals("passed", next.faults.finish(nextOperation).status);
+        DynamoDbConfigurationFixture.close(next);
+      }
+      assertFalse(fixture.eventLoop().eventLoopGroup().isShuttingDown());
+      assertFalse(fixture.eventLoop().eventLoopGroup().terminationFuture().isDone());
     }
   }
 
@@ -1226,7 +1306,7 @@ class DynamoDbResponsePlansTest {
 
   private static void assertOverlappingBatchGetPreparation(FaultRegistry.Injection injection)
       throws Exception {
-    try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+    try (DynamoDbTestContext context = fixture.createContext(local.endpoint())) {
       context.createMinimalTables();
       Map<String, AttributeValue> pendingKey = key("skey", 1);
       Map<String, AttributeValue> firstKey = key("skey", 2);
@@ -1288,7 +1368,8 @@ class DynamoDbResponsePlansTest {
       ExecutorService callers = Executors.newFixedThreadPool(2);
       FaultRegistry.Operation operation = context.faults.begin(1, false);
       try (FaultAsyncHttpClient http =
-              new FaultAsyncHttpClient(DynamoDbTestClients.asyncHttp().build(), context.recorder);
+              new FaultAsyncHttpClient(
+                  DynamoDbTestClients.asyncHttp(fixture.eventLoop()).build(), context.recorder);
           DynamoDbAsyncClient client =
               DynamoDbTestClients.observedAsync(local.endpoint(), context.recorder, http, gate)) {
         try {
@@ -1526,7 +1607,7 @@ class DynamoDbResponsePlansTest {
 
   private static void assertKeylessAliasedProjection(
       boolean async, FaultRegistry.Injection injection) {
-    try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+    try (DynamoDbTestContext context = fixture.createContext(local.endpoint())) {
       context.createMinimalTables();
       Map<String, AttributeValue> processedKey = key("skey", 1);
       Map<String, AttributeValue> pendingKey = key("skey", 2);
@@ -1656,7 +1737,7 @@ class DynamoDbResponsePlansTest {
   }
 
   private static void assertPartialBatchGetResponse(boolean async) {
-    try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+    try (DynamoDbTestContext context = fixture.createContext(local.endpoint())) {
       context.createMinimalTables();
       Map<String, AttributeValue> journalKey =
           Map.of("aid", AttributeValue.fromS("__config__"), "seq_nr", AttributeValue.fromN("0"));
@@ -1773,7 +1854,7 @@ class DynamoDbResponsePlansTest {
   @Test
   void allKeysCanBeUnprocessedTwiceBeforeARealSuccessfulRetry() {
     for (boolean async : new boolean[] {false, true}) {
-      try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+      try (DynamoDbTestContext context = fixture.createContext(local.endpoint())) {
         context.createMinimalTables();
         context.admin.putItem(
             PutItemRequest.builder().tableName(context.snapshot).item(item("skey", 1)).build());
@@ -1996,7 +2077,7 @@ class DynamoDbResponsePlansTest {
   }
 
   private static void assertEmptyAttributeValues(boolean async) {
-    try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+    try (DynamoDbTestContext context = fixture.createContext(local.endpoint())) {
       context.createMinimalTables();
       java.util.HashMap<String, AttributeValue> values = new java.util.HashMap<>(key("skey", 1));
       values.put("empty_list", AttributeValue.fromL(List.of()));
@@ -2074,7 +2155,7 @@ class DynamoDbResponsePlansTest {
   @Test
   void partialConfigurationBatchReturnsOnlyRequestedStoredItemsAndRetriesActualRemainingKeys() {
     for (boolean async : new boolean[] {false, true}) {
-      try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+      try (DynamoDbTestContext context = fixture.createContext(local.endpoint())) {
         context.createMinimalTables();
         Map<String, AttributeValue> journalKey =
             Map.of("aid", AttributeValue.fromS("__config__"), "seq_nr", AttributeValue.fromN("0"));
@@ -2159,7 +2240,7 @@ class DynamoDbResponsePlansTest {
   @Test
   void unprocessedFirstItemIsExcludedFromRealDeletionAndTheRetryProcessesIt() {
     for (boolean async : new boolean[] {false, true}) {
-      try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+      try (DynamoDbTestContext context = fixture.createContext(local.endpoint())) {
         context.createMinimalTables();
         for (int seq = 1; seq <= 3; seq++)
           context.admin.putItem(
@@ -2212,7 +2293,7 @@ class DynamoDbResponsePlansTest {
   @Test
   void entirelyUnprocessedBatchNeverSendsAnEmptyBatch() {
     for (boolean async : new boolean[] {false, true}) {
-      try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+      try (DynamoDbTestContext context = fixture.createContext(local.endpoint())) {
         context.createMinimalTables();
         context.admin.putItem(
             PutItemRequest.builder().tableName(context.snapshot).item(item("skey", 1)).build());
@@ -2238,7 +2319,7 @@ class DynamoDbResponsePlansTest {
   @Test
   void historyPagesUseStoredItemsAndRealCursorsButConsumeOnlyOnce() throws Exception {
     for (boolean async : new boolean[] {false, true}) {
-      try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+      try (DynamoDbTestContext context = fixture.createContext(local.endpoint())) {
         context.acquire(
             DynamoDbTestContext.table(context.snapshot, "skey").toBuilder()
                 .attributeDefinitions(
@@ -2391,7 +2472,7 @@ class DynamoDbResponsePlansTest {
   @Test
   void interleavedResponseHasCapturedHeadAndNewSnapshotWhileRealHeadAdvances() {
     for (boolean async : new boolean[] {false, true}) {
-      try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+      try (DynamoDbTestContext context = fixture.createContext(local.endpoint())) {
         context.createMinimalTables();
         context.admin.putItem(
             PutItemRequest.builder()
@@ -2493,7 +2574,7 @@ class DynamoDbResponsePlansTest {
 
   @Test
   void installItemsCommitsTheOtherActorsDataBeforeReturningConfigurationConflict() {
-    try (DynamoDbTestContext context = new DynamoDbTestContext(local.endpoint())) {
+    try (DynamoDbTestContext context = fixture.createContext(local.endpoint())) {
       context.createMinimalTables();
       Map<String, AttributeValue> installed =
           Map.of(
