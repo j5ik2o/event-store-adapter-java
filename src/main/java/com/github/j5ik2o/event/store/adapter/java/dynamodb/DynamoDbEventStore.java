@@ -12,8 +12,10 @@ import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsRequest;
 
 /**
- * Validates configuration, writes events and snapshots, and reads events using caller-owned SDK
- * clients. / 呼出し側が所有するSDKで生成時照合、イベントとsnapshotの書込み、イベントの読取りを行います。
+ * Validates configuration, writes and reads events and snapshots using caller-owned SDK clients.
+ * Latest snapshot reads acquire the head and current snapshot non-atomically, with strong
+ * consistency for each item; their sequence numbers may differ in either direction. /
+ * 呼出し側が所有するSDKで生成時照合、イベントとsnapshotの書込み・読取りを行います。 最新snapshotとheadは各項目を強整合で非原子的に読み、どちらの番号が新しい組も返します。
  */
 public final class DynamoDbEventStore {
   private DynamoDbEventStore() {}
@@ -38,7 +40,7 @@ public final class DynamoDbEventStore {
     requireSettings(client, tables, config);
     new DynamoDbConfigurationInitializer(tables, sleeper).initialize(client);
     return new Synchronous<>(
-        client, tables, config.payloadSerializer(), config.snapshotSerializer());
+        client, tables, config.payloadSerializer(), config.snapshotSerializer(), sleeper);
   }
 
   static <P, A> CompletableFuture<AsyncEventStore<P, A>> createAsync(
@@ -53,7 +55,11 @@ public final class DynamoDbEventStore {
           .thenApply(
               ignored ->
                   new Asynchronous<>(
-                      client, tables, config.payloadSerializer(), config.snapshotSerializer()));
+                      client,
+                      tables,
+                      config.payloadSerializer(),
+                      config.snapshotSerializer(),
+                      sleeper));
     } catch (ConfigurationException failure) {
       return CompletableFuture.failedFuture(failure);
     }
@@ -66,25 +72,24 @@ public final class DynamoDbEventStore {
     }
   }
 
-  private static UnsupportedOperationException unavailable() {
-    return new UnsupportedOperationException("DynamoDB event operations are not yet provided");
-  }
-
   private static final class Synchronous<P, A> implements EventStore<P, A> {
     private final DynamoDbClient client;
     private final DynamoDbTableConfig tables;
     private final PayloadSerializer<P> serializer;
     private final PayloadSerializer<A> snapshotSerializer;
+    private final Sleeper sleeper;
 
     Synchronous(
         DynamoDbClient client,
         DynamoDbTableConfig tables,
         PayloadSerializer<P> serializer,
-        PayloadSerializer<A> snapshotSerializer) {
+        PayloadSerializer<A> snapshotSerializer,
+        Sleeper sleeper) {
       this.client = client;
       this.tables = tables;
       this.serializer = serializer;
       this.snapshotSerializer = snapshotSerializer;
+      this.sleeper = sleeper;
     }
 
     public void persistEvent(EventEnvelope<P> event) {
@@ -107,7 +112,7 @@ public final class DynamoDbEventStore {
     }
 
     public Optional<SnapshotReadResult<A>> getLatestSnapshotById(AggregateId id) {
-      throw unavailable();
+      return new DynamoDbSnapshotRead(id, tables, sleeper).read(client, snapshotSerializer);
     }
 
     public List<EventEnvelope<P>> getEventsByIdSinceSeqNr(AggregateId id, long seqNr) {
@@ -131,16 +136,19 @@ public final class DynamoDbEventStore {
     private final DynamoDbTableConfig tables;
     private final PayloadSerializer<P> serializer;
     private final PayloadSerializer<A> snapshotSerializer;
+    private final Sleeper sleeper;
 
     Asynchronous(
         DynamoDbAsyncClient client,
         DynamoDbTableConfig tables,
         PayloadSerializer<P> serializer,
-        PayloadSerializer<A> snapshotSerializer) {
+        PayloadSerializer<A> snapshotSerializer,
+        Sleeper sleeper) {
       this.client = client;
       this.tables = tables;
       this.serializer = serializer;
       this.snapshotSerializer = snapshotSerializer;
+      this.sleeper = sleeper;
     }
 
     public CompletableFuture<Void> persistEvent(EventEnvelope<P> event) {
@@ -181,7 +189,11 @@ public final class DynamoDbEventStore {
 
     public CompletableFuture<Optional<SnapshotReadResult<A>>> getLatestSnapshotById(
         AggregateId id) {
-      return CompletableFuture.failedFuture(unavailable());
+      try {
+        return new DynamoDbSnapshotRead(id, tables, sleeper).readAsync(client, snapshotSerializer);
+      } catch (RuntimeException failure) {
+        return CompletableFuture.failedFuture(failure);
+      }
     }
 
     public CompletableFuture<List<EventEnvelope<P>>> getEventsByIdSinceSeqNr(

@@ -6,10 +6,12 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.j5ik2o.event.store.adapter.java.dynamodbtest.DynamoDbConfigurationFixture;
 import com.github.j5ik2o.event.store.adapter.java.dynamodbtest.DynamoDbEventReadFixture;
+import com.github.j5ik2o.event.store.adapter.java.dynamodbtest.DynamoDbSnapshotReadFixture;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.Test;
@@ -25,6 +27,209 @@ class DynamoDbCaseRunnerTest {
         .filter(c -> c.id().equals(id))
         .findFirst()
         .orElseThrow();
+  }
+
+  @TestFactory
+  Stream<DynamicTest> snapshotCandidatesExecuteEveryOperationExpectationAndObservation()
+      throws IOException {
+    List<ConformanceCase> cases =
+        ConformanceDataLoader.load(ConformanceTestFiles.REAL_ROOT).cases();
+    return DynamoDbCaseRunner.SNAPSHOT_CASE_IDS.stream()
+        .sorted()
+        .map(
+            id ->
+                DynamicTest.dynamicTest(
+                    id,
+                    () -> {
+                      ConformanceCase c =
+                          cases.stream()
+                              .filter(value -> value.id().equals(id))
+                              .findFirst()
+                              .orElseThrow();
+                      CaseResult result = DynamoDbCaseRunner.run(c, fixture);
+                      Path directory = Path.of("build/reports/dynamodb-snapshot-read-candidates");
+                      Files.createDirectories(directory);
+                      ObjectNode receipt =
+                          ConformanceJson.mapper()
+                              .createObjectNode()
+                              .put("case_id", id)
+                              .put("status", result.status().label());
+                      receipt.set("actual", result.actual());
+                      if (result.reason() != null) receipt.put("reason", result.reason());
+                      Files.writeString(directory.resolve(id + ".json"), receipt.toPrettyString());
+                      assertEquals(
+                          ConformanceStatus.PASSED,
+                          result.status(),
+                          () -> String.valueOf(result.reason()));
+                      for (String sdk : List.of("sync", "async")) {
+                        JsonNode actual = result.actual().path(sdk);
+                        assertEquals(
+                            c.materialized().path("steps").size() + 1,
+                            actual.path("operations").size());
+                        for (JsonNode operation : actual.path("operations")) {
+                          assertTrue(operation.path("request_terminal").booleanValue());
+                          assertEquals(0, operation.path("pending").intValue());
+                          assertEquals("passed", operation.path("fault_result").asText());
+                        }
+                        assertTrue(actual.path("resources_closed").booleanValue());
+                        for (int index = 0;
+                            index < c.materialized().path("steps").size();
+                            index++) {
+                          JsonNode error =
+                              c.materialized().path("steps").get(index).at("/expect/error");
+                          if (error.has("rule"))
+                            assertEquals(
+                                error.path("rule"),
+                                actual.path("operations").get(index + 1).at("/outcome/error/rule"));
+                        }
+                      }
+                    }));
+  }
+
+  @TestFactory
+  Stream<DynamicTest> snapshotErrorRuleMismatchFailsOnBothSdkPaths() throws IOException {
+    List<ConformanceCase> cases =
+        ConformanceDataLoader.load(ConformanceTestFiles.REAL_ROOT).cases();
+    return cases.stream()
+        .filter(c -> DynamoDbCaseRunner.SNAPSHOT_CASE_IDS.contains(c.id()))
+        .flatMap(
+            c ->
+                IntStream.range(0, c.materialized().path("steps").size())
+                    .filter(
+                        index ->
+                            c.materialized()
+                                .path("steps")
+                                .get(index)
+                                .at("/expect/error")
+                                .has("rule"))
+                    .mapToObj(
+                        index ->
+                            DynamicTest.dynamicTest(
+                                c.id(),
+                                () -> {
+                                  JsonNode expectedError =
+                                      c.materialized().path("steps").get(index).at("/expect/error");
+                                  String rule = expectedError.path("rule").asText();
+                                  ObjectNode altered = c.materialized().deepCopy();
+                                  ((ObjectNode)
+                                          altered.path("steps").get(index).at("/expect/error"))
+                                      .put("rule", rule.equals("W-9") ? "W-8" : "W-9");
+                                  CaseResult result =
+                                      DynamoDbCaseRunner.run(
+                                          new ConformanceCase(
+                                              c.id(),
+                                              c.file(),
+                                              c.format(),
+                                              c.rules(),
+                                              c.raw(),
+                                              altered),
+                                          fixture);
+                                  ConformanceData data =
+                                      ConformanceDataLoader.load(ConformanceTestFiles.REAL_ROOT);
+                                  Path directory =
+                                      Path.of(
+                                          "build/reports/dynamodb-snapshot-rule-failures", c.id());
+                                  new ConformanceReport(
+                                          data.dataVersion(),
+                                          ManifestVerifier.verify(ConformanceTestFiles.REAL_ROOT),
+                                          "2.0.0-SNAPSHOT",
+                                          null,
+                                          List.of(result),
+                                          data.coverageExclusions())
+                                      .write(directory);
+                                  assertEquals(ConformanceStatus.FAILED, result.status());
+                                  assertEquals(index + 1, result.failedOperation());
+                                  for (String sdk : List.of("sync", "async")) {
+                                    JsonNode actual = result.actual().path(sdk);
+                                    assertEquals(
+                                        index + 1, actual.path("failed_operation").intValue());
+                                    JsonNode operation = actual.path("operations").get(index + 1);
+                                    assertEquals(
+                                        expectedError.path("category"),
+                                        operation.at("/outcome/error/category"));
+                                    assertEquals(
+                                        rule, operation.at("/outcome/error/rule").asText());
+                                    assertTrue(operation.path("request_terminal").booleanValue());
+                                    assertEquals(0, operation.path("pending").intValue());
+                                    assertTrue(actual.path("resources_closed").booleanValue());
+                                  }
+                                  JsonNode reported =
+                                      ConformanceJson.mapper()
+                                          .readTree(
+                                              Files.readAllBytes(directory.resolve("report.json")))
+                                          .at("/cases/0");
+                                  assertEquals("failed", reported.path("status").asText());
+                                  assertEquals(
+                                      index + 1, reported.path("failed_operation").intValue());
+                                  assertEquals(altered, reported.path("expected"));
+                                  assertEquals(
+                                      ConformanceJson.mapper().readTree(result.actual().toString()),
+                                      reported.path("actual"));
+                                })));
+  }
+
+  @Test
+  void snapshotMismatchReportsSavedPayloadAndBothSdkPathsAtActualFailedOperation()
+      throws IOException {
+    ConformanceCase c = find("core-snapshot-behind-head");
+    ObjectNode altered = c.materialized().deepCopy();
+    ((ObjectNode) altered.at("/steps/3/expect")).put("head_seq_nr", 99);
+    CaseResult result =
+        DynamoDbCaseRunner.run(
+            new ConformanceCase(c.id(), c.file(), c.format(), c.rules(), c.raw(), altered),
+            fixture);
+    assertEquals(ConformanceStatus.FAILED, result.status());
+    assertEquals(4, result.failedOperation());
+    for (String sdk : List.of("sync", "async")) {
+      JsonNode path = result.actual().path(sdk);
+      assertEquals(3, path.at("/operations/4/outcome/head_seq_nr").intValue());
+      assertEquals(1, path.at("/operations/4/outcome/snapshot/seq_nr").intValue());
+      assertEquals("snapshot-v1", path.at("/operations/4/outcome/snapshot/manifest").asText());
+      assertEquals(1, path.at("/operations/4/outcome/snapshot/aggregate/items/0").intValue());
+      assertEquals(0, path.at("/operations/4/pending").intValue());
+      assertTrue(path.path("resources_closed").booleanValue());
+    }
+    ConformanceData data = ConformanceDataLoader.load(ConformanceTestFiles.REAL_ROOT);
+    Path directory = Path.of("build/reports/dynamodb-snapshot-read-failures", c.id());
+    new ConformanceReport(
+            data.dataVersion(),
+            ManifestVerifier.verify(ConformanceTestFiles.REAL_ROOT),
+            "2.0.0-SNAPSHOT",
+            null,
+            List.of(result),
+            data.coverageExclusions())
+        .write(directory);
+    JsonNode reported =
+        ConformanceJson.mapper()
+            .readTree(Files.readAllBytes(directory.resolve("report.json")))
+            .at("/cases/0");
+    assertEquals(4, reported.path("failed_operation").intValue());
+    assertEquals("failed", reported.path("status").asText());
+    assertEquals(
+        ConformanceJson.mapper().readTree(result.actual().toString()), reported.path("actual"));
+  }
+
+  @Test
+  void unconnectedSnapshotObservationsAndRetentionStayUnverified() throws IOException {
+    ConformanceCase c = find("core-snapshot-behind-head");
+    for (String field : List.of("history", "items", "notifications")) {
+      ObjectNode altered = c.materialized().deepCopy();
+      ((ObjectNode) altered.at("/steps/3")).putObject("observe").putArray(field);
+      CaseResult result =
+          DynamoDbCaseRunner.run(
+              new ConformanceCase(c.id(), c.file(), c.format(), c.rules(), c.raw(), altered),
+              fixture);
+      assertEquals(ConformanceStatus.UNVERIFIED, result.status());
+      assertTrue(result.reason().contains(field));
+      assertFalse(result.actual().has("sync"));
+    }
+    ConformanceCase retention = find("core-retention-delete-1");
+    assertNotNull(DynamoDbSnapshotReadFixture.unsupported(retention.materialized()));
+    assertFalse(DynamoDbCaseRunner.supports(retention));
+    assertEquals(
+        ConformanceStatus.UNVERIFIED,
+        CaseClassifier.classify(retention, Backend.DYNAMODB).status());
+    assertFalse(RequiredCases.load().get(Backend.DYNAMODB).contains(retention.id()));
   }
 
   @TestFactory
@@ -96,12 +301,15 @@ class DynamoDbCaseRunnerTest {
   }
 
   @Test
-  void supportsOnlyConfigurationPartialLayoutAndVerifiedReadCases() throws IOException {
+  void supportsOnlyConfigurationPartialLayoutAndSelectedReadCases() throws IOException {
     assertTrue(DynamoDbCaseRunner.supports(find("dynamodb-config-new")));
     assertTrue(DynamoDbCaseRunner.supports(find("dynamodb-layout-v1")));
     assertTrue(DynamoDbCaseRunner.supports(find("core-time-roundtrip-min")));
     assertTrue(DynamoDbCaseRunner.supports(find("core-time-roundtrip-max")));
     assertTrue(DynamoDbCaseRunner.supports(find("core-json-root-values")));
+    assertTrue(DynamoDbCaseRunner.supports(find("dynamodb-latest-unprocessed")));
+    assertTrue(DynamoDbCaseRunner.supports(find("dynamodb-snapshot-ahead-of-head")));
+    assertTrue(DynamoDbCaseRunner.supports(find("dynamodb-no-head-with-snapshot")));
     assertFalse(DynamoDbCaseRunner.supports(find("occurred-at-min")));
     assertThrows(
         IllegalArgumentException.class,
