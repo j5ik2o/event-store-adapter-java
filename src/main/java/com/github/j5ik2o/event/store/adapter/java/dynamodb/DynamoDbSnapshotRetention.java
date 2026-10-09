@@ -229,16 +229,24 @@ final class DynamoDbSnapshotRetention {
 
   private void accept(QueryResponse response) {
     for (Map<String, AttributeValue> item : response.items()) {
-      AttributeValue aid = item.get("aid");
-      long seqNr = integer(item, "skey");
-      if (aid == null
-          || aid.type() != AttributeValue.Type.S
-          || !id.asString().equals(aid.s())
-          || seqNr < 1
-          || seqNr != integer(item, "active_history_seq_nr")
-          || item.containsKey("ttl"))
-        throw new StorageException("DynamoDB returned an invalid active history key");
-      EventStoreInputValidation.checkRead(id, seqNr);
+      long seqNr;
+      try {
+        AttributeValue aid = item.get("aid");
+        seqNr = integer(item, "skey");
+        if (aid == null
+            || aid.type() != AttributeValue.Type.S
+            || !id.asString().equals(aid.s())
+            || seqNr < 1
+            || seqNr != integer(item, "active_history_seq_nr")
+            || item.containsKey("ttl"))
+          throw new StorageException("DynamoDB returned an invalid active history key");
+        EventStoreInputValidation.checkRead(id, seqNr);
+      } catch (StorageException failure) {
+        throw failure;
+      } catch (RuntimeException invalidResponse) {
+        throw new StorageException(
+            "DynamoDB returned an invalid active history key", invalidResponse);
+      }
       history.add(seqNr);
     }
   }

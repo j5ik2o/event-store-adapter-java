@@ -197,14 +197,19 @@ public final class DynamoDbEventStore {
                     result.completeExceptionally(DynamoDbEventWrite.classify(event, failure));
                     return;
                   }
-                  new DynamoDbSnapshotRetention(
-                          event.aggregateId(),
-                          snapshot.seqNr(),
-                          tables,
-                          retentionFailureListener,
-                          sleeper)
-                      .retainAsync(client)
-                      .thenRun(() -> result.complete(null));
+                  try {
+                    new DynamoDbSnapshotRetention(
+                            event.aggregateId(),
+                            snapshot.seqNr(),
+                            tables,
+                            retentionFailureListener,
+                            sleeper)
+                        .retainAsync(client)
+                        .whenComplete((ignored, retentionFailure) -> result.complete(null));
+                  } catch (RuntimeException retentionFailure) {
+                    // Retention cannot change the success of the committed write.
+                    result.complete(null);
+                  }
                 });
       } catch (RuntimeException failure) {
         result.completeExceptionally(DynamoDbEventWrite.classify(event, failure));

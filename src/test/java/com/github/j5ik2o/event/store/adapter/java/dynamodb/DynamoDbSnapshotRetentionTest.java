@@ -277,6 +277,9 @@ class DynamoDbSnapshotRetentionTest {
                 CompletableFuture.completedFuture(QueryResponse.builder().items(invalid).build());
         s.write(async, true, 2);
         assertEquals(1, s.failures.size());
+        StorageException cause =
+            assertInstanceOf(StorageException.class, s.failures.get(0).cause());
+        assertEquals(ErrorCategory.STORAGE, cause.category());
         assertTrue(s.deletes.isEmpty());
       }
       Stub s = new Stub(RetentionPolicy.delete(1));
@@ -294,6 +297,65 @@ class DynamoDbSnapshotRetentionTest {
       assertEquals(1, s.failures.size());
       assertTrue(s.waits.isEmpty());
     }
+  }
+
+  @Test
+  void invalidStoredHistoryNumbersAreStorageFailuresOnBothPaths() {
+    for (boolean async : List.of(false, true)) {
+      for (String field : List.of("skey", "active_history_seq_nr")) {
+        for (String number : List.of("9007199254740992", "1.5", "9223372036854775808")) {
+          Stub s = new Stub(RetentionPolicy.delete(1));
+          Map<String, AttributeValue> invalid = new LinkedHashMap<>(history(1));
+          invalid.put(field, AttributeValue.fromN(number));
+          if (field.equals("skey"))
+            invalid.put("active_history_seq_nr", AttributeValue.fromN(number));
+          s.query =
+              request ->
+                  CompletableFuture.completedFuture(
+                      QueryResponse.builder().items(invalid).lastEvaluatedKey(history(1)).build());
+          s.write(async, true, 2);
+          assertEquals(1, s.queries.size());
+          assertTrue(s.deletes.isEmpty());
+          assertEquals(1, s.failures.size());
+          StorageException cause =
+              assertInstanceOf(StorageException.class, s.failures.get(0).cause());
+          assertEquals(ErrorCategory.STORAGE, cause.category());
+          if (field.equals("active_history_seq_nr") && number.equals("9007199254740992"))
+            assertNull(cause.getCause()); // The existing unequal-key rejection is already Storage.
+          else if (number.equals("9007199254740992"))
+            assertInstanceOf(ContractViolationException.class, cause.getCause());
+          else assertInstanceOf(ArithmeticException.class, cause.getCause());
+        }
+      }
+    }
+  }
+
+  @Test
+  void asynchronousBackoffListenerErrorStillCompletesCommittedWrite() throws Exception {
+    Stub s = new Stub(RetentionPolicy.delete(1));
+    s.query =
+        request ->
+            CompletableFuture.completedFuture(QueryResponse.builder().items(history(1)).build());
+    s.delete =
+        request ->
+            CompletableFuture.completedFuture(
+                BatchWriteItemResponse.builder().unprocessedItems(request.requestItems()).build());
+    CompletableFuture<Void> wait = new CompletableFuture<>();
+    s.wait = delay -> wait;
+    IllegalStateException cause = new IllegalStateException("backoff");
+    AssertionError callbackError = new AssertionError("listener");
+    CompletableFuture<Void> result = s.asyncStore().persistEventAndSnapshot(event(2), snapshot(2));
+    s.listener =
+        failure -> {
+          assertFalse(result.isDone());
+          throw callbackError;
+        };
+    assertFalse(result.isDone());
+    wait.completeExceptionally(cause);
+    assertNull(result.get(5, TimeUnit.SECONDS));
+    assertEquals(1, s.failures.size());
+    assertSame(cause, s.failures.get(0).cause());
+    assertEquals(1, s.deletes.size());
   }
 
   @Test

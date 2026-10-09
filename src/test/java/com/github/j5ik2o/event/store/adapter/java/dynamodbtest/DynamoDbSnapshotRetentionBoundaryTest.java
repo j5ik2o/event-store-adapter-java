@@ -89,6 +89,20 @@ class DynamoDbSnapshotRetentionBoundaryTest {
         .build();
   }
 
+  private static EventStoreConfig<JsonNode, JsonNode> config(
+      DynamoDbSnapshotRetentionFixture.Scene s) {
+    return EventStoreConfig.<JsonNode, JsonNode>builder()
+        .payloadSerializer(JSON)
+        .snapshotSerializer(JSON)
+        .retentionFailureListener(
+            failure -> {
+              s.failures.add(failure);
+              s.notificationThreads.add(Thread.currentThread().getName());
+              s.listener.onRetentionFailure(failure);
+            })
+        .build();
+  }
+
   private static AwsRequest observedRequest(AwsRequest request, ExecutionInterceptor observer) {
     SdkPlugin plugin =
         builder ->
@@ -160,21 +174,303 @@ class DynamoDbSnapshotRetentionBoundaryTest {
                     DynamoDbConfigurationTables.config(s.c)
                         .retentionPolicy(RetentionPolicy.delete(1))
                         .build(),
-                    EventStoreConfig.<JsonNode, JsonNode>builder()
-                        .payloadSerializer(JSON)
-                        .snapshotSerializer(JSON)
-                        .retentionFailureListener(
-                            failure -> {
-                              s.failures.add(failure);
-                              s.notificationThreads.add(Thread.currentThread().getName());
-                              s.listener.onRetentionFailure(failure);
-                            })
-                        .build(),
+                    config(s),
                     delay -> {
                       s.waits.add(delay);
                       return CompletableFuture.completedFuture(null);
                     })
                 .join());
+  }
+
+  @TestFactory
+  Stream<DynamicTest> invalidStoredHistoryNumbersAreStorageFailures() {
+    return Stream.of("skey", "active_history_seq_nr")
+        .flatMap(
+            field ->
+                Stream.of("9007199254740992", "1.5", "9223372036854775808")
+                    .flatMap(
+                        number ->
+                            both(
+                                "invalid-stored-" + field + "-" + number,
+                                RetentionPolicy.delete(1),
+                                s -> {
+                                  backlog(s, 1);
+                                  Map<String, AttributeValue> invalid =
+                                      new LinkedHashMap<>(s.stored("snapshot", ID, 1));
+                                  invalid.put(field, AttributeValue.fromN(number));
+                                  if (field.equals("skey"))
+                                    invalid.put(
+                                        "active_history_seq_nr", AttributeValue.fromN(number));
+                                  s.c.admin.putItem(
+                                      PutItemRequest.builder()
+                                          .tableName(s.c.snapshot)
+                                          .item(invalid)
+                                          .build());
+                                  Map<String, AttributeValue> actualInvalid =
+                                      s.rows(ID).stream()
+                                          .filter(
+                                              row -> row.get("skey").equals(invalid.get("skey")))
+                                          .findFirst()
+                                          .orElseThrow();
+                                  assertEquals(invalid, actualInvalid);
+                                  s.observation
+                                      .put("invalid_field", field)
+                                      .put("invalid_number", number)
+                                      .set(
+                                          "actual_invalid_stored_item",
+                                          DynamoDbJson.sdk(actualInvalid));
+                                  Thread caller = Thread.currentThread();
+                                  AtomicReference<Thread> notificationThread =
+                                      new AtomicReference<>();
+                                  s.listener =
+                                      failure -> notificationThread.set(Thread.currentThread());
+                                  s.write(event(ID, 2), snapshot(2));
+                                  assertCommitted(s, 2);
+                                  assertTrue(s.rows(ID).contains(invalid));
+                                  assertEquals(1, phase(s, "retention-query").size());
+                                  assertTrue(phase(s, "retention-delete").isEmpty());
+                                  assertEquals(2, s.lastRequests().size());
+                                  assertEquals(1, s.failures.size());
+                                  if (s.asynchronous) {
+                                    assertNotSame(caller, notificationThread.get());
+                                    assertTrue(
+                                        notificationThread
+                                            .get()
+                                            .getName()
+                                            .startsWith("sdk-async-response"));
+                                  } else assertSame(caller, notificationThread.get());
+                                  Throwable cause = s.failures.get(0).cause();
+                                  s.observation
+                                      .put("notification_cause", cause.getClass().getName())
+                                      .put(
+                                          "notification_error_category",
+                                          cause instanceof EventStoreException
+                                              ? ((EventStoreException) cause).category().name()
+                                              : null);
+                                  StorageException storage =
+                                      assertInstanceOf(StorageException.class, cause);
+                                  assertEquals(ErrorCategory.STORAGE, storage.category());
+                                })));
+  }
+
+  private static void assertCommitted(DynamoDbSnapshotRetentionFixture.Scene s, long seq) {
+    for (String role : List.of("head", "snapshot", "journal")) {
+      Map<String, AttributeValue> stored = s.stored(role, ID, role.equals("journal") ? seq : 0);
+      s.observation.set("stored_" + role, DynamoDbJson.sdk(stored));
+      assertEquals(Long.toString(seq), stored.get("seq_nr").n());
+    }
+  }
+
+  @TestFactory
+  Stream<DynamicTest> backoffListenerAssertionErrorObservesCommittedWriteAndPublicTerminal() {
+    return both(
+        "backoff-listener-error",
+        RetentionPolicy.delete(1),
+        s -> {
+          backlog(s, 2);
+          IllegalStateException cause = new IllegalStateException("backoff failure");
+          AssertionError callbackError = new AssertionError("listener failure");
+          CompletableFuture<Void> commitEntered = new CompletableFuture<>(),
+              commitRelease = new CompletableFuture<>(),
+              notificationEntered = new CompletableFuture<>(),
+              notificationRelease = new CompletableFuture<>();
+          AtomicReference<CompletableFuture<Void>> publicResult = new AtomicReference<>();
+          Thread caller = Thread.currentThread();
+          s.listener =
+              failure -> {
+                assertSame(cause, failure.cause());
+                if (s.asynchronous) {
+                  assertTrue(Thread.currentThread().getName().startsWith("sdk-async-response"));
+                  s.observation.put(
+                      "public_future_pending_at_notification", !publicResult.get().isDone());
+                  notificationEntered.complete(null);
+                  notificationRelease.join();
+                } else assertSame(caller, Thread.currentThread());
+                s.observation.put("listener_assertion_error_sent", true);
+                throw callbackError;
+              };
+          DynamoDbTableConfig tables =
+              DynamoDbConfigurationTables.config(s.c)
+                  .retentionPolicy(RetentionPolicy.delete(1))
+                  .build();
+          AsyncEventStore<JsonNode, JsonNode> async =
+              s.asynchronous
+                  ? s.operate(
+                      false,
+                      () ->
+                          DynamoDbTestFactory.createAsync(
+                                  s.c.async,
+                                  tables,
+                                  config(s),
+                                  delay -> {
+                                    s.waits.add(delay);
+                                    return CompletableFuture.failedFuture(cause);
+                                  })
+                              .join())
+                  : null;
+          EventStore<JsonNode, JsonNode> sync =
+              s.asynchronous
+                  ? null
+                  : s.operate(
+                      false,
+                      () ->
+                          DynamoDbTestFactory.create(
+                              s.c.client,
+                              tables,
+                              config(s),
+                              delay -> {
+                                s.waits.add(delay);
+                                throw cause;
+                              }));
+          if (s.asynchronous)
+            s.register(
+                "commit",
+                1,
+                FaultRegistry.Injection.REPLACE_RESPONSE,
+                DynamoDbFaultEffects.response(
+                    response -> {
+                      s.observation.set("actual_commit_response", DynamoDbJson.sdk(response));
+                      commitEntered.complete(null);
+                      commitRelease.join();
+                      return response;
+                    }));
+          s.register(
+              "retention-delete",
+              1,
+              FaultRegistry.Injection.REPLACE_REQUEST,
+              DynamoDbFaultEffects.unprocessedFirst(1));
+          try {
+            s.operate(
+                true,
+                () -> {
+                  if (!s.asynchronous) {
+                    assertSame(
+                        callbackError,
+                        assertThrows(
+                            AssertionError.class,
+                            () -> sync.persistEventAndSnapshot(event(ID, 3), snapshot(3))));
+                    s.observation.put("synchronous_error_propagated", true);
+                    return null;
+                  }
+                  CompletableFuture<Void> result =
+                      async.persistEventAndSnapshot(event(ID, 3), snapshot(3));
+                  publicResult.set(result);
+                  try {
+                    commitEntered.get(10, TimeUnit.SECONDS);
+                    commitRelease.complete(null);
+                    notificationEntered.get(10, TimeUnit.SECONDS);
+                    assertFalse(result.isDone());
+                    notificationRelease.complete(null);
+                    try {
+                      assertNull(result.get(3, TimeUnit.SECONDS));
+                      s.observation.put("public_future_result", "success");
+                    } catch (TimeoutException pending) {
+                      s.observation.put("public_future_result", "pending");
+                      throw pending;
+                    }
+                    return null;
+                  } catch (Exception failure) {
+                    throw new CompletionException(failure);
+                  } finally {
+                    commitRelease.complete(null);
+                    notificationRelease.complete(null);
+                  }
+                });
+          } finally {
+            commitRelease.complete(null);
+            notificationRelease.complete(null);
+            assertCommitted(s, 3);
+            s.observation.set("actual_history_after_failure", s.history(ID));
+          }
+          assertEquals(1, s.failures.size());
+          assertSame(cause, s.failures.get(0).cause());
+          assertEquals(List.of(50L), s.waits);
+          assertEquals(1, phase(s, "retention-delete").size());
+          assertHistory(s, List.of(2L, 3L));
+          if (s.asynchronous)
+            assertTrue(s.observation.path("public_future_pending_at_notification").booleanValue());
+          s.operate(
+              true,
+              () -> {
+                if (s.asynchronous) async.persistEventAndSnapshot(event(ID, 4), snapshot(4)).join();
+                else sync.persistEventAndSnapshot(event(ID, 4), snapshot(4));
+                return null;
+              });
+          assertTrue(s.failures.isEmpty());
+          assertHistory(s, List.of(4L));
+        });
+  }
+
+  @TestFactory
+  Stream<DynamicTest> sdkTerminalListenerAssertionErrorCannotStrandCommittedWrite() {
+    return Stream.of("retention-query", "retention-delete", "invalid-query")
+        .map(
+            phase ->
+                DynamicTest.dynamicTest(
+                    "SDK listener AssertionError " + phase,
+                    () -> {
+                      try (DynamoDbSnapshotRetentionFixture.Scene s =
+                          fixture.scene(
+                              "sdk-listener-error-" + phase, true, RetentionPolicy.delete(1))) {
+                        backlog(s, 1);
+                        AsyncEventStore<JsonNode, JsonNode> store = asyncStore(s, s.c.async);
+                        s.listener =
+                            failure -> {
+                              s.observation
+                                  .put("listener_assertion_error_sent", true)
+                                  .put("notification_cause", failure.cause().getClass().getName())
+                                  .put("notification_thread", Thread.currentThread().getName());
+                              throw new AssertionError("listener failure");
+                            };
+                        s.register(
+                            phase.equals("invalid-query") ? "retention-query" : phase,
+                            1,
+                            phase.equals("invalid-query")
+                                ? FaultRegistry.Injection.REPLACE_RESPONSE
+                                : FaultRegistry.Injection.REPLACE_REQUEST,
+                            phase.equals("invalid-query")
+                                ? DynamoDbFaultEffects.response(
+                                    response -> {
+                                      Map<String, AttributeValue> invalid =
+                                          new LinkedHashMap<>(
+                                              ((QueryResponse) response).items().get(0));
+                                      invalid.put("skey", AttributeValue.fromN("9007199254740992"));
+                                      invalid.put(
+                                          "active_history_seq_nr",
+                                          AttributeValue.fromN("9007199254740992"));
+                                      return ((QueryResponse) response)
+                                          .toBuilder().items(invalid).build();
+                                    })
+                                : DynamoDbFaultEffects.sdkError("InternalServerError"));
+                        s.operate(
+                            true,
+                            () -> {
+                              CompletableFuture<Void> result =
+                                  store.persistEventAndSnapshot(event(ID, 2), snapshot(2));
+                              try {
+                                assertNull(result.get(3, TimeUnit.SECONDS));
+                                s.observation.put("public_future_result", "success");
+                                return null;
+                              } catch (Exception failure) {
+                                throw new CompletionException(failure);
+                              }
+                            });
+                        assertCommitted(s, 2);
+                        assertEquals(1, s.failures.size());
+                        assertTrue(s.notificationThreads.get(0).startsWith("sdk-async-response"));
+                        if (phase.equals("invalid-query"))
+                          assertInstanceOf(StorageException.class, s.failures.get(0).cause());
+                        else assertSame(phase(s, phase).get(0).failure, s.failures.get(0).cause());
+                        s.operate(
+                            true,
+                            () -> {
+                              store.persistEventAndSnapshot(event(ID, 3), snapshot(3)).join();
+                              return null;
+                            });
+                        assertTrue(s.failures.isEmpty());
+                        assertHistory(s, List.of(3L));
+                      }
+                    }));
   }
 
   @org.junit.jupiter.api.Test
