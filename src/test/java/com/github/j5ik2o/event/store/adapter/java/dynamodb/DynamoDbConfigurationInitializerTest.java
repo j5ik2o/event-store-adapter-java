@@ -97,12 +97,12 @@ class DynamoDbConfigurationInitializerTest {
             assertThrows(
                 CompletionException.class,
                 () -> async.persistEventAndSnapshot(null, null).join())));
-    assertThrows(UnsupportedOperationException.class, () -> sync.getLatestSnapshotById(null));
+    assertThrows(NullPointerException.class, () -> sync.getLatestSnapshotById(null));
     AggregateId id = AggregateId.of("A", "empty");
     assertTrue(sync.getEventsByIdSinceSeqNr(id, 0).isEmpty());
     assertTrue(async.getEventsByIdSinceSeqNr(id, 0).join().isEmpty());
     assertInstanceOf(
-        UnsupportedOperationException.class,
+        NullPointerException.class,
         EventStoreExceptions.unwrap(
             assertThrows(
                 CompletionException.class, () -> async.getLatestSnapshotById(null).join())));

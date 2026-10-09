@@ -3,19 +3,54 @@ package com.github.j5ik2o.event.store.adapter.java.conformance;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.j5ik2o.event.store.adapter.java.dynamodbtest.DynamoDbConfigurationFixture;
 import com.github.j5ik2o.event.store.adapter.java.dynamodbtest.DynamoDbEventReadFixture;
+import com.github.j5ik2o.event.store.adapter.java.dynamodbtest.DynamoDbSnapshotReadFixture;
 import java.util.Set;
 
-/** Connects configuration, partial layout and the verified event-read cases to real Local. */
+/** Connects configuration, partial layout and verified read scenarios to real Local. */
 final class DynamoDbCaseRunner {
   private DynamoDbCaseRunner() {}
 
   private static final Set<String> READ_CASE_IDS =
       Set.of("core-time-roundtrip-min", "core-time-roundtrip-max", "core-json-root-values");
 
+  static final Set<String> SNAPSHOT_CASE_IDS =
+      Set.of(
+          "core-serialize-event",
+          "core-serialize-snapshot",
+          "core-deserialize-snapshot",
+          "core-storage-commit-failure",
+          "core-storage-read-snapshot",
+          "core-replay-without-snapshot",
+          "core-snapshot-behind-head",
+          "core-default-manifests",
+          "core-aggregate-isolation",
+          "core-existing-create-event",
+          "core-duplicate-update-event",
+          "core-stale-update-event",
+          "core-gap-event",
+          "core-no-head-update-event",
+          "core-zero-event",
+          "core-existing-create-snapshot",
+          "core-duplicate-update-snapshot",
+          "core-stale-update-snapshot",
+          "core-gap-snapshot",
+          "core-no-head-update-snapshot",
+          "core-zero-snapshot",
+          "core-snapshot-mismatch-0",
+          "core-snapshot-mismatch-2",
+          "core-time-below-min",
+          "core-time-above-max",
+          "core-seq-negative",
+          "core-seq-above-max",
+          "dynamodb-latest-unprocessed",
+          "dynamodb-snapshot-ahead-of-head",
+          "dynamodb-no-head-with-snapshot");
+
   static boolean supports(ConformanceCase c) {
     return c.file().equals("dynamodb/configuration.json")
         || c.file().equals("dynamodb/layout.json")
-        || READ_CASE_IDS.contains(c.id());
+        || READ_CASE_IDS.contains(c.id())
+        || SNAPSHOT_CASE_IDS.contains(c.id());
   }
 
   static CaseResult run(ConformanceCase c, DynamoDbConfigurationFixture fixture) {
@@ -23,8 +58,10 @@ final class DynamoDbCaseRunner {
     ObjectNode actual = ConformanceJson.mapper().createObjectNode();
     try {
       boolean layout = c.format().equals("layout");
-      if (READ_CASE_IDS.contains(c.id())) {
-        new DynamoDbEventReadFixture(fixture).execute(c.materialized(), actual);
+      if (READ_CASE_IDS.contains(c.id()) || SNAPSHOT_CASE_IDS.contains(c.id())) {
+        if (SNAPSHOT_CASE_IDS.contains(c.id()))
+          new DynamoDbSnapshotReadFixture(fixture).execute(c.materialized(), actual);
+        else new DynamoDbEventReadFixture(fixture).execute(c.materialized(), actual);
         if (actual.has("unsupported"))
           return new CaseResult(
               c.id(),
