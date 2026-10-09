@@ -93,6 +93,7 @@ class DynamoDbFaultFoundationTest {
                 context.targets,
                 Map.of("head", "ConditionalCheckFailed", "journal", "None"),
                 7L,
+                "PRIVATE-SENTINEL cancellation",
                 () -> {}));
         FaultRegistry.Operation operation = context.faults.begin(1, true);
         TransactWriteItemsRequest request =
@@ -125,6 +126,7 @@ class DynamoDbFaultFoundationTest {
         TransactionCanceledException canceled = (TransactionCanceledException) error;
         assertEquals(400, canceled.statusCode());
         assertEquals("TransactionCanceledException", canceled.awsErrorDetails().errorCode());
+        assertEquals("PRIVATE-SENTINEL cancellation", canceled.awsErrorDetails().errorMessage());
         assertEquals(
             List.of("ConditionalCheckFailed", "None"),
             canceled.cancellationReasons().stream()
@@ -186,7 +188,7 @@ class DynamoDbFaultFoundationTest {
                 "read-events",
                 1,
                 FaultRegistry.Injection.REPLACE_REQUEST,
-                DynamoDbFaultEffects.sdkError(code));
+                DynamoDbFaultEffects.sdkError(code, "PRIVATE-SENTINEL " + code));
         FaultRegistry.Operation operation = context.faults.begin(i + 1, false);
         Throwable failure =
             unwrap(
@@ -199,6 +201,7 @@ class DynamoDbFaultFoundationTest {
         DynamoDbException error = (DynamoDbException) failure;
         assertEquals(i == 0 ? 500 : 400, error.statusCode());
         assertEquals(code, error.awsErrorDetails().errorCode());
+        assertEquals("PRIVATE-SENTINEL " + code, error.awsErrorDetails().errorMessage());
         assertEquals(1, context.faults.applications(fault));
         DynamoDbRequestRecorder.Request observed = context.recorder.requests().get(i);
         assertEquals(1, observed.httpAttempts);

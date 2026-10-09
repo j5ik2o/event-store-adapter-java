@@ -31,6 +31,305 @@ class DynamoDbCaseRunnerTest {
   }
 
   @TestFactory
+  Stream<DynamicTest> remainingCandidatesExecuteBothSdkPathsBeforeBecomingRequired()
+      throws IOException {
+    ConformanceData data = ConformanceDataLoader.load(ConformanceTestFiles.REAL_ROOT);
+    return data.cases().stream()
+        .filter(
+            c ->
+                c.file().equals("dynamodb/write-errors.json")
+                    || (c.operation().map("validateOccurredAt"::equals).orElse(false)
+                        && CaseClassifier.exclusion(c, Backend.DYNAMODB).isEmpty())
+                    || List.of(
+                            "core-deserialize-event",
+                            "core-storage-read-events",
+                            "dynamodb-layout-v1")
+                        .contains(c.id()))
+        .map(
+            c ->
+                DynamicTest.dynamicTest(
+                    c.id(),
+                    () -> {
+                      CaseResult result = DynamoDbCaseRunner.run(c, fixture);
+                      new ConformanceReport(
+                              data.dataVersion(),
+                              ManifestVerifier.verify(ConformanceTestFiles.REAL_ROOT),
+                              "2.0.0-SNAPSHOT",
+                              null,
+                              List.of(result),
+                              data.coverageExclusions())
+                          .write(Path.of("build/reports/conformance-candidates", c.id()));
+                      assertEquals(
+                          ConformanceStatus.PASSED,
+                          result.status(),
+                          () -> String.valueOf(result.reason()));
+                      for (String sdk : List.of("sync", "async")) {
+                        JsonNode actual = result.actual().path(sdk);
+                        if (c.format().equals("layout")) {
+                          for (String mode : List.of("none", "delete", "ttl")) {
+                            assertTrue(actual.path(mode).path("resources_closed").booleanValue());
+                            if (mode.equals("ttl")) {
+                              assertEquals(8, actual.path(mode).path("items").size());
+                              for (JsonNode item : actual.path(mode).path("items"))
+                                assertEquals("passed", item.path("status").asText());
+                            }
+                          }
+                        } else {
+                          assertTrue(actual.path("resources_closed").booleanValue());
+                          for (JsonNode operation : actual.path("operations")) {
+                            assertTrue(operation.path("request_terminal").booleanValue());
+                            assertEquals(0, operation.path("pending").intValue());
+                            assertEquals("passed", operation.path("fault_result").asText());
+                          }
+                        }
+                      }
+                    }));
+  }
+
+  @TestFactory
+  Stream<DynamicTest> remainingErrorRulesRejectIncorrectExpectations() throws IOException {
+    return Stream.of(
+            "occurred-at-below-min",
+            "occurred-at-above-max",
+            "dynamodb-condition-gap",
+            "dynamodb-condition-no-head")
+        .map(
+            id ->
+                DynamicTest.dynamicTest(
+                    id,
+                    () -> {
+                      ConformanceCase c = find(id);
+                      ObjectNode altered = c.materialized().deepCopy();
+                      if (c.format().equals("values"))
+                        ((ObjectNode) altered.at("/expect/error")).put("rule", "W-9");
+                      else {
+                        for (JsonNode step : altered.path("steps"))
+                          if (step.at("/expect/error").has("rule"))
+                            ((ObjectNode) step.at("/expect/error")).put("rule", "W-9");
+                      }
+                      CaseResult result =
+                          DynamoDbCaseRunner.run(
+                              new ConformanceCase(
+                                  c.id(), c.file(), c.format(), c.rules(), c.raw(), altered),
+                              fixture);
+                      assertEquals(ConformanceStatus.FAILED, result.status());
+                      for (String sdk : List.of("sync", "async")) {
+                        assertTrue(
+                            result.actual().path(sdk).path("resources_closed").booleanValue());
+                        assertTrue(result.actual().path(sdk).has("comparison_failure"));
+                      }
+                    }));
+  }
+
+  @Test
+  void additionalObservationsAndFiniteFaultCountsCannotBeIgnored() throws IOException {
+    ConformanceCase c = find("dynamodb-condition-equal");
+    for (String constraint :
+        List.of(
+            "notifications",
+            "minimum_request_count",
+            "repeat",
+            "head_return_values_on_condition_check_failure")) {
+      ObjectNode altered = c.materialized().deepCopy();
+      ObjectNode observe = (ObjectNode) altered.at("/steps/2/observe");
+      switch (constraint) {
+        case "notifications":
+          observe.putArray("notifications").add("retention-failure");
+          break;
+        case "minimum_request_count":
+          observe.putObject("minimum_request_count").put("commit", 2);
+          break;
+        case "repeat":
+          ((ObjectNode) altered.at("/faults/0/repeat")).put("count", 2);
+          break;
+        default:
+          ((ObjectNode) altered.at("/steps/2/observe/requests/0/constraints"))
+              .put(constraint, "NONE");
+      }
+      CaseResult result =
+          DynamoDbCaseRunner.run(
+              new ConformanceCase(c.id(), c.file(), c.format(), c.rules(), c.raw(), altered),
+              fixture);
+      assertEquals(ConformanceStatus.FAILED, result.status(), constraint);
+      assertEquals(3, result.failedOperation());
+      for (String sdk : List.of("sync", "async"))
+        assertTrue(result.actual().path(sdk).path("resources_closed").booleanValue());
+    }
+  }
+
+  @TestFactory
+  Stream<DynamicTest> configurationConditionsAreNotSilentlyIgnored() {
+    return Stream.of(
+            "minimum_request_count",
+            "notifications",
+            "unknown-observation",
+            "unknown-detail",
+            "unknown-response",
+            "missing-response")
+        .map(
+            condition ->
+                DynamicTest.dynamicTest(
+                    condition,
+                    () -> {
+                      ConformanceCase c = find("dynamodb-config-unprocessed-keys");
+                      ObjectNode altered = c.materialized().deepCopy();
+                      ObjectNode observe = (ObjectNode) altered.at("/initialization/observe");
+                      switch (condition) {
+                        case "minimum_request_count":
+                          observe.putObject(condition).put("configuration-read", 3);
+                          break;
+                        case "notifications":
+                          observe.putArray(condition).add("retention-failure");
+                          break;
+                        case "unknown-observation":
+                          observe.put(condition, true);
+                          break;
+                        case "unknown-detail":
+                          ((ObjectNode) altered.at("/faults/0/details")).put(condition, true);
+                          break;
+                        case "unknown-response":
+                          ((ObjectNode) altered.at("/faults/0/details/responses"))
+                              .put("journal", "unconnected-token");
+                          break;
+                        default:
+                          ((ObjectNode) altered.at("/faults/0/details/responses"))
+                              .remove("journal");
+                      }
+                      CaseResult result =
+                          DynamoDbCaseRunner.run(
+                              new ConformanceCase(
+                                  c.id(), c.file(), c.format(), c.rules(), c.raw(), altered),
+                              fixture);
+                      if (condition.startsWith("unknown-")) {
+                        assertEquals(ConformanceStatus.UNVERIFIED, result.status());
+                        assertFalse(result.actual().has("sync"));
+                      } else {
+                        assertEquals(ConformanceStatus.FAILED, result.status(), condition);
+                        for (String sdk : List.of("sync", "async")) {
+                          assertTrue(
+                              result.actual().path(sdk).path("resources_closed").booleanValue());
+                          assertTrue(result.actual().path(sdk).has("comparison_failure"));
+                        }
+                      }
+                    }));
+  }
+
+  @TestFactory
+  Stream<DynamicTest> snapshotFaultResponsesAreConnectedToRealStoredItems() {
+    return Stream.of(
+            "missing-response", "unknown-response", "wrong-key", "unknown-interleave-detail")
+        .map(
+            condition ->
+                DynamicTest.dynamicTest(
+                    condition,
+                    () -> {
+                      ConformanceCase c =
+                          find(
+                              condition.equals("unknown-interleave-detail")
+                                  ? "dynamodb-snapshot-ahead-of-head"
+                                  : "dynamodb-latest-unprocessed");
+                      ObjectNode altered = c.materialized().deepCopy();
+                      ObjectNode details = (ObjectNode) altered.at("/faults/0/details");
+                      switch (condition) {
+                        case "missing-response":
+                          ((ObjectNode) details.path("responses")).remove("head");
+                          break;
+                        case "unknown-response":
+                          ((ObjectNode) details.path("responses")).put("head", "unconnected-token");
+                          break;
+                        case "wrong-key":
+                          details.putArray("unprocessed_keys").add("snapshot:Order-9:1");
+                          break;
+                        default:
+                          details.put("unknown-condition", true);
+                      }
+                      CaseResult result =
+                          DynamoDbCaseRunner.run(
+                              new ConformanceCase(
+                                  c.id(), c.file(), c.format(), c.rules(), c.raw(), altered),
+                              fixture);
+                      if (condition.equals("missing-response")) {
+                        assertEquals(ConformanceStatus.FAILED, result.status());
+                        for (String sdk : List.of("sync", "async"))
+                          assertTrue(
+                              result.actual().path(sdk).path("resources_closed").booleanValue());
+                      } else {
+                        assertEquals(ConformanceStatus.UNVERIFIED, result.status());
+                        assertFalse(result.actual().has("sync"));
+                      }
+                    }));
+  }
+
+  @TestFactory
+  Stream<DynamicTest> adjacentItemObservationsUseActualGeneratedBindingsAndRejectMismatches() {
+    return Stream.of(
+            "core-time-roundtrip-min", "core-replay-without-snapshot", "core-retention-delete-1")
+        .flatMap(
+            id ->
+                Stream.of("valid", "wrong-value", "unconnected-binding")
+                    .map(
+                        condition ->
+                            DynamicTest.dynamicTest(
+                                id + "/" + condition,
+                                () -> {
+                                  ConformanceCase c = find(id);
+                                  ObjectNode altered = c.materialized().deepCopy();
+                                  ObjectNode step = (ObjectNode) altered.at("/steps/0");
+                                  ObjectNode observe =
+                                      step.has("observe")
+                                          ? (ObjectNode) step.path("observe")
+                                          : step.putObject("observe");
+                                  com.fasterxml.jackson.databind.node.ArrayNode items =
+                                      find("dynamodb-config-new")
+                                          .materialized()
+                                          .at("/initialization/observe/items")
+                                          .deepCopy();
+                                  observe.set("items", items);
+                                  if (condition.equals("wrong-value"))
+                                    ((ObjectNode) items.get(0).path("values"))
+                                        .put("layout_version", "2");
+                                  if (condition.equals("unconnected-binding"))
+                                    ((ObjectNode) items.get(0).path("bindings"))
+                                        .put("store_id", "unconnected-token");
+                                  CaseResult result =
+                                      DynamoDbCaseRunner.run(
+                                          new ConformanceCase(
+                                              c.id(),
+                                              c.file(),
+                                              c.format(),
+                                              c.rules(),
+                                              c.raw(),
+                                              altered),
+                                          fixture);
+                                  if (condition.equals("unconnected-binding")) {
+                                    assertEquals(ConformanceStatus.UNVERIFIED, result.status());
+                                    assertFalse(result.actual().has("sync"));
+                                  } else {
+                                    assertEquals(
+                                        condition.equals("valid")
+                                            ? ConformanceStatus.PASSED
+                                            : ConformanceStatus.FAILED,
+                                        result.status(),
+                                        result.reason());
+                                    for (String sdk : List.of("sync", "async")) {
+                                      assertTrue(
+                                          result
+                                              .actual()
+                                              .path(sdk)
+                                              .path("resources_closed")
+                                              .booleanValue());
+                                      assertEquals(
+                                          condition.equals("valid") ? 3 : 1,
+                                          result
+                                              .actual()
+                                              .at("/" + sdk + "/operations/1/observed_items")
+                                              .size());
+                                    }
+                                  }
+                                })));
+  }
+
+  @TestFactory
   Stream<DynamicTest> retentionCandidatesExecuteEveryExpectationAndObservation()
       throws IOException {
     List<ConformanceCase> cases =
@@ -268,7 +567,7 @@ class DynamoDbCaseRunnerTest {
   @Test
   void unconnectedSnapshotObservationsStayUnverified() throws IOException {
     ConformanceCase c = find("core-snapshot-behind-head");
-    for (String field : List.of("history", "items", "notifications")) {
+    for (String field : List.of("history", "unknown-observation")) {
       ObjectNode altered = c.materialized().deepCopy();
       ((ObjectNode) altered.at("/steps/3")).putObject("observe").putArray(field);
       CaseResult result =
@@ -541,45 +840,55 @@ class DynamoDbCaseRunnerTest {
   }
 
   @Test
-  void paginationCandidateRecordsUnmetQueryCountOnBothActualSdkPaths() throws IOException {
+  void distributedFourLargeEventsUseActualPaginationOnBothSdkPaths() throws IOException {
     ConformanceCase c = find("dynamodb-events-over-one-megabyte");
-    ObjectNode actual = ConformanceJson.mapper().createObjectNode();
-    AssertionError failure =
-        assertThrows(
-            AssertionError.class,
-            () -> new DynamoDbEventReadFixture(fixture).execute(c.materialized(), actual));
-    assertEquals(5, actual.path("failed_operation").intValue());
+    CaseResult result = DynamoDbCaseRunner.run(c, fixture);
+    ConformanceData data = ConformanceDataLoader.load(ConformanceTestFiles.REAL_ROOT);
+    new ConformanceReport(
+            data.dataVersion(),
+            ManifestVerifier.verify(ConformanceTestFiles.REAL_ROOT),
+            "2.0.0-SNAPSHOT",
+            null,
+            List.of(result),
+            data.coverageExclusions())
+        .write(Path.of("build/reports/conformance-candidates", c.id()));
+    assertEquals(ConformanceStatus.PASSED, result.status(), result.reason());
     for (String sdk : List.of("sync", "async")) {
-      JsonNode path = actual.path(sdk);
+      JsonNode path = result.actual().path(sdk);
       assertTrue(path.path("resources_closed").booleanValue());
       assertEquals(6, path.path("operations").size());
       JsonNode read = path.at("/operations/5");
       assertEquals(4, read.path("events").size());
-      assertEquals(1, read.path("requests").size());
-      assertEquals(1, read.path("responses").size());
-      assertFalse(read.at("/responses/0").has("LastEvaluatedKey"));
+      assertTrue(read.path("requests").size() >= 2);
+      assertEquals(read.path("responses").size(), read.path("requests").size());
+      assertTrue(read.at("/responses/0/LastEvaluatedKey").isObject());
+      assertFalse(read.at("/responses/0/LastEvaluatedKey").isEmpty());
+      assertEquals(
+          read.at("/responses/0/LastEvaluatedKey"),
+          read.at("/requests/1/transmitted/ExclusiveStartKey"));
       assertEquals(0, read.path("pending").intValue());
       assertTrue(read.path("request_terminal").booleanValue());
+      for (int index = 0; index < 4; index++) {
+        JsonNode input = c.materialized().at("/fixtures/events/e" + (index + 1));
+        JsonNode write = path.path("operations").get(index + 1);
+        JsonNode item = write.path("stored_journal");
+        java.util.Set<String> attributes = new java.util.HashSet<>();
+        item.fieldNames().forEachRemaining(attributes::add);
+        assertEquals(
+            java.util.Set.of("aid", "seq_nr", "occurred_at", "manifest", "payload"), attributes);
+        byte[] bytes = java.util.Base64.getDecoder().decode(item.at("/payload/B").asText());
+        assertEquals(bytes.length, write.path("payload_bytes").intValue());
+        JsonNode decoded = ConformanceJson.mapper().readTree(bytes);
+        assertEquals(
+            320000,
+            decoded.path("text").asText().getBytes(java.nio.charset.StandardCharsets.UTF_8).length);
+        assertEquals(input.path("payload"), decoded);
+      }
     }
-    assertFalse(DynamoDbCaseRunner.supports(c));
-    assertEquals(
-        ConformanceStatus.UNVERIFIED, CaseClassifier.classify(c, Backend.DYNAMODB).status());
-    assertFalse(RequiredCases.load().get(Backend.DYNAMODB).contains(c.id()));
-    ObjectNode result = ConformanceJson.mapper().createObjectNode();
-    result
-        .put("case_id", c.id())
-        .put("status", "failed")
-        .put("reason", failure.toString())
-        .put("failed_operation", 5);
-    result.set("expected", c.materialized());
-    result.set("actual", actual);
-    Path directory = Path.of("build/reports/dynamodb-event-read-candidates");
-    Files.createDirectories(directory);
-    Files.writeString(directory.resolve(c.id() + ".json"), result.toPrettyString());
   }
 
   @Test
-  void supportsOnlyConfigurationPartialLayoutAndSelectedReadCases() throws IOException {
+  void supportsRemainingTimeAndWriteCases() throws IOException {
     assertTrue(DynamoDbCaseRunner.supports(find("dynamodb-config-new")));
     assertTrue(DynamoDbCaseRunner.supports(find("dynamodb-layout-v1")));
     assertTrue(DynamoDbCaseRunner.supports(find("core-time-roundtrip-min")));
@@ -588,10 +897,11 @@ class DynamoDbCaseRunnerTest {
     assertTrue(DynamoDbCaseRunner.supports(find("dynamodb-latest-unprocessed")));
     assertTrue(DynamoDbCaseRunner.supports(find("dynamodb-snapshot-ahead-of-head")));
     assertTrue(DynamoDbCaseRunner.supports(find("dynamodb-no-head-with-snapshot")));
-    assertFalse(DynamoDbCaseRunner.supports(find("occurred-at-min")));
+    assertTrue(DynamoDbCaseRunner.supports(find("occurred-at-min")));
+    assertTrue(DynamoDbCaseRunner.supports(find("dynamodb-item-size-event")));
     assertThrows(
         IllegalArgumentException.class,
-        () -> DynamoDbCaseRunner.run(find("occurred-at-min"), fixture));
+        () -> DynamoDbCaseRunner.run(find("hash-fnv1a64-1"), fixture));
   }
 
   @Test
@@ -635,13 +945,13 @@ class DynamoDbCaseRunnerTest {
   void unconnectedReadObservationRemainsUnverified() throws IOException {
     ConformanceCase c = find("core-time-roundtrip-max");
     ObjectNode altered = c.materialized().deepCopy();
-    ((ObjectNode) altered.at("/steps/1")).putObject("observe").putArray("notifications");
+    ((ObjectNode) altered.at("/steps/1")).putObject("observe").putObject("history");
     CaseResult result =
         DynamoDbCaseRunner.run(
             new ConformanceCase(c.id(), c.file(), c.format(), c.rules(), c.raw(), altered),
             fixture);
     assertEquals(ConformanceStatus.UNVERIFIED, result.status());
-    assertTrue(result.reason().contains("notifications"));
+    assertTrue(result.reason().contains("history"));
     assertNull(result.failedOperation());
     assertFalse(result.actual().has("sync"));
   }
@@ -671,12 +981,12 @@ class DynamoDbCaseRunnerTest {
     }
     assertEquals(0, actual.path("pending").intValue());
     assertTrue(actual.path("resources_closed").booleanValue());
-    assertFalse(result.actual().has("async"));
+    assertTrue(result.actual().at("/async/resources_closed").booleanValue());
     assertFailureIsReportedWithObservations(result, altered);
   }
 
   @Test
-  void failedPartialLayoutCannotBeReportedAsUnverifiedOrPassed() throws IOException {
+  void failedLayoutCannotBeReportedAsUnverifiedOrPassed() throws IOException {
     ConformanceCase c = find("dynamodb-layout-v1");
     ObjectNode altered = c.materialized().deepCopy();
     ((ObjectNode) altered.at("/tables/0/partition_key")).put("type", "N");
@@ -685,7 +995,7 @@ class DynamoDbCaseRunnerTest {
     CaseResult result = DynamoDbCaseRunner.run(changed, fixture);
     assertEquals(ConformanceStatus.FAILED, result.status());
     assertTrue(result.reason().contains("AssertionFailedError"));
-    JsonNode actual = result.actual().path("none");
+    JsonNode actual = result.actual().at("/sync/none");
     JsonNode attributes = actual.at("/journal/describe_table/AttributeDefinitions");
     assertTrue(attributes.isArray());
     JsonNode aid = null;
@@ -698,9 +1008,59 @@ class DynamoDbCaseRunnerTest {
     assertEquals(3, actual.path("configuration_items").size());
     assertFalse(actual.at("/configuration_items/journal/store_id/S").asText().isBlank());
     assertTrue(actual.path("resources_closed").booleanValue());
-    assertFalse(result.actual().has("delete"));
-    assertFalse(result.actual().has("ttl"));
+    for (String sdk : List.of("sync", "async")) {
+      for (String mode : List.of("none", "delete", "ttl")) {
+        assertTrue(result.actual().at("/" + sdk + "/" + mode + "/resources_closed").booleanValue());
+        assertTrue(result.actual().at("/" + sdk + "/" + mode).has("comparison_failure"));
+      }
+    }
     assertFailureIsReportedWithObservations(result, altered);
+  }
+
+  @TestFactory
+  Stream<DynamicTest> wrongLayoutItemValuesAndBindingsFailOnBothSdkPaths() {
+    return Stream.of("binary-payload", "nested-attribute", "store-id", "index-binding")
+        .map(
+            condition ->
+                DynamicTest.dynamicTest(
+                    condition,
+                    () -> {
+                      ConformanceCase c = find("dynamodb-layout-v1");
+                      ObjectNode altered = c.materialized().deepCopy();
+                      switch (condition) {
+                        case "binary-payload":
+                          ((ObjectNode) altered.at("/items/0/binary_json/payload"))
+                              .put("number", 99);
+                          break;
+                        case "nested-attribute":
+                          ((ObjectNode) altered.at("/items/4/nested_attributes/events[0]"))
+                              .put("payload", "S");
+                          break;
+                        case "store-id":
+                          ((ObjectNode) altered.at("/items/6/values")).put("store_id", "store-b");
+                          break;
+                        default:
+                          ((ObjectNode) altered.at("/tables/1/gsi/0"))
+                              .put("name_binding", "unconnected-index");
+                      }
+                      CaseResult result =
+                          DynamoDbCaseRunner.run(
+                              new ConformanceCase(
+                                  c.id(), c.file(), c.format(), c.rules(), c.raw(), altered),
+                              fixture);
+                      assertEquals(ConformanceStatus.FAILED, result.status(), condition);
+                      for (String sdk : List.of("sync", "async")) {
+                        for (String mode : List.of("none", "delete", "ttl")) {
+                          assertTrue(
+                              result
+                                  .actual()
+                                  .at("/" + sdk + "/" + mode + "/resources_closed")
+                                  .booleanValue());
+                          assertTrue(
+                              result.actual().at("/" + sdk + "/" + mode).has("comparison_failure"));
+                        }
+                      }
+                    }));
   }
 
   private static void assertFailureIsReportedWithObservations(

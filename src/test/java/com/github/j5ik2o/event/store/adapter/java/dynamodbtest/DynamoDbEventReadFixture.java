@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.j5ik2o.event.store.adapter.java.core.*;
 import com.github.j5ik2o.event.store.adapter.java.dynamodb.*;
+import java.math.BigInteger;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -48,7 +49,12 @@ public final class DynamoDbEventReadFixture {
           if (step.path("op").asText().equals("persistEvent")) {
             JsonNode definition =
                 scenario.at("/fixtures/events").path(arguments.path("event").asText());
-            scene.write(event(definition));
+            EventEnvelope<JsonNode> written = event(definition);
+            scene.write(written);
+            Map<String, AttributeValue> stored =
+                scene.storedJournal(written.aggregateId(), written.seqNr());
+            scene.last().set("stored_journal", DynamoDbJson.sdk(stored));
+            scene.last().put("payload_bytes", stored.get("payload").b().asByteArray().length);
             received = DynamoDbJson.object().put("result", "success");
           } else {
             List<EventEnvelope<JsonNode>> events =
@@ -63,17 +69,22 @@ public final class DynamoDbEventReadFixture {
             received.set("events", envelopes(events));
           }
           scene.last().set("outcome", received);
+          path.put("comparison_position", "/steps/" + (operation - 1) + "/expect");
           compareExpected(scenario, step.path("expect"), received);
+          path.put("comparison_position", "/steps/" + (operation - 1) + "/observe");
           observe(scene, step.path("observe"), arguments);
+          path.remove("comparison_position");
         }
       } catch (RuntimeException | AssertionError failure) {
         path.put("failed_operation", actual.path("current_operation").intValue());
+        DynamoDbConfigurationFixture.recordComparisonFailure(path, failure);
         if (firstFailure == null) {
           actual.put("failed_operation", actual.path("current_operation").intValue());
           firstFailure = failure;
         } else firstFailure.addSuppressed(failure);
       } catch (Exception failure) {
         path.put("failed_operation", actual.path("current_operation").intValue());
+        DynamoDbConfigurationFixture.recordComparisonFailure(path, failure);
         if (firstFailure == null) {
           actual.put("failed_operation", actual.path("current_operation").intValue());
           firstFailure = new IllegalStateException("Event-read scene failed", failure);
@@ -85,16 +96,100 @@ public final class DynamoDbEventReadFixture {
     if (firstFailure != null) throw (RuntimeException) firstFailure;
   }
 
+  /** Uses the same public write, Query restoration and resource owner as event scenarios. */
+  public void validateOccurredAt(JsonNode c, ObjectNode actual) {
+    Throwable firstFailure = null;
+    for (boolean async : List.of(false, true)) {
+      ObjectNode path = actual.putObject(async ? "async" : "sync");
+      try (Scene<JsonNode> scene =
+          new Scene<>(
+              c.path("id").asText(),
+              async,
+              JsonPayloadSerializer.of(DynamoDbJson.mapper(), JsonNode.class),
+              path)) {
+        JsonNode input = c.path("input");
+        AggregateId id = AggregateId.of("ConformanceTime", c.path("id").asText());
+        long target = input.path("event_seq_nr").bigIntegerValue().longValueExact();
+        for (long seq = 1; seq < target; seq++)
+          scene.write(timeEvent(id, seq, Instant.parse("1970-01-01T00:00:00.123000000Z")));
+        Throwable failure = null;
+        ObjectNode outcome = DynamoDbJson.object();
+        try {
+          scene.operate(
+              true,
+              () -> {
+                EventEnvelope<JsonNode> event =
+                    timeEvent(id, target, Instant.parse(input.path("iso8601").asText()));
+                if (async) scene.asyncStore.persistEvent(event).join();
+                else scene.syncStore.persistEvent(event);
+                return null;
+              });
+          path.set("stored_journal", DynamoDbJson.sdk(scene.storedJournal(id, target)));
+          List<EventEnvelope<JsonNode>> events = scene.read(id, target);
+          scene.assertQuery(id, target, scene.pages.size());
+          assertEquals(1, events.size());
+          Instant restored = events.get(0).occurredAt();
+          BigInteger nanos =
+              BigInteger.valueOf(restored.getEpochSecond())
+                  .multiply(BigInteger.valueOf(1_000_000_000L))
+                  .add(BigInteger.valueOf(restored.getNano()));
+          outcome.put("value", nanos.toString());
+        } catch (RuntimeException error) {
+          failure = EventStoreExceptions.unwrap(error);
+          ObjectNode received =
+              outcome
+                  .putObject("error")
+                  .put("category", DynamoDbConfigurationFixture.category(failure).replace('_', '-'))
+                  .put("message", failure.getMessage());
+          if (failure instanceof ContractViolationException)
+            received.put("rule", ((ContractViolationException) failure).rule());
+        }
+        path.set("outcome", outcome);
+        path.put("comparison_position", "/expect");
+        ObjectNode expected = c.path("expect").deepCopy();
+        expected.remove("precision_policy");
+        DynamoDbSnapshotReadFixture.compare(c, expected, outcome, failure);
+        path.remove("comparison_position");
+      } catch (Exception | AssertionError failure) {
+        actual.put("failed_operation", c.at("/input/event_seq_nr").intValue());
+        path.put("failed_operation", c.at("/input/event_seq_nr").intValue());
+        DynamoDbConfigurationFixture.recordComparisonFailure(path, failure);
+        if (firstFailure == null) firstFailure = failure;
+        else firstFailure.addSuppressed(failure);
+      }
+    }
+    if (firstFailure instanceof AssertionError) throw (AssertionError) firstFailure;
+    if (firstFailure != null) throw new IllegalStateException("Time case failed", firstFailure);
+  }
+
+  private static EventEnvelope<JsonNode> timeEvent(AggregateId id, long seq, Instant time) {
+    return EventEnvelope.<JsonNode>builder()
+        .aggregateId(id)
+        .seqNr(seq)
+        .occurredAt(time)
+        .payload(DynamoDbJson.object())
+        .build();
+  }
+
   private static String unsupported(JsonNode scenario) {
     if (scenario.has("faults") || scenario.has("seed") || scenario.has("initialization"))
       return "このイベント読取り実行器は生成障害・seed・初期化期待を接続していない";
     for (JsonNode step : scenario.path("steps")) {
+      String binding =
+          DynamoDbSnapshotRetentionFixture.unsupportedBindings(step.at("/observe/items"));
+      if (binding != null) return binding;
       if (!List.of("persistEvent", "getEventsByIdSinceSeqNr").contains(step.path("op").asText()))
         return "未接続の操作: " + step.path("op").asText();
       Iterator<String> fields = step.path("observe").fieldNames();
       while (fields.hasNext()) {
         String field = fields.next();
-        if (!Set.of("requests", "minimum_request_count", "request_count", "no_requests_in_phases")
+        if (!Set.of(
+                "requests",
+                "minimum_request_count",
+                "request_count",
+                "no_requests_in_phases",
+                "notifications",
+                "items")
             .contains(field)) return "未接続の観測: " + field;
       }
       for (JsonNode request : step.at("/observe/requests")) {
@@ -158,30 +253,9 @@ public final class DynamoDbEventReadFixture {
         events.add(value);
       }
     }
-    assertTrue(
-        equal(normalized, actual),
-        "Actual event operation differs from the distributed expectation");
-  }
-
-  private static boolean equal(JsonNode expected, JsonNode actual) {
-    if (expected.isNumber() && actual.isNumber())
-      return expected.decimalValue().compareTo(actual.decimalValue()) == 0;
-    if (expected.isArray() && actual.isArray()) {
-      if (expected.size() != actual.size()) return false;
-      for (int i = 0; i < expected.size(); i++)
-        if (!equal(expected.get(i), actual.get(i))) return false;
-      return true;
-    }
-    if (expected.isObject() && actual.isObject()) {
-      if (expected.size() != actual.size()) return false;
-      Iterator<String> fields = expected.fieldNames();
-      while (fields.hasNext()) {
-        String field = fields.next();
-        if (!equal(expected.get(field), actual.path(field))) return false;
-      }
-      return true;
-    }
-    return expected.equals(actual);
+    assertEquals(
+        DynamoDbJson.read(DynamoDbJson.bytes(normalized)),
+        DynamoDbJson.read(DynamoDbJson.bytes(actual)));
   }
 
   private static void observe(Scene<?> scene, JsonNode expected, JsonNode arguments) {
@@ -250,10 +324,18 @@ public final class DynamoDbEventReadFixture {
         .path("minimum_request_count")
         .fields()
         .forEachRemaining(
-            entry ->
-                assertTrue(
-                    requests.stream().filter(r -> r.phase.equals(entry.getKey())).count()
-                        >= entry.getValue().longValue()));
+            entry -> {
+              long count = requests.stream().filter(r -> r.phase.equals(entry.getKey())).count();
+              if (count < entry.getValue().longValue()) {
+                scene.observation.put(
+                    "comparison_position",
+                    scene.observation.path("comparison_position").asText()
+                        + "/minimum_request_count/"
+                        + entry.getKey());
+                throw new org.opentest4j.AssertionFailedError(
+                    "Minimum request count was not reached", entry.getValue().longValue(), count);
+              }
+            });
     expected
         .path("request_count")
         .fields()
@@ -262,6 +344,36 @@ public final class DynamoDbEventReadFixture {
                 assertEquals(
                     entry.getValue().longValue(),
                     requests.stream().filter(r -> r.phase.equals(entry.getKey())).count()));
+    ArrayNode notifications = DynamoDbJson.mapper().createArrayNode();
+    scene.notifications.forEach(failure -> notifications.add("retention-failure"));
+    scene.last().set("notifications", notifications);
+    if (expected.has("notifications")) assertEquals(expected.path("notifications"), notifications);
+    ArrayNode items = scene.last().putArray("observed_items");
+    Map<String, AttributeValue> bindings = new LinkedHashMap<>();
+    for (JsonNode definition : expected.path("items")) {
+      String role = definition.path("table").asText();
+      Map<String, AttributeValue> required =
+          DynamoDbSnapshotRetentionFixture.attributes(definition);
+      Map<String, AttributeValue> key = new LinkedHashMap<>();
+      key.put("aid", required.get("aid"));
+      if (!role.equals("head")) {
+        String sort = role.equals("journal") ? "seq_nr" : "skey";
+        key.put(sort, required.get(sort));
+      }
+      Map<String, AttributeValue> item =
+          scene
+              .c
+              .admin
+              .getItem(
+                  GetItemRequest.builder()
+                      .tableName(DynamoDbConfigurationFixture.table(scene.c, role))
+                      .key(key)
+                      .consistentRead(true)
+                      .build())
+              .item();
+      items.addObject().put("table", role).set("item", DynamoDbJson.sdk(item));
+      DynamoDbSnapshotRetentionFixture.compareAttributes(definition, item, bindings);
+    }
     for (JsonNode phase : expected.path("no_requests_in_phases"))
       assertEquals(0, requests.stream().filter(r -> r.phase.equals(phase.asText())).count());
   }
@@ -284,6 +396,7 @@ public final class DynamoDbEventReadFixture {
     final String name;
     final Map<Integer, List<FaultRegistry.Fault>> registered = new LinkedHashMap<>();
     final List<QueryResponse> pages = new ArrayList<>();
+    final List<RetentionFailure> notifications = new ArrayList<>();
     final EventStore<P, String> syncStore;
     final AsyncEventStore<P, String> asyncStore;
     int nextOperation = 1;
@@ -301,6 +414,7 @@ public final class DynamoDbEventReadFixture {
             EventStoreConfig.<P, String>builder()
                 .payloadSerializer(new FaultPayloadSerializer<>(serializer, c.faults, false))
                 .snapshotSerializer(JsonPayloadSerializer.of(String.class))
+                .retentionFailureListener(notifications::add)
                 .build();
         DynamoDbTableConfig tables = DynamoDbConfigurationTables.config(c).build();
         FaultRegistry.Operation operation = c.faults.begin(0, false);
@@ -351,6 +465,22 @@ public final class DynamoDbEventReadFixture {
           });
     }
 
+    Map<String, AttributeValue> storedJournal(AggregateId id, long seq) {
+      return c.admin
+          .getItem(
+              GetItemRequest.builder()
+                  .tableName(c.journal)
+                  .consistentRead(true)
+                  .key(
+                      Map.of(
+                          "aid",
+                          AttributeValue.fromS(id.asString()),
+                          "seq_nr",
+                          AttributeValue.fromN(Long.toString(seq))))
+                  .build())
+          .item();
+    }
+
     List<EventEnvelope<P>> read(AggregateId id, long seq) {
       pages.clear();
       boolean fault =
@@ -366,6 +496,7 @@ public final class DynamoDbEventReadFixture {
     }
 
     private <T> T operate(boolean writing, Supplier<T> action) {
+      notifications.clear();
       FaultRegistry.Operation operation = c.faults.begin(nextOperation++, writing);
       Throwable failure = null;
       T result = null;
@@ -487,9 +618,8 @@ public final class DynamoDbEventReadFixture {
         observation.put("resources_closed", c.closed());
         Path directory = Path.of("build/reports/dynamodb-event-read");
         Files.createDirectories(directory);
-        Files.writeString(
-            directory.resolve(name + (asynchronous ? "-async" : "-sync") + ".json"),
-            observation.toPrettyString());
+        DynamoDbJson.write(
+            directory.resolve(name + (asynchronous ? "-async" : "-sync") + ".json"), observation);
       }
     }
   }

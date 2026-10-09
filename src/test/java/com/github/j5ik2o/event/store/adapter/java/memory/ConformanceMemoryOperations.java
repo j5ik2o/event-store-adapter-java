@@ -20,6 +20,7 @@ import com.github.j5ik2o.event.store.adapter.java.core.StorageException;
 import java.math.BigInteger;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -32,6 +33,38 @@ public final class ConformanceMemoryOperations {
 
   public static ObjectNode executeScenario(JsonNode scenario) {
     ObjectNode result = F.objectNode();
+    if (scenario.has("seed")
+        || scenario.has("clock")
+        || scenario.path("initialization").has("observe")) {
+      result.put("unsupported", "メモリへ未接続のseed・時計・初期化観測がある");
+      return result;
+    }
+    for (JsonNode step : scenario.path("steps")) {
+      if (!Set.of(
+              "persistEvent",
+              "persistEventAndSnapshot",
+              "getLatestSnapshotById",
+              "getEventsByIdSinceSeqNr")
+          .contains(step.path("op").asText())) {
+        result.put("unsupported", "メモリへ未接続の操作: " + step.path("op").asText());
+        return result;
+      }
+      java.util.Iterator<String> fields = step.path("observe").fieldNames();
+      while (fields.hasNext()) {
+        String field = fields.next();
+        if (!Set.of("history", "notifications").contains(field)) {
+          result.put("unsupported", "メモリへ未接続の観測: " + field);
+          return result;
+        }
+      }
+      fields = step.at("/observe/history").fieldNames();
+      while (fields.hasNext()) {
+        if (!Set.of("active", "marked", "absent").contains(fields.next())) {
+          result.put("unsupported", "メモリへ未接続の履歴観測がある");
+          return result;
+        }
+      }
+    }
     Faults faults = new Faults(scenario.path("faults"));
     if (!faults.supported()) {
       result.put("unsupported", "メモリへ接続できない障害がある");
@@ -249,15 +282,27 @@ public final class ConformanceMemoryOperations {
               "read-snapshot",
               "retention-query",
               "retention-delete");
-      return registered.stream()
-          .allMatch(
-              fault ->
-                  phases.contains(fault.path("phase").asText())
-                      && (fault.path("kind").asText().equals("serialization-error")
-                          || fault.path("kind").asText().equals("storage-error")
-                          || (fault.path("kind").asText().equals("sdk-response")
-                              && fault.path("phase").asText().equals("retention-query")
-                              && fault.path("details").has("history_pages"))));
+      for (JsonNode fault : registered) {
+        String kind = fault.path("kind").asText(), phase = fault.path("phase").asText();
+        if (!phases.contains(phase)) return false;
+        Set<String> details = new HashSet<>();
+        fault.path("details").fieldNames().forEachRemaining(details::add);
+        if (kind.equals("serialization-error")
+            && phase.matches("(serialize|deserialize)-(event|snapshot)")
+            && Set.of("message").containsAll(details)) continue;
+        if (kind.equals("storage-error")
+            && Set.of(
+                    "commit", "read-events", "read-snapshot", "retention-query", "retention-delete")
+                .contains(phase)
+            && Set.of("message", "scope").containsAll(details)
+            && (!details.contains("scope")
+                || fault.at("/details/scope").asText().equals("final-retention-failure"))) continue;
+        if (kind.equals("sdk-response")
+            && phase.equals("retention-query")
+            && details.equals(Set.of("history_pages"))) continue;
+        return false;
+      }
+      return true;
     }
 
     JsonNode fire(String phase) {
@@ -286,21 +331,33 @@ public final class ConformanceMemoryOperations {
 
     void finishOperation(ObjectNode result) {
       for (int i = 0; i < registered.size(); i++) {
-        if (registered.get(i).path("operation").asInt() == operation
-            && fired.get(i) == 0
-            && !result.has("fault_failure")) {
-          result.put("fault_failure", "登録した障害が発火しない: " + registered.get(i));
-          result.put("fault_operation", operation);
+        if (registered.get(i).path("operation").asInt() == operation) {
+          result
+              .withArray("faults")
+              .addObject()
+              .put("operation", operation)
+              .put("phase", registered.get(i).path("phase").asText())
+              .put("applications", fired.get(i))
+              .set("repeat", registered.get(i).path("repeat"));
+          checkApplications(i, result);
         }
+      }
+    }
+
+    private void checkApplications(int index, ObjectNode result) {
+      JsonNode fault = registered.get(index);
+      int count = fired.get(index);
+      boolean finite = fault.at("/repeat/mode").asText().equals("count");
+      if ((count == 0 || (finite && count != fault.at("/repeat/count").intValue()))
+          && !result.has("fault_failure")) {
+        result.put("fault_failure", "障害の実適用回数が指定と一致しない: " + fault);
+        result.put("fault_operation", fault.path("operation").intValue());
       }
     }
 
     void finish(ObjectNode result) {
       for (int i = 0; i < registered.size(); i++) {
-        if (fired.get(i) == 0 && !result.has("fault_failure")) {
-          result.put("fault_failure", "登録した障害が発火しない: " + registered.get(i));
-          result.put("fault_operation", registered.get(i).path("operation").asInt());
-        }
+        checkApplications(i, result);
       }
     }
 

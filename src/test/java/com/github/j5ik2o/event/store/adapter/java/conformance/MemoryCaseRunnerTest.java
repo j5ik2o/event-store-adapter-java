@@ -112,6 +112,40 @@ class MemoryCaseRunnerTest {
                     }));
   }
 
+  @Test
+  void finiteFaultCountMustEqualActualApplications() throws IOException {
+    ConformanceCase original = find("core-storage-commit-failure");
+    ObjectNode changed = original.materialized().deepCopy();
+    ((ObjectNode) changed.at("/faults/0/repeat")).put("count", 2);
+    CaseResult result = CaseClassifier.classify(copy(original, changed), Backend.MEMORY);
+    assertEquals(ConformanceStatus.FAILED, result.status());
+    assertEquals(1, result.failedOperation());
+    assertEquals(1, result.actual().at("/faults/0/applications").intValue());
+  }
+
+  @TestFactory
+  Stream<DynamicTest> unconnectedObservationsAndFaultDetailsRemainUnverified() {
+    return Stream.of("requests", "unknown-history", "unknown-fault-detail")
+        .map(
+            field ->
+                dynamicTest(
+                    field,
+                    () -> {
+                      ConformanceCase original = find("core-retention-failure-after-commit");
+                      ObjectNode changed = original.materialized().deepCopy();
+                      if (field.equals("requests"))
+                        ((ObjectNode) changed.at("/steps/1/observe")).putArray(field);
+                      else if (field.equals("unknown-history"))
+                        ((ObjectNode) changed.at("/steps/1/observe/history")).putArray(field);
+                      else ((ObjectNode) changed.at("/faults/0/details")).put(field, true);
+                      CaseResult result =
+                          CaseClassifier.classify(copy(original, changed), Backend.MEMORY);
+                      assertEquals(ConformanceStatus.UNVERIFIED, result.status());
+                      org.junit.jupiter.api.Assertions.assertFalse(
+                          result.actual().has("initialization"));
+                    }));
+  }
+
   private static ConformanceCase find(String id) throws IOException {
     return ConformanceDataLoader.load(ConformanceTestFiles.REAL_ROOT).cases().stream()
         .filter(c -> c.id().equals(id))

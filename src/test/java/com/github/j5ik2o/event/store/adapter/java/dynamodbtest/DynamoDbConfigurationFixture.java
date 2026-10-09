@@ -11,6 +11,9 @@ import java.math.BigDecimal;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -120,14 +123,85 @@ public final class DynamoDbConfigurationFixture implements BeforeAllCallback {
 
   /** Records observations in the caller's node, including when a comparison fails. */
   public void configuration(JsonNode scenario, ObjectNode result) {
-    configuration(scenario, false, result.putObject("sync"));
-    configuration(scenario, true, result.putObject("async"));
+    String unsupported = unsupportedConfiguration(scenario);
+    if (unsupported != null) {
+      result.put("unsupported", unsupported);
+      return;
+    }
+    Throwable firstFailure = null;
+    for (boolean async : List.of(false, true)) {
+      ObjectNode actual = result.putObject(async ? "async" : "sync");
+      try {
+        configuration(scenario, async, actual);
+      } catch (RuntimeException | AssertionError failure) {
+        recordComparisonFailure(actual, failure);
+        if (firstFailure == null) firstFailure = failure;
+        else firstFailure.addSuppressed(failure);
+      }
+    }
+    if (firstFailure instanceof AssertionError) throw (AssertionError) firstFailure;
+    if (firstFailure != null) throw (RuntimeException) firstFailure;
     if (scenario.path("id").asText().equals("dynamodb-config-new")
         && result.at("/sync/result").asText().equals("success")
         && result.at("/async/result").asText().equals("success"))
       assertNotEquals(
           result.at("/sync/items/journal/store_id/S"),
           result.at("/async/items/journal/store_id/S"));
+  }
+
+  private static String unsupportedConfiguration(JsonNode scenario) {
+    String binding =
+        DynamoDbSnapshotRetentionFixture.unsupportedBindings(
+            scenario.at("/initialization/observe/items"));
+    if (binding != null) return binding;
+    if (!scenario.path("steps").isEmpty()) return "未接続の初期化後操作";
+    for (String field : stringsFromFields(scenario.at("/initialization/observe")))
+      if (!Set.of(
+              "requests",
+              "request_count",
+              "minimum_request_count",
+              "no_requests_in_phases",
+              "items",
+              "notifications")
+          .contains(field)) return "未接続の観測: " + field;
+    for (JsonNode fault : scenario.path("faults")) {
+      String kind = fault.path("kind").asText(), phase = fault.path("phase").asText();
+      JsonNode details = fault.path("details");
+      Set<String> fields = stringsFromFields(details);
+      if (kind.equals("sdk-response")
+          && phase.equals("configuration-read")
+          && fields.contains("unprocessed_keys")
+          && Set.of("responses", "unprocessed_keys").containsAll(fields)) {
+        for (Iterator<Map.Entry<String, JsonNode>> it = details.path("responses").fields();
+            it.hasNext(); ) {
+          Map.Entry<String, JsonNode> entry = it.next();
+          if (!Set.of("journal", "snapshot", "head").contains(entry.getKey())
+              || !entry.getValue().asText().equals("seed-config")) return "未接続の障害応答";
+        }
+        for (JsonNode key : details.path("unprocessed_keys"))
+          if (!Set.of("journal:__config__:0", "snapshot:__config__:0", "head:__config__")
+              .contains(key.asText())) return "未接続の未処理キー";
+        continue;
+      }
+      if (kind.equals("sdk-error")
+          && Set.of("configuration-read", "configuration-create").contains(phase)
+          && fault.path("injection").asText().equals("replace-request")
+          && Set.of("code", "message", "cancellation_reasons", "install_items").containsAll(fields)
+          && Set.of(
+                  "InternalServerError",
+                  "ProvisionedThroughputExceededException",
+                  "TransactionCanceledException")
+              .contains(details.path("code").asText())) {
+        if (!details.path("code").asText().equals("TransactionCanceledException")
+            && (details.has("cancellation_reasons") || details.has("install_items")))
+          return "未接続のSDK障害条件";
+        for (JsonNode reason : details.path("cancellation_reasons"))
+          if (!stringsFromFields(reason).equals(Set.of("target", "code"))) return "未接続の取消理由条件";
+        continue;
+      }
+      return "未接続の障害: " + kind + "/" + phase;
+    }
+    return null;
   }
 
   private void configuration(JsonNode scenario, boolean async, ObjectNode actual) {
@@ -150,6 +224,13 @@ public final class DynamoDbConfigurationFixture implements BeforeAllCallback {
         builder.configurationReadRetryLimit(scenario.at("/store/retry_limit").intValue());
       DynamoDbTableConfig tables = builder.build();
       List<Long> waits = new ArrayList<>();
+      List<RetentionFailure> notifications = new ArrayList<>();
+      EventStoreConfig<String, String> config =
+          EventStoreConfig.<String, String>builder()
+              .payloadSerializer(JsonPayloadSerializer.of(String.class))
+              .snapshotSerializer(JsonPayloadSerializer.of(String.class))
+              .retentionFailureListener(notifications::add)
+              .build();
       FaultRegistry.Operation operation = c.faults.begin(0, false);
       Throwable failure = null;
       Object store = null;
@@ -160,19 +241,26 @@ public final class DynamoDbConfigurationFixture implements BeforeAllCallback {
               DynamoDbTestFactory.createAsync(
                       c.async,
                       tables,
-                      storeConfig(),
+                      config,
                       millis -> {
                         waits.add(millis);
                         return CompletableFuture.completedFuture(null);
                       })
                   .join();
-        else store = DynamoDbTestFactory.create(c.client, tables, storeConfig(), waits::add);
+        else store = DynamoDbTestFactory.create(c.client, tables, config, waits::add);
       } catch (RuntimeException error) {
         failure = EventStoreExceptions.unwrap(error);
       }
       c.recorder.requestsFinished(operation).join();
       timing.put("request_ns", System.nanoTime() - requesting);
       actual.put("result", failure == null ? "success" : category(failure));
+      if (failure != null) {
+        actual.put("exception", failure.getClass().getName()).put("message", failure.getMessage());
+        if (failure.getCause() != null)
+          actual
+              .put("cause", failure.getCause().getClass().getName())
+              .put("cause_message", failure.getCause().getMessage());
+      }
       actual.set("waits_ms", DynamoDbJson.mapper().valueToTree(waits));
       List<DynamoDbRequestRecorder.Request> requests = c.recorder.requests();
       actual.set("requests", requestsJson(requests));
@@ -180,6 +268,9 @@ public final class DynamoDbConfigurationFixture implements BeforeAllCallback {
       actual.set("items", DynamoDbJson.sdk(items));
       int pending = c.faults.pending(operation);
       actual.put("pending", pending);
+      actual.put("request_terminal", c.recorder.requestsFinished(operation).isDone());
+      ArrayNode observedNotifications = actual.putArray("notifications");
+      notifications.forEach(notification -> observedNotifications.add("retention-failure"));
       assertEquals(0, pending);
       ArrayNode applications = actual.putArray("faults");
       for (FaultRegistry.Fault fault : faults) {
@@ -189,16 +280,24 @@ public final class DynamoDbConfigurationFixture implements BeforeAllCallback {
             .addObject()
             .put("phase", fault.phase)
             .put("applications", count)
+            .put("count", fault.count)
             .put("reservations", reservations);
         assertEquals(0, reservations);
         assertTrue(count > 0);
         if (fault.count != -1) assertEquals(fault.count, count);
       }
-      assertEquals("passed", c.faults.finish(operation).status);
+      String faultStatus = c.faults.finish(operation).status;
+      actual.put("fault_status", faultStatus);
+      assertEquals("passed", faultStatus);
       if (failure == null) assertNotNull(store);
       JsonNode initialization = scenario.path("initialization");
+      actual.put("comparison_position", "/initialization/expect");
       assertOutcome(initialization.path("expect"), failure);
+      actual.put("comparison_position", "/initialization/observe");
       observe(c, initialization.path("observe"), requests, waits, items);
+      if (initialization.path("observe").has("notifications"))
+        assertEquals(initialization.at("/observe/notifications"), observedNotifications);
+      actual.remove("comparison_position");
       if (!scenario.has("faults") && !before.values().stream().allMatch(Map::isEmpty))
         assertEquals(before, items);
       assertTrue(
@@ -239,6 +338,10 @@ public final class DynamoDbConfigurationFixture implements BeforeAllCallback {
     if (expected.has("error")) {
       assertNotNull(failure);
       assertEquals(expected.at("/error/category").asText(), category(failure));
+      if (expected.path("error").has("rule"))
+        assertEquals(
+            expected.at("/error/rule").asText(),
+            assertInstanceOf(ContractViolationException.class, failure).rule());
       for (JsonNode word : expected.at("/error/message/must_contain"))
         assertTrue(failure.getMessage().contains(word.asText()));
       for (JsonNode word : expected.at("/error/message/must_not_contain"))
@@ -246,6 +349,21 @@ public final class DynamoDbConfigurationFixture implements BeforeAllCallback {
     } else {
       assertEquals("success", expected.path("result").asText());
       assertNull(failure);
+    }
+  }
+
+  static void recordComparisonFailure(ObjectNode actual, Throwable failure) {
+    ObjectNode comparison = actual.putObject("comparison_failure");
+    comparison.put("position", actual.path("comparison_position").asText());
+    comparison.put("reason", failure.toString());
+    if (failure instanceof org.opentest4j.AssertionFailedError) {
+      org.opentest4j.AssertionFailedError assertion = (org.opentest4j.AssertionFailedError) failure;
+      if (assertion.isExpectedDefined())
+        comparison.set(
+            "expected", DynamoDbJson.mapper().valueToTree(assertion.getExpected().getValue()));
+      if (assertion.isActualDefined())
+        comparison.set(
+            "actual", DynamoDbJson.mapper().valueToTree(assertion.getActual().getValue()));
     }
   }
 
@@ -334,7 +452,13 @@ public final class DynamoDbConfigurationFixture implements BeforeAllCallback {
             String role = token.asText().split(":")[0];
             pending.computeIfAbsent(table(c, role), ignored -> new ArrayList<>()).add(key(role));
           }
-          effect = DynamoDbFaultEffects.partialBatchGet(c.admin, pending);
+          Set<String> responseTables = details.has("responses") ? new HashSet<>() : null;
+          if (responseTables != null)
+            details
+                .path("responses")
+                .fieldNames()
+                .forEachRemaining(role -> responseTables.add(table(c, role)));
+          effect = DynamoDbFaultEffects.partialBatchGet(c.admin, pending, responseTables);
           break;
         case "sdk-error":
           if ("TransactionCanceledException".equals(details.path("code").asText())) {
@@ -343,8 +467,16 @@ public final class DynamoDbConfigurationFixture implements BeforeAllCallback {
               codes.put(reason.path("target").asText(), reason.path("code").asText());
             effect =
                 DynamoDbFaultEffects.transactionCanceled(
-                    c.targets, codes, null, () -> install(c, details.path("install_items")));
-          } else effect = DynamoDbFaultEffects.sdkError(details.path("code").asText());
+                    c.targets,
+                    codes,
+                    null,
+                    details.path("message").asText("Injected DynamoDB test failure"),
+                    () -> install(c, details.path("install_items")));
+          } else
+            effect =
+                DynamoDbFaultEffects.sdkError(
+                    details.path("code").asText(),
+                    details.path("message").asText("Injected DynamoDB test failure"));
           break;
         default:
           throw new IllegalArgumentException("Unsupported configuration fault");
@@ -377,6 +509,9 @@ public final class DynamoDbConfigurationFixture implements BeforeAllCallback {
       entry.set("original", r.original);
       entry.set("marshalled", r.marshalled);
       entry.set("transmitted", r.transmitted);
+      entry.set("structure", r.structure);
+      entry.set("original_response", r.originalResponse);
+      entry.set("effective_response", r.effectiveResponse);
     }
     return result;
   }
@@ -459,6 +594,14 @@ public final class DynamoDbConfigurationFixture implements BeforeAllCallback {
                 assertEquals(
                     entry.getValue().longValue(),
                     requests.stream().filter(r -> r.phase.equals(entry.getKey())).count()));
+    expected
+        .path("minimum_request_count")
+        .fields()
+        .forEachRemaining(
+            entry ->
+                assertTrue(
+                    requests.stream().filter(r -> r.phase.equals(entry.getKey())).count()
+                        >= entry.getValue().longValue()));
     for (JsonNode phase : expected.path("no_requests_in_phases"))
       assertEquals(0, requests.stream().filter(r -> r.phase.equals(phase.asText())).count());
     String boundId = null;
@@ -587,102 +730,206 @@ public final class DynamoDbConfigurationFixture implements BeforeAllCallback {
   }
 
   public void layout(JsonNode expected, ObjectNode actual) {
-    for (RetentionPolicy policy :
-        List.of(RetentionPolicy.none(), RetentionPolicy.delete(2), RetentionPolicy.ttl(2, 60))) {
-      String mode = policy.mode().map(m -> m.name().toLowerCase(Locale.ROOT)).orElse("none");
-      DynamoDbTestContext c = createContext();
-      ObjectNode timing = resources.contexts.get(c);
-      timing.put("layout_mode", mode);
-      ObjectNode observed = actual.putObject(mode);
-      try {
-        long preparing = System.nanoTime();
-        DynamoDbConfigurationTables.create(c, policy);
-        timing.put("table_prepare_ns", System.nanoTime() - preparing);
-        FaultRegistry.Operation operation = c.faults.begin(0, false);
-        long requesting = System.nanoTime();
-        DynamoDbEventStore.create(
-            c.client,
-            DynamoDbConfigurationTables.config(c).retentionPolicy(policy).build(),
-            storeConfig());
-        c.recorder.requestsFinished(operation).join();
-        timing.put("request_ns", System.nanoTime() - requesting);
-        observed.set("requests", requestsJson(c.recorder.requests()));
-        Map<String, Map<String, AttributeValue>> items = stored(c);
-        observed.set("configuration_items", DynamoDbJson.sdk(items));
-        assertEquals("passed", c.faults.finish(operation).status);
-        observed.put("region", c.client.serviceClientConfiguration().region().id());
-        assertEquals(DynamoDbTestClients.REGION, c.client.serviceClientConfiguration().region());
-        assertEquals(
-            c.client.serviceClientConfiguration().region(),
-            c.admin.serviceClientConfiguration().region());
-        assertEquals(
-            c.client.serviceClientConfiguration().region(),
-            c.async.serviceClientConfiguration().region());
-        for (JsonNode table : expected.path("tables")) {
-          String role = table.path("name").asText();
-          TableDescription description =
-              c.admin
-                  .describeTable(DescribeTableRequest.builder().tableName(table(c, role)).build())
-                  .table();
-          TimeToLiveDescription ttl =
-              c.admin
-                  .describeTimeToLive(
-                      DescribeTimeToLiveRequest.builder().tableName(table(c, role)).build())
-                  .timeToLiveDescription();
-          ObjectNode observation = observed.putObject(role);
-          observation.set("describe_table", DynamoDbJson.sdk(description));
-          observation.set("describe_ttl", DynamoDbJson.sdk(ttl));
-          assertKeys(table, description.keySchema(), description.attributeDefinitions());
-          assertEquals(table.path("gsi").size(), description.globalSecondaryIndexes().size());
-          for (JsonNode gsi : table.path("gsi")) {
-            GlobalSecondaryIndexDescription index = description.globalSecondaryIndexes().get(0);
-            assertEquals(c.historyIndex, index.indexName());
-            assertKeys(gsi, index.keySchema(), description.attributeDefinitions());
-            assertEquals(
-                gsi.path("projection").asText(), index.projection().projectionTypeAsString());
-            assertTrue(index.projection().nonKeyAttributes().isEmpty());
-          }
-          boolean enabled =
-              description.streamSpecification() != null
-                  && Boolean.TRUE.equals(description.streamSpecification().streamEnabled());
-          assertEquals(table.at("/streams/enabled").booleanValue(), enabled);
-          if (enabled)
-            assertEquals(
-                table.at("/streams/view_type").asText(),
-                description.streamSpecification().streamViewTypeAsString());
-          boolean ttlEnabled =
-              policy.mode().orElse(null) == RetentionMode.TTL
-                  && table.at("/ttl/enabled_when").asText().equals("retention-mode-ttl");
-          assertEquals(
-              ttlEnabled ? TimeToLiveStatus.ENABLED : TimeToLiveStatus.DISABLED,
-              ttl.timeToLiveStatus());
-          if (ttlEnabled) assertEquals(table.at("/ttl/attribute").asText(), ttl.attributeName());
-          else assertNull(ttl.attributeName());
-        }
-        String generatedId = items.get("journal").get("store_id").s();
-        assertFalse(generatedId.isEmpty());
-        int checked = 0;
-        for (JsonNode item : expected.path("items")) {
-          if (!"__config__".equals(item.at("/values/aid").asText())) continue;
-          ObjectNode bound = item.deepCopy();
-          // The fixture name store-a is bound to the identifier generated by the product.
-          ((ObjectNode) bound.path("values")).put("store_id", generatedId);
-          assertItem(bound, items.get(item.path("table").asText()));
-          checked++;
-        }
-        assertEquals(3, checked);
-      } finally {
-        long closing = System.nanoTime();
+    String binding = DynamoDbSnapshotRetentionFixture.unsupportedBindings(expected.path("items"));
+    if (binding != null) {
+      actual.put("unsupported", binding);
+      return;
+    }
+    Throwable firstFailure = null;
+    for (boolean async : List.of(false, true)) {
+      ObjectNode sdkPath = actual.putObject(async ? "async" : "sync");
+      for (RetentionPolicy policy :
+          List.of(RetentionPolicy.none(), RetentionPolicy.delete(2), RetentionPolicy.ttl(1, 60))) {
+        String mode = policy.mode().map(m -> m.name().toLowerCase(Locale.ROOT)).orElse("none");
+        DynamoDbTestContext c = createContext();
+        ObjectNode timing = resources.contexts.get(c);
+        timing.put("layout_mode", mode);
+        ObjectNode observed = sdkPath.putObject(mode);
+        observed.put("sdk_path", async ? "async" : "sync");
+        observed.set("tables", DynamoDbJson.sdk(DynamoDbConfigurationTables.names(c)));
         try {
-          close(c);
+          long preparing = System.nanoTime();
+          DynamoDbConfigurationTables.create(c, policy);
+          timing.put("table_prepare_ns", System.nanoTime() - preparing);
+          FaultRegistry.Operation operation = c.faults.begin(0, false);
+          long requesting = System.nanoTime();
+          PayloadSerializer<JsonNode> json =
+              JsonPayloadSerializer.of(DynamoDbJson.mapper(), JsonNode.class);
+          EventStoreConfig<JsonNode, JsonNode> config =
+              EventStoreConfig.<JsonNode, JsonNode>builder()
+                  .payloadSerializer(json)
+                  .snapshotSerializer(json)
+                  .build();
+          DynamoDbTableConfig tables =
+              DynamoDbConfigurationTables.config(c)
+                  .retentionPolicy(policy)
+                  .clock(Clock.fixed(Instant.ofEpochSecond(4102444800L), ZoneOffset.UTC))
+                  .build();
+          EventStore<JsonNode, JsonNode> syncStore =
+              async ? null : DynamoDbEventStore.create(c.client, tables, config);
+          AsyncEventStore<JsonNode, JsonNode> asyncStore =
+              async ? DynamoDbEventStore.createAsync(c.async, tables, config).join() : null;
+          c.recorder.requestsFinished(operation).join();
+          timing.put("request_ns", System.nanoTime() - requesting);
+          observed.set("requests", requestsJson(c.recorder.requests()));
+          Map<String, Map<String, AttributeValue>> items = stored(c);
+          observed.set("configuration_items", DynamoDbJson.sdk(items));
+          assertEquals("passed", c.faults.finish(operation).status);
+          observed.put("region", c.client.serviceClientConfiguration().region().id());
+          assertEquals(DynamoDbTestClients.REGION, c.client.serviceClientConfiguration().region());
+          assertEquals(
+              c.client.serviceClientConfiguration().region(),
+              c.admin.serviceClientConfiguration().region());
+          assertEquals(
+              c.client.serviceClientConfiguration().region(),
+              c.async.serviceClientConfiguration().region());
+          // Fixed input is independent of the layout expectation.
+          ArrayNode writes = observed.putArray("operations");
+          for (long seq = 1; seq <= 3; seq++) {
+            FaultRegistry.Operation writing = c.faults.begin((int) seq, true);
+            EventEnvelope<JsonNode> event =
+                EventEnvelope.<JsonNode>builder()
+                    .aggregateId(AggregateId.of("Order", "1"))
+                    .seqNr(seq)
+                    .occurredAt(Instant.parse("1970-01-01T00:00:00.123000000Z"))
+                    .payload(DynamoDbJson.object().put("number", seq))
+                    .build();
+            SnapshotEnvelope<JsonNode> snapshot =
+                SnapshotEnvelope.<JsonNode>builder()
+                    .seqNr(seq)
+                    .aggregate(DynamoDbJson.object().put("total", seq))
+                    .build();
+            if (async) asyncStore.persistEventAndSnapshot(event, snapshot).join();
+            else syncStore.persistEventAndSnapshot(event, snapshot);
+            c.recorder.requestsFinished(writing).join();
+            ObjectNode write =
+                writes
+                    .addObject()
+                    .put("operation", seq)
+                    .put("pending", c.faults.pending(writing))
+                    .put("request_terminal", c.recorder.requestsFinished(writing).isDone());
+            List<DynamoDbRequestRecorder.Request> sent = new ArrayList<>();
+            for (DynamoDbRequestRecorder.Request request : c.recorder.requests())
+              if (request.operation == seq) sent.add(request);
+            write.set("requests", requestsJson(sent));
+            assertEquals(0, c.faults.pending(writing));
+            FaultRegistry.Result finished = c.faults.finish(writing);
+            write.put("fault_result", finished.status);
+            assertEquals("passed", finished.status);
+          }
+          for (JsonNode table : expected.path("tables")) {
+            String role = table.path("name").asText();
+            TableDescription description =
+                c.admin
+                    .describeTable(DescribeTableRequest.builder().tableName(table(c, role)).build())
+                    .table();
+            TimeToLiveDescription ttl =
+                c.admin
+                    .describeTimeToLive(
+                        DescribeTimeToLiveRequest.builder().tableName(table(c, role)).build())
+                    .timeToLiveDescription();
+            ObjectNode observation = observed.putObject(role);
+            observation.set("describe_table", DynamoDbJson.sdk(description));
+            observation.set("describe_ttl", DynamoDbJson.sdk(ttl));
+            assertKeys(table, description.keySchema(), description.attributeDefinitions());
+            assertEquals(table.path("gsi").size(), description.globalSecondaryIndexes().size());
+            for (JsonNode gsi : table.path("gsi")) {
+              GlobalSecondaryIndexDescription index = description.globalSecondaryIndexes().get(0);
+              assertEquals("configured-history-index", gsi.path("name_binding").asText());
+              assertEquals(c.historyIndex, index.indexName());
+              assertKeys(gsi, index.keySchema(), description.attributeDefinitions());
+              assertEquals(
+                  gsi.path("projection").asText(), index.projection().projectionTypeAsString());
+              assertTrue(index.projection().nonKeyAttributes().isEmpty());
+            }
+            boolean enabled =
+                description.streamSpecification() != null
+                    && Boolean.TRUE.equals(description.streamSpecification().streamEnabled());
+            assertEquals(table.at("/streams/enabled").booleanValue(), enabled);
+            if (enabled)
+              assertEquals(
+                  table.at("/streams/view_type").asText(),
+                  description.streamSpecification().streamViewTypeAsString());
+            else assertTrue(table.at("/streams/view_type").isNull());
+            assertTrue(
+                Set.of("never", "retention-mode-ttl")
+                    .contains(table.at("/ttl/enabled_when").asText()));
+            if (table.at("/ttl/enabled_when").asText().equals("never"))
+              assertTrue(table.at("/ttl/attribute").isNull());
+            boolean ttlEnabled =
+                policy.mode().orElse(null) == RetentionMode.TTL
+                    && table.at("/ttl/enabled_when").asText().equals("retention-mode-ttl");
+            assertEquals(
+                ttlEnabled ? TimeToLiveStatus.ENABLED : TimeToLiveStatus.DISABLED,
+                ttl.timeToLiveStatus());
+            if (ttlEnabled) assertEquals(table.at("/ttl/attribute").asText(), ttl.attributeName());
+            else assertNull(ttl.attributeName());
+          }
+          String generatedId = items.get("journal").get("store_id").s();
+          assertFalse(generatedId.isEmpty());
+          ArrayNode checked = observed.putArray("items");
+          String declaredStoreId = null;
+          for (JsonNode item : expected.path("items")) {
+            ObjectNode entry = checked.addObject().put("table", item.path("table").asText());
+            boolean history = item.at("/values/skey").asText().equals("3");
+            boolean marked = item.path("attributes").has("ttl");
+            if ((history && policy.keepCount().isEmpty())
+                || (marked && policy.mode().orElse(null) != RetentionMode.TTL)) {
+              entry
+                  .put("status", "not-applicable")
+                  .put("reason", marked ? "TTL方式の印付き履歴のため" : "履歴を保持しない設定のため");
+              continue;
+            }
+            String role = item.path("table").asText();
+            Map<String, AttributeValue> key = new LinkedHashMap<>();
+            key.put("aid", AttributeValue.fromS(item.at("/values/aid").asText()));
+            if (!role.equals("head")) {
+              String sort = role.equals("journal") ? "seq_nr" : "skey";
+              key.put(sort, AttributeValue.fromN(item.path("values").path(sort).asText()));
+            }
+            Map<String, AttributeValue> saved =
+                c.admin
+                    .getItem(
+                        GetItemRequest.builder()
+                            .tableName(table(c, role))
+                            .key(key)
+                            .consistentRead(true)
+                            .build())
+                    .item();
+            entry.set("item", DynamoDbJson.sdk(saved));
+            ObjectNode bound = item.deepCopy();
+            if (item.at("/values/aid").asText().equals("__config__")) {
+              String nextId = item.at("/values/store_id").asText();
+              assertFalse(nextId.isEmpty());
+              if (declaredStoreId == null) declaredStoreId = nextId;
+              else assertEquals(declaredStoreId, nextId);
+              ((ObjectNode) bound.path("values")).put("store_id", generatedId);
+              entry.put("generated_store_id", generatedId);
+            }
+            observed.put("comparison_position", "/items/" + (checked.size() - 1));
+            DynamoDbSnapshotRetentionFixture.compareAttributes(
+                DynamoDbSnapshotRetentionFixture.attributes(bound), saved);
+            entry.put("status", "passed");
+          }
+          observed.remove("comparison_position");
+        } catch (RuntimeException | AssertionError failure) {
+          recordComparisonFailure(observed, failure);
+          if (firstFailure == null) firstFailure = failure;
+          else firstFailure.addSuppressed(failure);
         } finally {
-          timing.put("context_close_ns", System.nanoTime() - closing);
-          observed.put("resources_closed", c.closed());
+          long closing = System.nanoTime();
+          try {
+            close(c);
+          } finally {
+            timing.put("context_close_ns", System.nanoTime() - closing);
+            observed.put("resources_closed", c.closed());
+          }
         }
       }
     }
-    actual.put("verified", "3テーブルのキー・履歴索引・Streams・モード別TTL・設定項目");
-    actual.put("unverified", "journal・current/history/marked snapshot・headのデータ項目形状、書込み・読取り・保持本体");
+    if (firstFailure instanceof AssertionError) throw (AssertionError) firstFailure;
+    if (firstFailure != null) throw (RuntimeException) firstFailure;
+    actual.put("verified", "両SDKの3表・索引・Streams・モード別TTL・全8種類の項目");
   }
 
   private static void assertKeys(

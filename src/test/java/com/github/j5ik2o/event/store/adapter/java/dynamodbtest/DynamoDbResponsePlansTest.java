@@ -29,6 +29,65 @@ class DynamoDbResponsePlansTest {
   private static final String AID = "User-A";
 
   @Test
+  void partialBatchGetValidatesDeclaredResponseTablesInBothInjectionModesAndRequestCopies() {
+    Map<String, AttributeValue> storedHead =
+        Map.of("aid", AttributeValue.fromS(AID), "seq_nr", AttributeValue.fromN("7"));
+    try (DynamoDbClient admin =
+        new DynamoDbClient() {
+          @Override
+          public GetItemResponse getItem(GetItemRequest request) {
+            assertEquals("head", request.tableName());
+            return GetItemResponse.builder().item(storedHead).build();
+          }
+
+          @Override
+          public String serviceName() {
+            return "dynamodb";
+          }
+
+          @Override
+          public void close() {}
+        }) {
+      BatchGetItemRequest request =
+          BatchGetItemRequest.builder()
+              .requestItems(
+                  Map.of(
+                      "head",
+                          KeysAndAttributes.builder()
+                              .keys(Map.of("aid", AttributeValue.fromS(AID)))
+                              .build(),
+                      "snapshot", KeysAndAttributes.builder().keys(key("skey", 1)).build()))
+              .build();
+      BatchGetItemResponse serviceResponse =
+          BatchGetItemResponse.builder()
+              .responses(Map.of("head", List.of(storedHead), "snapshot", List.of(item("skey", 1))))
+              .build();
+      for (FaultRegistry.Injection injection : FaultRegistry.Injection.values()) {
+        for (java.util.Set<String> declared :
+            List.of(java.util.Set.of("head"), java.util.Set.<String>of())) {
+          DynamoDbFaultEffects.PartialBatchGet plan =
+              (DynamoDbFaultEffects.PartialBatchGet)
+                  DynamoDbFaultEffects.partialBatchGet(
+                      admin, Map.of("snapshot", List.of(key("skey", 1))), declared);
+          FaultRegistry.Effect effect = plan.forRequest();
+          effect.prepare(request, injection);
+          org.junit.jupiter.api.function.Executable run =
+              () -> {
+                com.fasterxml.jackson.databind.JsonNode response =
+                    injection == FaultRegistry.Injection.REPLACE_REQUEST
+                        ? DynamoDbJson.read(effect.reply(null).body())
+                        : DynamoDbJson.sdk(effect.response(null, serviceResponse));
+                assertEquals(DynamoDbJson.sdk(storedHead), response.at("/Responses/head/0"));
+                assertEquals(0, response.at("/Responses/snapshot").size());
+              };
+          if (declared.isEmpty()) assertThrows(IllegalStateException.class, run);
+          else assertDoesNotThrow(run);
+        }
+      }
+    }
+  }
+
+  @Test
   void readInterleaveRequestEffectsRetainTheirOwnCapturedHead() {
     java.util.concurrent.atomic.AtomicReference<Map<String, AttributeValue>> storedHead =
         new java.util.concurrent.atomic.AtomicReference<>(

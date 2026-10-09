@@ -113,6 +113,28 @@ class ConformanceReportTest {
     assertFalse(unverified.get("reason").asText().isBlank());
   }
 
+  @Test
+  void targetListsIncludeUnverifiedApplicableCasesAndReasonsAreCountedSeparately() {
+    JsonNode json = report.toJson();
+    assertEquals(60, json.at("/target_cases/memory").size());
+    assertEquals(104, json.at("/target_cases/dynamodb-local").size());
+    assertTrue(
+        json.at("/target_cases/dynamodb-local")
+            .toString()
+            .contains("dynamodb-events-over-one-megabyte"));
+    for (String backend : List.of("memory", "dynamodb-local")) {
+      for (String status : List.of("not-applicable", "unverified", "unrepresentable")) {
+        int count = 0;
+        for (JsonNode group : json.at("/reasons/" + backend + "/" + status)) {
+          assertFalse(group.path("reason").asText().isBlank());
+          assertEquals(group.path("count").intValue(), group.path("case_ids").size());
+          count += group.path("count").intValue();
+        }
+        assertEquals(json.at("/backends/" + backend + "/" + status).intValue(), count);
+      }
+    }
+  }
+
   private static JsonNode caseEntry(JsonNode cases, String caseId, String backend) {
     for (JsonNode entry : cases) {
       if (entry.get("case_id").asText().equals(caseId)
@@ -143,6 +165,10 @@ class ConformanceReportTest {
     JsonNode parsed =
         ConformanceJson.mapper().readTree(Files.readAllBytes(dir.resolve("report.json")));
     assertEquals("java", parsed.get("language").asText());
+    assertEquals(
+        ConformanceJson.mapper()
+            .readTree(ConformanceJson.mapper().writeValueAsBytes(report.toJson())),
+        parsed);
   }
 
   /** 保存先名をキーに持つ状態件数を、構造を仮定せずに探す。 */
