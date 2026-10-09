@@ -25,15 +25,11 @@ dependencies {
 
     testImplementation("ch.qos.logback:logback-classic:1.6.5")
     testImplementation("org.testcontainers:testcontainers:2.0.5")
-    testImplementation("org.testcontainers:testcontainers-junit-jupiter:2.0.5")
-    testImplementation("org.testcontainers:testcontainers-localstack:2.0.5")
     testImplementation("software.amazon.awssdk:apache5-client:2.55.13")
     testImplementation("software.amazon.awssdk:netty-nio-client:2.55.13")
 
-    testImplementation("de.huxhorn.sulky:de.huxhorn.sulky.ulid:8.3.0")
     testImplementation("com.networknt:json-schema-validator:2.0.8")
 
-    implementation("io.vavr:vavr:1.0.1")
     api("software.amazon.awssdk:dynamodb:2.55.13")
     api("com.fasterxml.jackson.core:jackson-databind:2.22.3")
     implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.22.3")
@@ -183,4 +179,3 @@ signing {
     useInMemoryPgpKeys(signingKey, signingPassword)
     sign(publishing.publications["mavenJava"])
 }
-
