@@ -120,14 +120,14 @@ class CaseClassifierTest {
             .map(ConformanceCase::id)
             .collect(Collectors.toSet());
     assertEquals(104, targets.size());
-    assertTrue(targets.containsAll(required.get(Backend.DYNAMODB)));
+    assertEquals(targets, required.get(Backend.DYNAMODB));
     Set<String> connections =
         data.cases().stream()
             .filter(c -> CaseClassifier.exclusion(c, Backend.DYNAMODB).isEmpty())
             .filter(c -> ValueCaseRunner.supports(c) || DynamoDbCaseRunner.supports(c))
             .map(ConformanceCase::id)
             .collect(Collectors.toSet());
-    assertTrue(connections.containsAll(required.get(Backend.DYNAMODB)));
+    assertEquals(targets, connections);
     assertTrue(required.get(Backend.DYNAMODB).contains("dynamodb-layout-v1"));
   }
 

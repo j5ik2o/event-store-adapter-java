@@ -16,6 +16,7 @@ import software.amazon.awssdk.core.interceptor.ExecutionAttributes;
 import software.amazon.awssdk.core.interceptor.ExecutionInterceptor;
 import software.amazon.awssdk.core.interceptor.SdkExecutionAttribute;
 import software.amazon.awssdk.http.SdkHttpRequest;
+import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
 
 final class DynamoDbRequestRecorder implements ExecutionInterceptor {
   static final String REQUEST_HEADER = "x-eswa-test-request-id";
@@ -71,6 +72,7 @@ final class DynamoDbRequestRecorder implements ExecutionInterceptor {
     FaultRegistry.Selection continuation;
     int httpAttempts;
     int transmissions;
+    boolean requestReplaced;
     final CompletableFuture<Void> termination = new CompletableFuture<>();
   }
 
@@ -163,13 +165,20 @@ final class DynamoDbRequestRecorder implements ExecutionInterceptor {
   synchronized HttpReply replacement(SdkHttpRequest request) {
     State state = state(request);
     state.httpAttempts++;
+    state.requestReplaced = false;
     if (state.continuation != null
-        && state.continuation.fault.injection == FaultRegistry.Injection.REPLACE_REQUEST)
-      return state.continuation.fault.effect.reply(new Request(state));
+        && state.continuation.fault.injection == FaultRegistry.Injection.REPLACE_REQUEST) {
+      HttpReply reply = state.continuation.fault.effect.reply(new Request(state));
+      state.requestReplaced = reply != null;
+      return reply;
+    }
     if (state.selection == null
         || state.selection.fault.injection != FaultRegistry.Injection.REPLACE_REQUEST) return null;
     HttpReply reply = state.effect.reply(new Request(state));
-    if (reply != null) faults.applied(state.selection, state.id);
+    if (reply != null) {
+      state.requestReplaced = true;
+      faults.applied(state.selection, state.id);
+    }
     return reply;
   }
 
@@ -194,26 +203,31 @@ final class DynamoDbRequestRecorder implements ExecutionInterceptor {
   public SdkResponse modifyResponse(Context.ModifyResponse context, ExecutionAttributes attrs) {
     State state = attrs.getAttribute(STATE);
     state.originalResponse = DynamoDbJson.sdk(context.response());
-    SdkResponse response = transformResponse(context, state);
+    SdkResponse response = context.response();
+    if (!state.requestReplaced
+        && state.api.equals("Query")
+        && targets.role(state.marshalled.path("TableName").asText()).equals("journal"))
+      response = DynamoDbEventQueryPagination.correct((QueryResponse) response);
+    response = transformResponse(response, state);
     state.effectiveResponse = DynamoDbJson.sdk(response);
     return response;
   }
 
-  private SdkResponse transformResponse(Context.ModifyResponse context, State state) {
+  private SdkResponse transformResponse(SdkResponse response, State state) {
     if (state.continuation != null
         && state.continuation.fault.injection == FaultRegistry.Injection.REPLACE_RESPONSE)
-      return state.continuation.fault.effect.response(new Request(state), context.response());
-    if (state.selection == null) return context.response();
+      return state.continuation.fault.effect.response(new Request(state), response);
+    if (state.selection == null) return response;
     if (state.selection.fault.injection == FaultRegistry.Injection.REPLACE_RESPONSE) {
       // The response boundary was actually reached. An injected exception is also an application.
       faults.applied(state.selection, state.id);
-      return state.effect.response(new Request(state), context.response());
+      return state.effect.response(new Request(state), response);
     }
-    SdkResponse response = state.effect.afterResponse(new Request(state), context.response());
+    SdkResponse effective = state.effect.afterResponse(new Request(state), response);
     // A successful remainder response can arrive before async execute returns and records a send.
     // Entirely replaced requests already recorded their application at the HTTP boundary.
     if (!faults.isApplied(state.selection)) faults.applied(state.selection, state.id);
-    return response;
+    return effective;
   }
 
   private synchronized void terminal(ExecutionAttributes attrs) {

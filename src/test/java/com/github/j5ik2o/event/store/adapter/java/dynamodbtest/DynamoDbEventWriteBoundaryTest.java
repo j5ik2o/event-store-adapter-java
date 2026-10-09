@@ -17,6 +17,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DynamicTest;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestFactory;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
@@ -39,6 +40,16 @@ class DynamoDbEventWriteBoundaryTest {
   static final DynamoDbConfigurationFixture fixture = new DynamoDbConfigurationFixture();
 
   private static final AggregateId AID = AggregateId.of("A", "x");
+
+  @Test
+  void contextReleaseRequiresSuccessfulResourceTermination() {
+    DynamoDbTestContext context = fixture.createContext();
+    try (context) {
+      assertThrows(AssertionError.class, () -> fixture.releaseClosedContext(context));
+      assertFalse(context.closed());
+    }
+    assertDoesNotThrow(() -> fixture.releaseClosedContext(context));
+  }
 
   private interface Scenario {
     void run(Scene scene) throws Exception;
@@ -837,10 +848,10 @@ class DynamoDbEventWriteBoundaryTest {
         observation.put("resources_closed", c.closed());
         Path directory = Path.of("build/reports/dynamodb-event-write");
         Files.createDirectories(directory);
-        Files.writeString(
-            directory.resolve(name + (asynchronous ? "-async" : "-sync") + ".json"),
-            observation.toPrettyString());
+        DynamoDbJson.write(
+            directory.resolve(name + (asynchronous ? "-async" : "-sync") + ".json"), observation);
       }
+      fixture.releaseClosedContext(c);
     }
   }
 }

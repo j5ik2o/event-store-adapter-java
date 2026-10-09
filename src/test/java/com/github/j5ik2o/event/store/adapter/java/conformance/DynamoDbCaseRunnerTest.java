@@ -2,6 +2,7 @@ package com.github.j5ik2o.event.store.adapter.java.conformance;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.j5ik2o.event.store.adapter.java.dynamodbtest.DynamoDbConfigurationFixture;
@@ -853,14 +854,54 @@ class DynamoDbCaseRunnerTest {
             data.coverageExclusions())
         .write(Path.of("build/reports/conformance-candidates", c.id()));
     assertEquals(ConformanceStatus.PASSED, result.status(), result.reason());
+    Path paginationEvidence = Path.of("build/reports/conformance-candidates", c.id());
     for (String sdk : List.of("sync", "async")) {
       JsonNode path = result.actual().path(sdk);
       assertTrue(path.path("resources_closed").booleanValue());
       assertEquals(6, path.path("operations").size());
       JsonNode read = path.at("/operations/5");
       assertEquals(4, read.path("events").size());
-      assertTrue(read.path("requests").size() >= 2);
+      assertEquals(2, read.path("requests").size());
       assertEquals(read.path("responses").size(), read.path("requests").size());
+      JsonNode first = read.at("/requests/0");
+      JsonNode raw = first.path("original_response");
+      assertEquals(4, raw.path("Items").size());
+      assertTrue(
+          raw.path("LastEvaluatedKey").isMissingNode() || raw.path("LastEvaluatedKey").isEmpty());
+      assertFalse(first.path("transmitted").has("ExclusiveStartKey"));
+      assertEquals(3, read.at("/responses/0/Items").size());
+      assertEquals(1, read.at("/responses/1/Items").size());
+      java.util.List<JsonNode> receivedItems = new java.util.ArrayList<>();
+      for (int page = 0; page < read.path("responses").size(); page++) {
+        JsonNode request = read.path("requests").get(page);
+        JsonNode response = read.path("responses").get(page);
+        assertEquals("Query", request.path("api").asText());
+        assertEquals(1, request.path("transmissions").intValue());
+        assertEquals(request.path("marshalled"), request.path("transmitted"));
+        assertFalse(request.path("transmitted").has("Limit"));
+        assertEquals(request.path("effective_response"), response);
+        for (int index = 0; index < response.path("Items").size(); index++) {
+          JsonNode item = response.path("Items").get(index);
+          assertEquals(request.at("/original_response/Items/" + index), item);
+          receivedItems.add(item);
+        }
+        if (page + 1 < read.path("responses").size()) {
+          JsonNode last = response.path("Items").get(response.path("Items").size() - 1);
+          ObjectNode realKey = ConformanceJson.mapper().createObjectNode();
+          realKey.set("aid", last.path("aid"));
+          realKey.set("seq_nr", last.path("seq_nr"));
+          assertEquals(realKey, response.path("LastEvaluatedKey"));
+          assertEquals(
+              realKey, read.path("requests").get(page + 1).at("/transmitted/ExclusiveStartKey"));
+        } else
+          assertTrue(
+              response.path("LastEvaluatedKey").isMissingNode()
+                  || response.path("LastEvaluatedKey").isEmpty());
+      }
+      java.util.List<JsonNode> originalItems = new java.util.ArrayList<>();
+      raw.path("Items").forEach(originalItems::add);
+      assertEquals(originalItems, receivedItems);
+      assertEquals(4, new java.util.HashSet<>(receivedItems).size());
       assertTrue(read.at("/responses/0/LastEvaluatedKey").isObject());
       assertFalse(read.at("/responses/0/LastEvaluatedKey").isEmpty());
       assertEquals(
@@ -868,8 +909,26 @@ class DynamoDbCaseRunnerTest {
           read.at("/requests/1/transmitted/ExclusiveStartKey"));
       assertEquals(0, read.path("pending").intValue());
       assertTrue(read.path("request_terminal").booleanValue());
+      ObjectNode rawEvidence = ConformanceJson.mapper().createObjectNode();
+      rawEvidence.set("request", first.path("transmitted"));
+      rawEvidence.set("response", raw);
+      ConformanceJson.mapper()
+          .writerWithDefaultPrettyPrinter()
+          .writeValue(
+              paginationEvidence.resolve("raw-local-" + sdk + ".json").toFile(), rawEvidence);
+      ConformanceJson.mapper()
+          .writerWithDefaultPrettyPrinter()
+          .writeValue(
+              paginationEvidence.resolve("corrected-pages-" + sdk + ".json").toFile(), read);
       for (int index = 0; index < 4; index++) {
         JsonNode input = c.materialized().at("/fixtures/events/e" + (index + 1));
+        ObjectNode expectedEnvelope = input.deepCopy();
+        expectedEnvelope.put("manifest", input.path("manifest").asText(""));
+        expectedEnvelope.put(
+            "occurred_at", java.time.Instant.parse(input.path("occurred_at").asText()).toString());
+        try (JsonParser envelope = read.path("events").get(index).traverse()) {
+          assertEquals(expectedEnvelope, ConformanceJson.mapper().readTree(envelope));
+        }
         JsonNode write = path.path("operations").get(index + 1);
         JsonNode item = write.path("stored_journal");
         java.util.Set<String> attributes = new java.util.HashSet<>();
@@ -877,6 +936,7 @@ class DynamoDbCaseRunnerTest {
         assertEquals(
             java.util.Set.of("aid", "seq_nr", "occurred_at", "manifest", "payload"), attributes);
         byte[] bytes = java.util.Base64.getDecoder().decode(item.at("/payload/B").asText());
+        assertEquals(320022, bytes.length);
         assertEquals(bytes.length, write.path("payload_bytes").intValue());
         JsonNode decoded = ConformanceJson.mapper().readTree(bytes);
         assertEquals(

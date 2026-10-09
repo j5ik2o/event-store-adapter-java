@@ -164,6 +164,7 @@
     "occurred-at-epoch",
     "occurred-at-max",
     "occurred-at-min",
-    "occurred-at-nanoseconds"
+    "occurred-at-nanoseconds",
+    "dynamodb-events-over-one-megabyte"
   ]
 }

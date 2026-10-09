@@ -63,11 +63,21 @@ public final class DynamoDbConfigurationFixture implements BeforeAllCallback {
     return context;
   }
 
+  /** Called after a scene has closed successfully and its complete evidence has been saved. */
+  void releaseClosedContext(DynamoDbTestContext context) {
+    assertTrue(context.closed(), "Only closed scene resources may be released");
+    assertNull(context.finish(null).join(), "Scene termination must succeed");
+    ObjectNode observation = resources.contexts.remove(context);
+    if (observation == null) throw new IllegalArgumentException("Unknown scene context");
+    resources.closedContexts.add(observation.put("resources_closed", context.closed()));
+  }
+
   /** The class Store closes this after all scene-owned SDK clients and HTTP pools have closed. */
   private static final class CommunicationResources
       implements ExtensionContext.Store.CloseableResource {
     final SdkEventLoopGroup eventLoop = SdkEventLoopGroup.builder().numberOfThreads(2).build();
     final Map<DynamoDbTestContext, ObjectNode> contexts = new LinkedHashMap<>();
+    final List<ObjectNode> closedContexts = new ArrayList<>();
     private final String owner;
 
     CommunicationResources(String owner) {
@@ -78,6 +88,7 @@ public final class DynamoDbConfigurationFixture implements BeforeAllCallback {
     public void close() throws Exception {
       ObjectNode observation = DynamoDbJson.object().put("owner", owner);
       ArrayNode scenes = observation.putArray("contexts");
+      closedContexts.forEach(scenes::add);
       boolean contextsTerminatedSuccessfully = false;
       try {
         for (Map.Entry<DynamoDbTestContext, ObjectNode> scene : contexts.entrySet()) {
