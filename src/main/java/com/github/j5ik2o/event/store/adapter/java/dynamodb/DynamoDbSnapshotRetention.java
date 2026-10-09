@@ -6,6 +6,7 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.core.SdkPlugin;
@@ -18,7 +19,7 @@ import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.*;
 
-/** DELETE retention for one committed snapshot; no state is shared between writes. */
+/** Retention for one committed snapshot; no state is shared between writes. */
 final class DynamoDbSnapshotRetention {
   private static final Logger LOG = LoggerFactory.getLogger(DynamoDbSnapshotRetention.class);
   private static final int RETRY_LIMIT = 10;
@@ -51,6 +52,16 @@ final class DynamoDbSnapshotRetention {
         if (response.lastEvaluatedKey().isEmpty()) break;
         request = request.toBuilder().exclusiveStartKey(response.lastEvaluatedKey()).build();
       }
+      if (tables.retentionPolicy().mode().orElseThrow() == RetentionMode.TTL) {
+        for (long seqNr : candidates()) {
+          try {
+            client.updateItem(mark(seqNr));
+          } catch (RuntimeException failure) {
+            if (!alreadyMarked(failure)) throw failure;
+          }
+        }
+        return;
+      }
       for (List<WriteRequest> batch : batches()) {
         BatchWriteItemRequest deletion = deletion(batch);
         int retries = 0;
@@ -78,9 +89,11 @@ final class DynamoDbSnapshotRetention {
     return readPage(client, query())
         .thenCompose(
             success ->
-                success
-                    ? deleteBatches(client, batches(), 0)
-                    : CompletableFuture.completedFuture(false))
+                !success
+                    ? CompletableFuture.completedFuture(false)
+                    : tables.retentionPolicy().mode().orElseThrow() == RetentionMode.TTL
+                        ? markHistory(client, candidates(), 0)
+                        : deleteBatches(client, batches(), 0))
         .handle(
             (ignored, failure) -> {
               // SDK terminal failures and invalid responses have already been notified.
@@ -133,6 +146,32 @@ final class DynamoDbSnapshotRetention {
                     : CompletableFuture.completedFuture(false));
   }
 
+  private CompletableFuture<Boolean> markHistory(
+      DynamoDbAsyncClient client, List<Long> candidates, int index) {
+    if (index == candidates.size()) return CompletableFuture.completedFuture(true);
+    AsyncCompletion<Boolean> completion = new AsyncCompletion<>(response -> true);
+    try {
+      return client
+          .updateItem(
+              mark(candidates.get(index)).toBuilder()
+                  .overrideConfiguration(overrides -> overrides.addPlugin(completion))
+                  .build())
+          .handle(
+              (ignored, failure) ->
+                  completion.alreadyMarked || completion.result(failure).orElse(false))
+          .thenCompose(
+              success ->
+                  success
+                      ? markHistory(client, candidates, index + 1)
+                      : CompletableFuture.completedFuture(false));
+    } catch (RuntimeException failure) {
+      if (alreadyMarked(failure)) return markHistory(client, candidates, index + 1);
+      return completion.failure == null
+          ? CompletableFuture.failedFuture(failure)
+          : CompletableFuture.completedFuture(false);
+    }
+  }
+
   private CompletableFuture<Boolean> deleteBatch(
       DynamoDbAsyncClient client, BatchWriteItemRequest request, int retries, long delay) {
     AsyncCompletion<List<WriteRequest>> completion =
@@ -173,6 +212,7 @@ final class DynamoDbSnapshotRetention {
     private final Function<SdkResponse, T> process;
     private T value;
     private Throwable failure;
+    private boolean alreadyMarked;
 
     AsyncCompletion(Function<SdkResponse, T> process) {
       this.process = process;
@@ -196,6 +236,10 @@ final class DynamoDbSnapshotRetention {
     @Override
     public void onExecutionFailure(
         Context.FailedExecution context, ExecutionAttributes attributes) {
+      if (context.request() instanceof UpdateItemRequest && alreadyMarked(context.exception())) {
+        alreadyMarked = true;
+        return;
+      }
       fail(context.exception());
     }
 
@@ -213,7 +257,7 @@ final class DynamoDbSnapshotRetention {
   }
 
   private boolean enabled() {
-    return tables.retentionPolicy().mode().orElse(null) == RetentionMode.DELETE;
+    return tables.retentionPolicy().keepCount().isPresent();
   }
 
   private QueryRequest query() {
@@ -253,8 +297,7 @@ final class DynamoDbSnapshotRetention {
 
   private List<List<WriteRequest>> batches() {
     List<WriteRequest> candidates = new ArrayList<>();
-    history.stream()
-        .skip(tables.retentionPolicy().keepCount().orElseThrow())
+    candidates().stream()
         .forEach(
             seqNr ->
                 candidates.add(
@@ -271,6 +314,37 @@ final class DynamoDbSnapshotRetention {
     for (int start = 0; start < candidates.size(); start += 25)
       batches.add(List.copyOf(candidates.subList(start, Math.min(start + 25, candidates.size()))));
     return batches;
+  }
+
+  private List<Long> candidates() {
+    return history.stream()
+        .skip(tables.retentionPolicy().keepCount().orElseThrow())
+        .collect(Collectors.toList());
+  }
+
+  private UpdateItemRequest mark(long seqNr) {
+    return UpdateItemRequest.builder()
+        .tableName(tables.snapshotTableName())
+        .key(
+            Map.of(
+                "aid", AttributeValue.fromS(id.asString()),
+                "skey", AttributeValue.fromN(Long.toString(seqNr))))
+        .updateExpression("SET #ttl = :expires REMOVE active_history_seq_nr")
+        .conditionExpression("attribute_exists(active_history_seq_nr)")
+        .expressionAttributeNames(Map.of("#ttl", "ttl"))
+        .expressionAttributeValues(
+            Map.of(
+                ":expires",
+                AttributeValue.fromN(
+                    tables
+                        .retentionPolicy()
+                        .expiresAtEpochSeconds(tables.clock().instant().getEpochSecond())
+                        .toString())))
+        .build();
+  }
+
+  private static boolean alreadyMarked(Throwable failure) {
+    return EventStoreExceptions.unwrap(failure) instanceof ConditionalCheckFailedException;
   }
 
   private BatchWriteItemRequest deletion(List<WriteRequest> writes) {
@@ -304,9 +378,15 @@ final class DynamoDbSnapshotRetention {
 
   private void notifyFailure(Throwable failure) {
     RetentionFailure notification =
-        new RetentionFailure(id, RetentionMode.DELETE, EventStoreExceptions.unwrap(failure));
+        new RetentionFailure(
+            id,
+            tables.retentionPolicy().mode().orElseThrow(),
+            EventStoreExceptions.unwrap(failure));
     try {
-      LOG.warn("DynamoDB snapshot retention failed: aid={}, mode=DELETE", id.asString());
+      LOG.warn(
+          "DynamoDB snapshot retention failed: aid={}, mode={}",
+          id.asString(),
+          notification.mode());
     } catch (Exception loggingFailure) {
       // Logging cannot change the success of a committed write.
     }

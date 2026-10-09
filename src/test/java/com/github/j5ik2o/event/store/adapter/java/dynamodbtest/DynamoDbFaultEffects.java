@@ -402,7 +402,17 @@ final class DynamoDbFaultEffects {
       List<List<Long>> pages,
       Long justWritten,
       boolean omitJustWritten) {
-    return new HistoryPages(admin, snapshot, aid, pages, justWritten, omitJustWritten);
+    return new HistoryPages(admin, snapshot, aid, pages, justWritten, omitJustWritten, false);
+  }
+
+  static HistoryPages ttlHistoryPages(
+      DynamoDbClient admin,
+      String snapshot,
+      String aid,
+      List<List<Long>> pages,
+      Long justWritten,
+      boolean omitJustWritten) {
+    return new HistoryPages(admin, snapshot, aid, pages, justWritten, omitJustWritten, true);
   }
 
   static final class HistoryPages implements FaultRegistry.Effect {
@@ -415,6 +425,7 @@ final class DynamoDbFaultEffects {
     private final List<List<Long>> pages;
     private final String snapshot;
     private final String aid;
+    private final boolean allowMarked;
     private int next;
     private Map<String, AttributeValue> lastEvaluatedKey = Map.of();
 
@@ -424,11 +435,13 @@ final class DynamoDbFaultEffects {
         String aid,
         List<List<Long>> plan,
         Long justWritten,
-        boolean omitJustWritten) {
+        boolean omitJustWritten,
+        boolean allowMarked) {
       if (plan.isEmpty()) throw new IllegalArgumentException("Page plan is empty");
       this.admin = admin;
       this.snapshot = snapshot;
       this.aid = aid;
+      this.allowMarked = allowMarked;
       List<List<Long>> copied = new ArrayList<>();
       for (int i = 0; i < plan.size(); i++) {
         if (i + 1 < plan.size() && plan.get(i).isEmpty())
@@ -494,10 +507,18 @@ final class DynamoDbFaultEffects {
                         .consistentRead(true)
                         .build())
                 .item();
-        if (!stored.containsKey("active_history_seq_nr")
-            || new BigDecimal(stored.get("active_history_seq_nr").n())
-                    .compareTo(BigDecimal.valueOf(seq))
-                != 0) {
+        AttributeValue active = stored.get("active_history_seq_nr");
+        boolean marked = allowMarked && active == null && stored.containsKey("ttl");
+        if (marked) {
+          if (seq < 1
+              || !AttributeValue.fromS(aid).equals(stored.get("aid"))
+              || !numericEquals(stored.get("skey"), seq)
+              || !numericEquals(stored.get("seq_nr"), seq)
+              || stored.get("ttl").type() != AttributeValue.Type.N) {
+            throw new IllegalArgumentException("Stale history key is not a stored marked history");
+          }
+          new BigDecimal(stored.get("ttl").n()).toBigIntegerExact();
+        } else if (!numericEquals(active, seq) || (allowMarked && stored.containsKey("ttl"))) {
           throw new IllegalArgumentException("History page item is not stored and active");
         }
         items.add(
@@ -507,7 +528,7 @@ final class DynamoDbFaultEffects {
                 "skey",
                 stored.get("skey"),
                 "active_history_seq_nr",
-                stored.get("active_history_seq_nr")));
+                marked ? AttributeValue.fromN(seq.toString()) : active));
       }
       QueryResponse.Builder builder =
           QueryResponse.builder().items(items).count(items.size()).scannedCount(items.size());
@@ -520,6 +541,12 @@ final class DynamoDbFaultEffects {
 
     boolean hasNext() {
       return next < pages.size();
+    }
+
+    private static boolean numericEquals(AttributeValue value, long expected) {
+      return value != null
+          && value.type() == AttributeValue.Type.N
+          && new BigDecimal(value.n()).compareTo(BigDecimal.valueOf(expected)) == 0;
     }
   }
 }

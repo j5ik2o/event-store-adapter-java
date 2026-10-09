@@ -7,7 +7,7 @@ import com.github.j5ik2o.event.store.adapter.java.dynamodbtest.DynamoDbSnapshotR
 import com.github.j5ik2o.event.store.adapter.java.dynamodbtest.DynamoDbSnapshotRetentionFixture;
 import java.util.Set;
 
-/** Connects configuration, partial layout, verified reads and DELETE retention to real Local. */
+/** Connects configuration, partial layout, verified reads and retention to real Local. */
 final class DynamoDbCaseRunner {
   private DynamoDbCaseRunner() {}
 
@@ -26,7 +26,11 @@ final class DynamoDbCaseRunner {
           "dynamodb-retention-gsi-missing-new",
           "dynamodb-retention-gsi-deduplicate",
           "dynamodb-retention-event-only",
-          "dynamodb-retention-failure-delete");
+          "dynamodb-retention-failure-delete",
+          "dynamodb-retention-ttl-once",
+          "dynamodb-retention-ttl-stale-marked",
+          "dynamodb-retention-failure-ttl",
+          "dynamodb-written-item-shapes");
 
   static final Set<String> SNAPSHOT_CASE_IDS =
       Set.of(

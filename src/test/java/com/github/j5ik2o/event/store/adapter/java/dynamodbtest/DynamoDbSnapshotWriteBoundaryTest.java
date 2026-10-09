@@ -924,7 +924,9 @@ class DynamoDbSnapshotWriteBoundaryTest {
       assertTrue(
           actual.stream()
               .allMatch(
-                  r -> Set.of("commit", "retention-query", "retention-delete").contains(r.phase)));
+                  r ->
+                      Set.of("commit", "retention-query", "retention-delete", "retention-mark")
+                          .contains(r.phase)));
       for (DynamoDbRequestRecorder.Request request : actual) {
         if (!request.phase.equals("commit")) continue;
         assertEquals("TransactWriteItems", request.api);
