@@ -2,11 +2,14 @@ package com.github.j5ik2o.event.store.adapter.java.dynamodbtest;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.j5ik2o.event.store.adapter.java.core.*;
 import com.github.j5ik2o.event.store.adapter.java.dynamodb.*;
+import java.io.OutputStream;
 import java.lang.reflect.Field;
 import java.math.BigInteger;
 import java.nio.file.Files;
@@ -1072,9 +1075,25 @@ class DynamoDbSnapshotWriteBoundaryTest {
         observation.put("resources_closed", c.closed());
         Path directory = Path.of("build/reports/dynamodb-snapshot-write");
         Files.createDirectories(directory);
-        Files.writeString(
-            directory.resolve(name + (asynchronous ? "-async" : "-sync") + ".json"),
-            observation.toPrettyString());
+        Path evidence = directory.resolve(name + (asynchronous ? "-async" : "-sync") + ".json");
+        try (OutputStream output = Files.newOutputStream(evidence)) {
+          DynamoDbJson.mapper().writerWithDefaultPrettyPrinter().writeValue(output, observation);
+        }
+        try (JsonParser saved = DynamoDbJson.mapper().getFactory().createParser(evidence.toFile());
+            JsonParser observed = observation.traverse(DynamoDbJson.mapper())) {
+          JsonToken token;
+          while ((token = observed.nextToken()) != null) {
+            if (token == JsonToken.VALUE_EMBEDDED_OBJECT) {
+              assertEquals(JsonToken.VALUE_STRING, saved.nextToken());
+              assertArrayEquals(observed.getBinaryValue(), saved.getBinaryValue());
+            } else {
+              assertEquals(token, saved.nextToken());
+              if (token == JsonToken.FIELD_NAME || token.isScalarValue())
+                assertEquals(observed.getText(), saved.getText());
+            }
+          }
+          assertNull(saved.nextToken());
+        }
       }
     }
   }
