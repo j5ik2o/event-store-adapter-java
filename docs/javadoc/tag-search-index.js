@@ -1,1 +1,1 @@
-tagSearchIndex = [{"l":"直列化された形式","h":"","u":"serialized-form.html"}];updateSearchResults();
+tagSearchIndex = [{"l":"直列化された形式","h":"","k":"18","u":"serialized-form.html"}];updateSearchResults();
