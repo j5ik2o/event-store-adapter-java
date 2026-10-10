@@ -32,7 +32,7 @@ public final class RetentionPolicy {
   }
 
   /**
-   * Deletes old events. / 古いイベントを削除する。
+   * Deletes old snapshot history. / 古いスナップショット履歴を削除する。
    *
    * @param keepCount number to keep, 1 or greater / 保持件数（1 以上）
    * @return policy / 方針
@@ -44,7 +44,7 @@ public final class RetentionPolicy {
   }
 
   /**
-   * Expires old events by TTL. / 古いイベントを TTL で期限切れにする。
+   * Marks old snapshot history for expiration by TTL. / 古いスナップショット履歴に TTL の期限を付ける。
    *
    * @param keepCount number to keep, 1 or greater / 保持件数（1 以上）
    * @param graceSeconds grace in seconds, 0 or greater / 猶予（秒、0 以上）

@@ -106,7 +106,7 @@ initTheme();
 <div class="col-first even-row-color method-summary-table method-summary-table-tab1 method-summary-table-tab4"><code>static <a href="RetentionPolicy.html" title="com.github.j5ik2o.event.store.adapter.java.core内のクラス">RetentionPolicy</a></code></div>
 <div class="col-second even-row-color method-summary-table method-summary-table-tab1 method-summary-table-tab4"><code><a href="#delete(int)" class="member-name-link">delete</a><wbr>(int&nbsp;keepCount)</code></div>
 <div class="col-last even-row-color method-summary-table method-summary-table-tab1 method-summary-table-tab4">
-<div class="block">Deletes old events. / 古いイベントを削除する。</div>
+<div class="block">Deletes old snapshot history. / 古いスナップショット履歴を削除する。</div>
 </div>
 <div class="col-first odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/math/BigInteger.html" title="java.math内のクラス" class="external-link">BigInteger</a></code></div>
 <div class="col-second odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#expiresAtEpochSeconds(long)" class="member-name-link">expiresAtEpochSeconds</a><wbr>(long&nbsp;markedAtEpochSeconds)</code></div>
@@ -133,7 +133,7 @@ initTheme();
 <div class="col-second even-row-color method-summary-table method-summary-table-tab1 method-summary-table-tab4"><code><a href="#ttl(int,long)" class="member-name-link">ttl</a><wbr>(int&nbsp;keepCount,
  long&nbsp;graceSeconds)</code></div>
 <div class="col-last even-row-color method-summary-table method-summary-table-tab1 method-summary-table-tab4">
-<div class="block">Expires old events by TTL. / 古いイベントを TTL で期限切れにする。</div>
+<div class="block">Marks old snapshot history for expiration by TTL. / 古いスナップショット履歴に TTL の期限を付ける。</div>
 </div>
 </div>
 </div>
@@ -172,7 +172,7 @@ initTheme();
 <div class="horizontal-scroll">
 <div class="member-signature"><span class="annotations">@Nonnull
 </span><span class="modifiers">public static</span>&nbsp;<span class="return-type"><a href="RetentionPolicy.html" title="com.github.j5ik2o.event.store.adapter.java.core内のクラス">RetentionPolicy</a></span>&nbsp;<span class="element-name">delete</span><wbr><span class="parameters">(int&nbsp;keepCount)</span></div>
-<div class="block">Deletes old events. / 古いイベントを削除する。</div>
+<div class="block">Deletes old snapshot history. / 古いスナップショット履歴を削除する。</div>
 <dl class="notes">
 <dt>パラメータ:</dt>
 <dd><code>keepCount</code> - number to keep, 1 or greater / 保持件数（1 以上）</dd>
@@ -189,7 +189,7 @@ initTheme();
 <div class="member-signature"><span class="annotations">@Nonnull
 </span><span class="modifiers">public static</span>&nbsp;<span class="return-type"><a href="RetentionPolicy.html" title="com.github.j5ik2o.event.store.adapter.java.core内のクラス">RetentionPolicy</a></span>&nbsp;<span class="element-name">ttl</span><wbr><span class="parameters">(int&nbsp;keepCount,
  long&nbsp;graceSeconds)</span></div>
-<div class="block">Expires old events by TTL. / 古いイベントを TTL で期限切れにする。</div>
+<div class="block">Marks old snapshot history for expiration by TTL. / 古いスナップショット履歴に TTL の期限を付ける。</div>
 <dl class="notes">
 <dt>パラメータ:</dt>
 <dd><code>keepCount</code> - number to keep, 1 or greater / 保持件数（1 以上）</dd>
