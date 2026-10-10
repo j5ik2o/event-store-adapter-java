@@ -30,7 +30,7 @@ dependencies {
 
     testImplementation("com.networknt:json-schema-validator:2.0.8")
 
-    api("software.amazon.awssdk:dynamodb:2.55.13")
+    api("software.amazon.awssdk:dynamodb:2.55.14")
     api("com.fasterxml.jackson.core:jackson-databind:2.22.3")
     implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.22.3")
     implementation("org.slf4j:slf4j-api:2.0.20")
