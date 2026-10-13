@@ -12,15 +12,14 @@ CQRS/Event Sourcing向けのイベントストアです。MemoryとDynamoDBを�
 
 ## 依存と公開API
 
-現在の成果物版は `2.0.0-SNAPSHOT` です。共通契約は [共通契約 v4](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md)（event-store-adapter グループ共通の仕様）で、成果物版 `2.0.0-SNAPSHOT` とは別の番号です。配布適合データの版は **1.0.0** で、これも別の番号です。
+現在の成果物版は `2.0.0` で、Maven Central に公開しています。共通契約は [共通契約 v4](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md)（event-store-adapter グループ共通の仕様）で、成果物版 `2.0.0` とは別の番号です。配布適合データの版は **1.0.0** で、これも別の番号です。
 
 ```kotlin
 repositories {
     mavenCentral()
-    maven { url = uri("https://central.sonatype.com/repository/maven-snapshots/") }
 }
 dependencies {
-    implementation("io.github.j5ik2o:event-store-adapter-java:2.0.0-SNAPSHOT")
+    implementation("io.github.j5ik2o:event-store-adapter-java:2.0.0")
 }
 ```
 

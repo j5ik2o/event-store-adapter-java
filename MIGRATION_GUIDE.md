@@ -1,6 +1,6 @@
 # Java 1.xから新公開APIへの移行
 
-現在の成果物は `2.0.0-SNAPSHOT` です。[共通契約 v4](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md)（成果物版とは別の番号）、配布適合データの版1.0.0、DynamoDBの `layout_version=1` は別の番号です。
+現在の成果物は `2.0.0` です。[共通契約 v4](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md)（成果物版とは別の番号）、配布適合データの版1.0.0、DynamoDBの `layout_version=1` は別の番号です。
 
 Javaでは手順書による移行を提供します。**旧版で読む→利用者がpayloadと封筒へ変換→新版へ連続して書き直す**流れです。新版は旧公開型・旧internal・旧保存形式の自動読取り・互換alias・移行ツールを提供しません。
 

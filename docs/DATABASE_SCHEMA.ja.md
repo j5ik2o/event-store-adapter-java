@@ -1,6 +1,6 @@
 # DynamoDBのスキーマ
 
-`com.github.j5ik2o.event.store.adapter.java.dynamodb` が使う配置です。成果物版は `2.0.0-SNAPSHOT`、[共通契約 v4](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md)（成果物版とは別の番号）、配布適合データは1.0.0です。保存する `layout_version` は **1** で、これらとは別の配置番号です。
+`com.github.j5ik2o.event.store.adapter.java.dynamodb` が使う配置です。成果物版は `2.0.0`、[共通契約 v4](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md)（成果物版とは別の番号）、配布適合データは1.0.0です。保存する `layout_version` は **1** で、これらとは別の配置番号です。
 
 ## テーブルの準備
 
