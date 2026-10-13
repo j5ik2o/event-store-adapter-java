@@ -17,6 +17,11 @@ on:
         required: true
         type: boolean
         default: false
+      version:
+        description: 'Explicit next version X.Y.Z (optional; overrides level)'
+        required: false
+        type: string
+        default: ''
 jobs:
   bump-version:
     runs-on: ubuntu-latest
@@ -52,10 +57,23 @@ jobs:
           fi
 
       # ─────────────────────────────────────────
-      # 4. 変更点をカウント（force_bump 対応）
+      # 3b. 指定された version を検査（何も書き換えずに失敗する）
+      # ─────────────────────────────────────────
+      - name: Validate requested version
+        if: inputs.version != ''
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          git tag -l 'v*' | sort -V \
+            | python3 "${GITHUB_WORKSPACE}"/.github/validate-version.py "$REQUESTED_VERSION"
+
+      # ─────────────────────────────────────────
+      # 4. 変更点をカウント（force_bump / version 対応）
       # ─────────────────────────────────────────
       - name: Calculate changes from the latest tag to HEAD
         id: changes
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
         run: |
           BASE=${{ steps.defines.outputs.prev_tag }}
           
@@ -71,8 +89,13 @@ jobs:
             echo "force_bump requested — overriding COUNT to 1"
             COUNT=1
           fi
+          # ----- explicit version -----
+          if [[ -n "$REQUESTED_VERSION" ]]; then
+            echo "version requested — overriding COUNT to 1"
+            COUNT=1
+          fi
           # ----------------------
-          
+
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
 
       # ─────────────────────────────────────────
@@ -80,7 +103,7 @@ jobs:
       # ─────────────────────────────────────────
       - name: Calculate semver level
         id: semver_level
-        if: steps.changes.outputs.count > 0
+        if: steps.changes.outputs.count > 0 && inputs.version == ''
         env:
           REQUESTED_LEVEL: ${{ inputs.level }}
         run: |
@@ -102,11 +125,17 @@ jobs:
       - name: Get the next version
         id: versions
         if: steps.changes.outputs.count > 0
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
         run: |
-          NEXT_VERSION=$(echo ${{ steps.defines.outputs.prev_tag }} \
-            | python3 "${GITHUB_WORKSPACE}"/.github/next-semver.py \
-              ${{ steps.semver_level.outputs.semver_level }})
-          
+          if [[ -n "$REQUESTED_VERSION" ]]; then
+            NEXT_VERSION="$REQUESTED_VERSION"
+          else
+            NEXT_VERSION=$(echo ${{ steps.defines.outputs.prev_tag }} \
+              | python3 "${GITHUB_WORKSPACE}"/.github/next-semver.py \
+                ${{ steps.semver_level.outputs.semver_level }})
+          fi
+
           echo "next_version=$NEXT_VERSION" >> "$GITHUB_OUTPUT"
           echo "next_tag=v$NEXT_VERSION"   >> "$GITHUB_OUTPUT"
 
@@ -114,6 +143,7 @@ jobs:
       # 7. `version` ファイルを更新
       # ─────────────────────────────────────────
       - name: Set the next version
+        if: steps.changes.outputs.count > 0
         run: echo ${{ steps.versions.outputs.next_version }} > version
 
       # ─────────────────────────────────────────
