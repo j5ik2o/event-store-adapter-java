@@ -710,7 +710,7 @@ GenericContainer<?> dynamo =
 ```
 
 - クライアントには、endpoint・リージョン・ダミーの資格情報を明示する。`DynamoDbClient`・`DynamoDbAsyncClient` に endpoint を明示する。最初のメジャーは Streams を読む購読側を作らない（9.3）。試験で Streams のクライアントを使う場合は、そのクライアントにも endpoint を明示する。Streams の ARN のリージョンは `ddblocal` になるため、ARN からリージョンを推測しない。
-- 3 テーブルは同じリージョンに作る。場面ごとにテーブル名を変える（5.3）。`-sharedDb` の要否は、実装 PR で、リージョン・資格情報の組ごとの分離と合わせて確認する（**未確認**）。
+- 3 テーブルは同じリージョンに作る。場面ごとにテーブル名を変える（5.3）。`-sharedDb` は付けない。試験はリージョンと資格情報を 1 組に固定するので、`-inMemory` だけで同期・非同期のクライアントが同じデータを見る（実装で確認。`DynamoDbFaultFoundationTest.localUsesPinnedVersionDynamicEndpointAndRealSyncAndAsyncClients`）。
 - 起動の時間を減らすため、コンテナは試験の実行全体で 1 つにし、場面ごとにテーブルだけを作る。
 
 ### 6.2 今の試験からの移行
@@ -902,7 +902,7 @@ head テーブルの Streams のレコードからヘッド遷移を組み立て
 | Q4 | 必須の設定（シリアライザ・テーブル名など）が欠けたときの分類 | 回答済み: 設定エラー。共通契約 4 章の設定の分類は「生成時の不正な設定値」を挙げ、欠落もこれに当たる（指揮役の回答、2026-10-06。2.8） |
 | Q5 | 共有する `MemoryStorage` に、保存先の設定と異なる設定でストアを生成した場合の扱い | 回答済み: MEM-D11 のとおり保存先の設定を使う。保持の方針は `MemoryStorage.create` で渡すので、食い違いは起こらない（2.8） |
 | Q6 | `long` に収まらない `seq_nr` の扱い | 回答済み: 適合データに `long` を超える値はない（最大 9007199254740992）。`BigInteger` で読み、`long` に正確に変換する。将来 `long` を超える値が来たら `unrepresentable` と報告する |
-| Q7 | `ExecutionInterceptor` の分類が、SDK の再試行・暗号化など他の層と順序が変わる場合の、`observe.requests` の対応付け | 回答済み（実装で確認）: 対応付けを `ExecutionInterceptor` の呼ばれる順序に依存させない。`src/test/java/com/github/j5ik2o/event/store/adapter/java/dynamodbtest/DynamoDbRequestRecorder.java` が `beforeExecution` で要求ごとの識別子を発行し、`modifyHttpRequest` で HTTP ヘッダ `x-eswa-test-request-id` に載せる。HTTP クライアント側（`FaultHttpClient`）はこのヘッダから要求を引き当て、`replacement`・`transmitted` で送信試行数（`httpAttempts`）と送信内容を数える。再試行・他の層の順序に関わらず、実際に送った要求が識別子で結び付く。SDK の再試行は起きないことも確認している。適合試験では `conformance/dynamodb/read.json` の `dynamodb-events-over-one-megabyte`（`minimum_request_count`）・`dynamodb-latest-unprocessed`・`dynamodb-snapshot-ahead-of-head`（`request_count`）が `DynamoDbCaseRunnerTest` を通して `observe.requests` の回数を検査する。補助の単体試験は `DynamoDbFaultFoundationTest.sdkDoesNotRetryRetryableFailuresInEitherTransport`（同期・非同期とも `httpAttempts` が 1）。 |
+| Q7 | `ExecutionInterceptor` の分類が、SDK の再試行・暗号化など他の層と順序が変わる場合の、`observe.requests` の対応付け | 回答済み（実装で確認）: 対応付けを `ExecutionInterceptor` の呼ばれる順序に依存させない。`src/test/java/com/github/j5ik2o/event/store/adapter/java/dynamodbtest/DynamoDbRequestRecorder.java` が `beforeExecution` で要求ごとの識別子を発行し、`modifyHttpRequest` で HTTP ヘッダ `x-eswa-test-request-id` に載せる。HTTP クライアント側（`FaultHttpClient`）はこのヘッダから要求を引き当て、`replacement`・`transmitted` で送信試行数（`httpAttempts`）と送信内容を数える。再試行・他の層の順序に関わらず、実際に送った要求が識別子で結び付く。SDK の再試行は起きないことも確認している。適合試験では `conformance/dynamodb/read.json` の `dynamodb-events-over-one-megabyte`（`minimum_request_count`）・`dynamodb-latest-unprocessed`・`dynamodb-snapshot-ahead-of-head`（`request_count`）が、`ConformanceRunnerTest.conformance()` から `DynamoDbCaseRunner.run` を通して実行され、`observe.requests` の回数を検査する（`DynamoDbCaseRunnerTest` は、これらを変えた版で検証の失敗を確かめるだけである）。補助の単体試験は `DynamoDbFaultFoundationTest.sdkDoesNotRetryRetryableFailuresInEitherTransport`（同期・非同期とも `httpAttempts` が 1）。 |
 | Q8 | E-2 の「SDK の生のエラー文を含めない」は、例外の `getCause()` に SDK の例外を付けることを禁じるか | 回答済み: E-2 の対象はメッセージ。原因の例外を持つことは禁じられていない。ただし `getMessage()`・`toString()` に SDK の文を出さない |
 | Q9 | 契約違反・保持失敗の通知のメッセージの「規則番号」の書式 | 回答済み: `"W-6"`・`"T-13"` の形で足りる |
 | Q10 | `manifest` を `PayloadSerializer` に渡してよいか（9.2 の選択肢 C） | 回答済み: T-4 は渡すことを禁じていない（解釈しなければよい）。ただし 9.2 で A を選んだので、この文書では渡さない |
