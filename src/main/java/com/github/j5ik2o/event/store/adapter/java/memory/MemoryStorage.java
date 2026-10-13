@@ -21,7 +21,10 @@ public final class MemoryStorage {
   final Map<String, AggregateState> aggregates = new HashMap<>();
 
   private MemoryStorage(RetentionPolicy policy, MemoryStorageHooks hooks) {
-    this.policy = Objects.requireNonNull(policy, "policy");
+    if (policy == null) {
+      throw new ConfigurationException("retention policy is required");
+    }
+    this.policy = policy;
     this.hooks = Objects.requireNonNull(hooks, "hooks");
     if (policy.mode().orElse(null) == RetentionMode.TTL) {
       throw new ConfigurationException("memory storage does not support TTL");
