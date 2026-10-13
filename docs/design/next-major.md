@@ -715,13 +715,13 @@ GenericContainer<?> dynamo =
 
 ### 6.2 今の試験からの移行
 
-- 現行の試験は LocalStack を使う（`build.gradle.kts` の `org.testcontainers:localstack`）。実装計画 4.1 のとおり、段階 2 の中で DynamoDB Local へ移す。
+- 試験は、digest で固定した DynamoDB Local を `GenericContainer` で起動して使う（`DynamoDbLocalExtension`）。かつては LocalStack を使っていたが、実装計画 4.1 のとおり、段階 2 の中で DynamoDB Local へ移した。
 - 現行の試験は新 API に合わないため、ほぼ一から書く（IP 4.2）。旧 API の試験は、7 章の PR で旧 API を消すときに消す。
-- LocalStack の依存と、使わなくなる依存は、7.1 の 9 番の PR で外す。
+- LocalStack の依存と、使わなくなる依存は、すでに `build.gradle.kts` から外れている。
 
 ### 6.3 Testcontainers の版の混在
 
-現行は `org.testcontainers:testcontainers:2.0.5` に、`junit-jupiter:1.21.4` と `localstack:1.21.4` が混在している。DynamoDB Local は `GenericContainer` で起動できるため、LocalStack モジュールは不要になる。`junit-jupiter` モジュールも、手動のライフサイクル管理にすれば不要にできる。残す場合は、`testcontainers` 本体と同じ版に揃える。2.x 系の成果物名の変更の有無は **未確認**。実装 PR で Maven Central 上の成果物を確認する。
+以前は `org.testcontainers:testcontainers:2.0.5` に、`junit-jupiter:1.21.4` と `localstack:1.21.4` が混在していた。現在の `build.gradle.kts` は `testcontainers:2.0.5` だけを使い、DynamoDB Local を `GenericContainer` で起動するため、LocalStack と `junit-jupiter` のモジュールは不要になって外した。
 
 ## 7. main への入れ方
 
@@ -892,7 +892,7 @@ head テーブルの Streams のレコードからヘッド遷移を組み立て
 
 ## 10. 未解決の疑問
 
-仕様を勝手に解釈して埋めない。「回答済み」の項目は、指揮役のレビュー（1回目）の回答と、2026-10-06 の仕様の決定（P-42〜P-44。P-45 は rs の移行の手順なので関係しない）・指揮役の回答を反映した。未解決は、実装のときに確かめる Q7 だけである。
+仕様を勝手に解釈して埋めない。「回答済み」の項目は、指揮役のレビュー（1回目）の回答と、2026-10-06 の仕様の決定（P-42〜P-44。P-45 は rs の移行の手順なので関係しない）・指揮役の回答を反映した。Q7 は実装で確かめて解決済みにした。未解決の疑問は残っていない。
 
 | 番号 | 疑問 | 根拠・状況 |
 |---|---|---|
@@ -902,7 +902,7 @@ head テーブルの Streams のレコードからヘッド遷移を組み立て
 | Q4 | 必須の設定（シリアライザ・テーブル名など）が欠けたときの分類 | 回答済み: 設定エラー。共通契約 4 章の設定の分類は「生成時の不正な設定値」を挙げ、欠落もこれに当たる（指揮役の回答、2026-10-06。2.8） |
 | Q5 | 共有する `MemoryStorage` に、保存先の設定と異なる設定でストアを生成した場合の扱い | 回答済み: MEM-D11 のとおり保存先の設定を使う。保持の方針は `MemoryStorage.create` で渡すので、食い違いは起こらない（2.8） |
 | Q6 | `long` に収まらない `seq_nr` の扱い | 回答済み: 適合データに `long` を超える値はない（最大 9007199254740992）。`BigInteger` で読み、`long` に正確に変換する。将来 `long` を超える値が来たら `unrepresentable` と報告する |
-| Q7 | `ExecutionInterceptor` の分類が、SDK の再試行・暗号化など他の層と順序が変わる場合の、`observe.requests` の対応付け | 固定した SDK 版での動作は、実装 PR で確認する（未確認）。未解決 |
+| Q7 | `ExecutionInterceptor` の分類が、SDK の再試行・暗号化など他の層と順序が変わる場合の、`observe.requests` の対応付け | 回答済み（実装で確認）: 対応付けを `ExecutionInterceptor` の呼ばれる順序に依存させない。`src/test/java/com/github/j5ik2o/event/store/adapter/java/dynamodbtest/DynamoDbRequestRecorder.java` が `beforeExecution` で要求ごとの識別子を発行し、`modifyHttpRequest` で HTTP ヘッダ `x-eswa-test-request-id` に載せる。HTTP クライアント側（`FaultHttpClient`）はこのヘッダから要求を引き当て、`replacement`・`transmitted` で送信試行数（`httpAttempts`）と送信内容を数える。再試行・他の層の順序に関わらず、実際に送った要求が識別子で結び付く。SDK の再試行は起きないことも確認している。適合試験では `conformance/dynamodb/read.json` の `dynamodb-events-over-one-megabyte`（`minimum_request_count`）・`dynamodb-latest-unprocessed`・`dynamodb-snapshot-ahead-of-head`（`request_count`）が `DynamoDbCaseRunnerTest` を通して `observe.requests` の回数を検査する。補助の単体試験は `DynamoDbFaultFoundationTest.sdkDoesNotRetryRetryableFailuresInEitherTransport`（同期・非同期とも `httpAttempts` が 1）。 |
 | Q8 | E-2 の「SDK の生のエラー文を含めない」は、例外の `getCause()` に SDK の例外を付けることを禁じるか | 回答済み: E-2 の対象はメッセージ。原因の例外を持つことは禁じられていない。ただし `getMessage()`・`toString()` に SDK の文を出さない |
 | Q9 | 契約違反・保持失敗の通知のメッセージの「規則番号」の書式 | 回答済み: `"W-6"`・`"T-13"` の形で足りる |
 | Q10 | `manifest` を `PayloadSerializer` に渡してよいか（9.2 の選択肢 C） | 回答済み: T-4 は渡すことを禁じていない（解釈しなければよい）。ただし 9.2 で A を選んだので、この文書では渡さない |
