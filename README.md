@@ -13,15 +13,14 @@ An event store for CQRS/Event Sourcing, with Memory and DynamoDB implementations
 
 ## Dependency and public API
 
-The current artifact version is `2.0.0-SNAPSHOT`. The contract version is [common contract v4](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md) (the shared specification of the event-store-adapter group), a number separate from the artifact version `2.0.0-SNAPSHOT`; the distributed conformance data has version **1.0.0**. These are separate versions.
+The current artifact version is `2.0.0`, published to Maven Central. The contract version is [common contract v4](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md) (the shared specification of the event-store-adapter group), a number separate from the artifact version `2.0.0`; the distributed conformance data has version **1.0.0**. These are separate versions.
 
 ```kotlin
 repositories {
     mavenCentral()
-    maven { url = uri("https://central.sonatype.com/repository/maven-snapshots/") }
 }
 dependencies {
-    implementation("io.github.j5ik2o:event-store-adapter-java:2.0.0-SNAPSHOT")
+    implementation("io.github.j5ik2o:event-store-adapter-java:2.0.0")
 }
 ```
 
