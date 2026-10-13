@@ -2,6 +2,7 @@ package com.github.j5ik2o.event.store.adapter.java.memory;
 
 import com.github.j5ik2o.event.store.adapter.java.core.AggregateId;
 import com.github.j5ik2o.event.store.adapter.java.core.AsyncEventStore;
+import com.github.j5ik2o.event.store.adapter.java.core.ConfigurationException;
 import com.github.j5ik2o.event.store.adapter.java.core.ContractViolationException;
 import com.github.j5ik2o.event.store.adapter.java.core.EventEnvelope;
 import com.github.j5ik2o.event.store.adapter.java.core.EventStore;
@@ -20,7 +21,6 @@ import com.github.j5ik2o.event.store.adapter.java.memory.MemoryStorage.StoredSna
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.TreeSet;
@@ -50,8 +50,14 @@ public final class MemoryEventStore {
     private final EventStoreConfig<P, A> config;
 
     Sync(MemoryStorage storage, EventStoreConfig<P, A> config) {
-      this.storage = Objects.requireNonNull(storage, "storage");
-      this.config = Objects.requireNonNull(config, "config");
+      if (storage == null) {
+        throw new ConfigurationException("memory storage is required");
+      }
+      if (config == null) {
+        throw new ConfigurationException("event store config is required");
+      }
+      this.storage = storage;
+      this.config = config;
     }
 
     public void persistEvent(EventEnvelope<P> event) {

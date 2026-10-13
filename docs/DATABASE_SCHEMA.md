@@ -4,7 +4,7 @@ This is the layout used by `com.github.j5ik2o.event.store.adapter.java.dynamodb`
 
 ## Provisioning
 
-Create all three tables in the same region before calling a public factory. Supply their names and the snapshot GSI name through `DynamoDbTableConfig`. The library initializes configuration items but does not provision tables.
+Create all three tables in the same region before calling a public factory. Supply their names and the snapshot GSI name through `DynamoDbTableConfig`. The library initializes configuration items but does not provision tables. Keep the three tables in one Region and write to them only from that Region. Global tables (multi-Region replicas) are not supported.
 
 | Table | Partition key | Sort key | GSI | Streams | TTL |
 |-------|---------------|----------|-----|---------|-----|

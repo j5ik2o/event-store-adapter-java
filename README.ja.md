@@ -58,7 +58,7 @@ asyncStore.persistEvent(UserAccountExample.event(id, 3, "Carol")).join();
 Optional<String> updated = UserAccountExample.restoreAsync(asyncStore, id).join(); // Carol
 ```
 
-同じ `MemoryStorage` オブジェクトを渡したストアだけが、記録・設定・排他制御を共有します。`MemoryStorage.create()` ごとに独立した、プロセス内だけの保存先を作ります。Memoryの非同期APIは、呼出しスレッドで完了済みfutureを返します。
+同じ `MemoryStorage` オブジェクトを渡したストアだけが、記録・設定・排他制御を共有します。`MemoryStorage.create()` ごとに独立した、プロセス内だけの保存先を作ります。Memoryの非同期APIは、呼出しスレッドで完了済みfutureを返します。メモリの保存先は単一プロセスのメモリだけを使います。ファイルへの保存、再起動後の回復、プロセス間の共有はしません。
 
 両保存先が提供する操作は4つです。
 
@@ -73,7 +73,7 @@ Optional<String> updated = UserAccountExample.restoreAsync(asyncStore, id).join(
 
 ## DynamoDBのfactory
 
-[DATABASE_SCHEMA](docs/DATABASE_SCHEMA.ja.md)に従って3表とsnapshotのGSIを用意します。設定済みSDK clientは利用者が所有・終了します。factoryは3表の設定項目を照合・初期化し、テーブル作成は行いません。
+[DATABASE_SCHEMA](docs/DATABASE_SCHEMA.ja.md)に従って3表とsnapshotのGSIを用意します。設定済みSDK clientは利用者が所有・終了します。factoryは3表の設定項目を照合・初期化し、テーブル作成は行いません。3 つの表は同じリージョンに置き、書き込みもそのリージョンからだけ行ってください。グローバルテーブル（複数リージョンのレプリカ）は範囲外です。
 
 ```java
 import com.github.j5ik2o.event.store.adapter.java.dynamodb.*;

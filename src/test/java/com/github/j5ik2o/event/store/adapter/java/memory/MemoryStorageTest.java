@@ -1,6 +1,7 @@
 package com.github.j5ik2o.event.store.adapter.java.memory;
 
 import static com.github.j5ik2o.event.store.adapter.java.memory.MemoryTestFixtures.AID;
+import static com.github.j5ik2o.event.store.adapter.java.memory.MemoryTestFixtures.config;
 import static com.github.j5ik2o.event.store.adapter.java.memory.MemoryTestFixtures.event;
 import static com.github.j5ik2o.event.store.adapter.java.memory.MemoryTestFixtures.snapshot;
 import static com.github.j5ik2o.event.store.adapter.java.memory.MemoryTestFixtures.store;
@@ -47,6 +48,33 @@ class MemoryStorageTest {
 
     ConfigurationException failure =
         assertThrows(ConfigurationException.class, () -> MemoryStorage.create(policy));
+
+    assertEquals(ErrorCategory.CONFIGURATION, failure.category());
+  }
+
+  @Test
+  void nullRetentionPolicyIsRejectedAsConfigurationError() {
+    ConfigurationException failure =
+        assertThrows(
+            ConfigurationException.class, () -> MemoryStorage.create((RetentionPolicy) null));
+
+    assertEquals(ErrorCategory.CONFIGURATION, failure.category());
+  }
+
+  @Test
+  void nullStorageIsRejectedAsConfigurationErrorOnSyncCreation() {
+    ConfigurationException failure =
+        assertThrows(ConfigurationException.class, () -> MemoryEventStore.create(null, config()));
+
+    assertEquals(ErrorCategory.CONFIGURATION, failure.category());
+  }
+
+  @Test
+  void nullConfigIsRejectedAsConfigurationErrorOnSyncCreation() {
+    MemoryStorage storage = MemoryStorage.create();
+
+    ConfigurationException failure =
+        assertThrows(ConfigurationException.class, () -> MemoryEventStore.create(storage, null));
 
     assertEquals(ErrorCategory.CONFIGURATION, failure.category());
   }

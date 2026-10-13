@@ -59,7 +59,7 @@ asyncStore.persistEvent(UserAccountExample.event(id, 3, "Carol")).join();
 Optional<String> updated = UserAccountExample.restoreAsync(asyncStore, id).join(); // Carol
 ```
 
-Only stores given the same `MemoryStorage` object share records, settings and locking. Each `MemoryStorage.create()` creates an independent, process-local store. The asynchronous Memory API returns completed futures on the calling thread.
+Only stores given the same `MemoryStorage` object share records, settings and locking. Each `MemoryStorage.create()` creates an independent, process-local store. The asynchronous Memory API returns completed futures on the calling thread. The memory storage lives in a single process. It does not persist to files, survive restarts, or share data across processes.
 
 Both stores provide four operations:
 
@@ -74,7 +74,7 @@ Sequence 1 creates an aggregate, including without a snapshot. Every later event
 
 ## DynamoDB factories
 
-Provision the three tables and snapshot GSI described in [DATABASE_SCHEMA](docs/DATABASE_SCHEMA.md) first. The application owns and closes its configured SDK clients. Factories validate or initialize the three configuration items; they do not create tables.
+Provision the three tables and snapshot GSI described in [DATABASE_SCHEMA](docs/DATABASE_SCHEMA.md) first. The application owns and closes its configured SDK clients. Factories validate or initialize the three configuration items; they do not create tables. Keep the three tables in one Region and write to them only from that Region. Global tables (multi-Region replicas) are not supported.
 
 ```java
 import com.github.j5ik2o.event.store.adapter.java.dynamodb.*;

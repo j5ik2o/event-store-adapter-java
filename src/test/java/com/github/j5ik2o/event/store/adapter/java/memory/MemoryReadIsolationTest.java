@@ -25,6 +25,7 @@ import com.github.j5ik2o.event.store.adapter.java.core.SerializationException;
 import com.github.j5ik2o.event.store.adapter.java.core.SnapshotEnvelope;
 import com.github.j5ik2o.event.store.adapter.java.core.SnapshotReadResult;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -251,6 +252,64 @@ class MemoryReadIsolationTest {
     assertEquals(
         "original-snapshot",
         store.getLatestSnapshotById(AID).get().snapshot().get().aggregate().path("value").asText());
+  }
+
+  public static final class MutablePayload {
+    public String name;
+    public List<String> items;
+
+    public MutablePayload() {}
+
+    MutablePayload(String name, List<String> items) {
+      this.name = name;
+      this.items = items;
+    }
+  }
+
+  @Test
+  void changesToMutableObjectInputsAndResultsCannotChangeStoredJsonPayloads() {
+    PayloadSerializer<MutablePayload> serializer = JsonPayloadSerializer.of(MutablePayload.class);
+    EventStore<MutablePayload, MutablePayload> store =
+        MemoryEventStore.create(
+            MemoryStorage.create(),
+            EventStoreConfig.<MutablePayload, MutablePayload>builder()
+                .payloadSerializer(serializer)
+                .snapshotSerializer(serializer)
+                .build());
+    MutablePayload payload = new MutablePayload("event", new ArrayList<>(List.of("a")));
+    MutablePayload aggregate = new MutablePayload("snapshot", new ArrayList<>(List.of("b")));
+    store.persistEventAndSnapshot(
+        EventEnvelope.<MutablePayload>builder()
+            .aggregateId(AID)
+            .seqNr(1)
+            .occurredAt(Instant.EPOCH)
+            .payload(payload)
+            .build(),
+        SnapshotEnvelope.<MutablePayload>builder().seqNr(1).aggregate(aggregate).build());
+
+    payload.name = "changed-input";
+    payload.items.add("x");
+    aggregate.name = "changed-input";
+    aggregate.items.add("x");
+    MutablePayload readEvent = store.getEventsByIdSinceSeqNr(AID, 0).get(0).payload();
+    MutablePayload readSnapshot =
+        store.getLatestSnapshotById(AID).get().snapshot().get().aggregate();
+    assertEquals("event", readEvent.name);
+    assertEquals(List.of("a"), readEvent.items);
+    assertEquals("snapshot", readSnapshot.name);
+    assertEquals(List.of("b"), readSnapshot.items);
+    readEvent.name = "changed-result";
+    readEvent.items.add("y");
+    readSnapshot.name = "changed-result";
+    readSnapshot.items.add("y");
+
+    MutablePayload againEvent = store.getEventsByIdSinceSeqNr(AID, 0).get(0).payload();
+    MutablePayload againSnapshot =
+        store.getLatestSnapshotById(AID).get().snapshot().get().aggregate();
+    assertEquals("event", againEvent.name);
+    assertEquals(List.of("a"), againEvent.items);
+    assertEquals("snapshot", againSnapshot.name);
+    assertEquals(List.of("b"), againSnapshot.items);
   }
 
   @Test
