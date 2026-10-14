@@ -26,6 +26,17 @@ class DynamoDbRequestScopeTest {
   }
 
   @Test
+  void operationWithoutAnyRecordedRequestFails() {
+    AssertionError error =
+        assertThrows(
+            AssertionError.class,
+            () ->
+                DynamoDbRequestScope.check(
+                    json("{\"apis\":[\"Query\"],\"aid\":\"aggregate_id\"}"), "Order-9", List.of()));
+    assertTrue(error.getMessage().contains("no requests were recorded"));
+  }
+
+  @Test
   void apiOutsideTheAllowedSetIsAViolation() {
     List<String> result = violations("Scan", "{\"TableName\":\"s\"}");
     assertFalse(result.isEmpty());

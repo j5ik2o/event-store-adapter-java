@@ -20,6 +20,8 @@ final class DynamoDbRequestScope {
     Set<String> apis = new HashSet<>();
     scope.path("apis").forEach(api -> apis.add(api.asText()));
     List<String> all = new ArrayList<>();
+    // 各操作は DynamoDB に少なくとも 1 件の要求を送る。0 件なら記録の接続か操作番号の対応が壊れている。
+    if (requests.isEmpty()) all.add("no requests were recorded for request_scope");
     for (DynamoDbRequestRecorder.Request request : requests)
       all.addAll(violations(apis, aid, request.api, request.marshalled));
     assertTrue(all.isEmpty(), String.join("; ", all));
