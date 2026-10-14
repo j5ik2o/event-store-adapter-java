@@ -15,10 +15,17 @@ final class MemoryCaseRunner {
 
   static boolean supports(ConformanceCase c) {
     return c.file().startsWith("scenarios/core/")
+        || c.file().startsWith("memory/")
         || c.operation().map("validateOccurredAt"::equals).orElse(false);
   }
 
+  static final String REASON_CHANGE_FEED =
+      "公開設定（MemoryStorage・EventStoreConfig）に変更フィードを求める項目がなく、change_feed=true を表せない";
+
   static CaseResult run(ConformanceCase c) {
+    if (c.changeFeedRequested()) {
+      return result(c, ConformanceStatus.UNREPRESENTABLE, REASON_CHANGE_FEED, null, null);
+    }
     JsonNode input = c.materialized();
     List<String> problems = new ArrayList<>();
     Integer failedOperation = null;

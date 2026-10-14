@@ -1,6 +1,6 @@
 # DynamoDB schema
 
-This is the layout used by `com.github.j5ik2o.event.store.adapter.java.dynamodb`. The artifact is `5.0.0` and follows the [common contract v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md); its major version 5 matches the contract revision. Conformance data is 1.0.0. The stored `layout_version` is **1**, a separate storage-layout number.
+This is the layout used by `com.github.j5ik2o.event.store.adapter.java.dynamodb`. The artifact is `5.0.0` and follows the [common contract v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md); its major version 5 matches the contract revision. Conformance data is 1.1.0. The stored `layout_version` is **1**, a separate storage-layout number.
 
 ## Provisioning
 

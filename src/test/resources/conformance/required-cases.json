@@ -59,7 +59,8 @@
     "core-seq-above-max",
     "core-time-roundtrip-min",
     "core-time-roundtrip-max",
-    "core-json-root-values"
+    "core-json-root-values",
+    "memory-ttl-unsupported"
   ],
   "dynamodb": [
     "aid-library-format",
@@ -165,6 +166,8 @@
     "occurred-at-max",
     "occurred-at-min",
     "occurred-at-nanoseconds",
-    "dynamodb-events-over-one-megabyte"
+    "dynamodb-events-over-one-megabyte",
+    "dynamodb-single-aggregate-delete",
+    "dynamodb-single-aggregate-ttl"
   ]
 }

@@ -52,7 +52,11 @@ class CaseClassifierTest {
       for (Backend b : Backend.values()) {
         CaseResult r = CaseClassifier.classify(c, b);
         if (EXECUTABLE_CASE_IDS.contains(c.id()) || (b == Backend.MEMORY && memoryExecutable(c))) {
-          assertEquals(ConformanceStatus.PASSED, r.status(), c.id() + "/" + b);
+          ConformanceStatus expected =
+              c.changeFeedRequested()
+                  ? ConformanceStatus.UNREPRESENTABLE
+                  : ConformanceStatus.PASSED;
+          assertEquals(expected, r.status(), c.id() + "/" + b);
         } else {
           assertTrue(
               r.status() == ConformanceStatus.UNVERIFIED
@@ -97,9 +101,11 @@ class CaseClassifierTest {
     Set<String> memory =
         data.cases().stream()
             .filter(c -> EXECUTABLE_CASE_IDS.contains(c.id()) || memoryExecutable(c))
+            // 表現不能のケースは必須にしない（必須のケースは成功だけを認める）。
+            .filter(c -> !c.changeFeedRequested())
             .map(ConformanceCase::id)
             .collect(Collectors.toSet());
-    assertEquals(60, memory.size());
+    assertEquals(61, memory.size());
     assertEquals(memory, required.get(Backend.MEMORY));
     Set<String> dynamodb = new java.util.HashSet<>(EXECUTABLE_CASE_IDS);
     Set<String> configuration =
@@ -119,7 +125,7 @@ class CaseClassifierTest {
             .filter(c -> CaseClassifier.exclusion(c, Backend.DYNAMODB).isEmpty())
             .map(ConformanceCase::id)
             .collect(Collectors.toSet());
-    assertEquals(104, targets.size());
+    assertEquals(106, targets.size());
     assertEquals(targets, required.get(Backend.DYNAMODB));
     Set<String> connections =
         data.cases().stream()
@@ -165,6 +171,7 @@ class CaseClassifierTest {
   private static boolean memoryExecutable(ConformanceCase c) {
     return !c.timePrecision().map("milliseconds"::equals).orElse(false)
         && (c.file().startsWith("scenarios/core/")
+            || c.file().startsWith("memory/")
             || c.operation().map("validateOccurredAt"::equals).orElse(false));
   }
 }

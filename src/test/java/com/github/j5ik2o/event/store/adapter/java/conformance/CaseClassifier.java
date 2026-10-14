@@ -39,6 +39,11 @@ final class CaseClassifier {
     if (c.backends().map(names -> !names.contains(backend.dataName())).orElse(false)) {
       return Optional.of(result(c, backend, ConformanceStatus.NOT_APPLICABLE, REASON_BACKEND));
     }
+    if (c.changeFeedRequested()) {
+      return Optional.of(
+          result(
+              c, backend, ConformanceStatus.UNREPRESENTABLE, MemoryCaseRunner.REASON_CHANGE_FEED));
+    }
     if ("layout".equals(c.format()) && backend == Backend.MEMORY) {
       return Optional.of(result(c, backend, ConformanceStatus.NOT_APPLICABLE, REASON_LAYOUT));
     }
