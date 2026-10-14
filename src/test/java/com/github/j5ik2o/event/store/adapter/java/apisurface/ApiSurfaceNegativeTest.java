@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
@@ -91,11 +93,57 @@ class ApiSurfaceNegativeTest {
             + "[java.lang.Comparable<P>]; want no bound");
   }
 
+  @Test
+  void reportsBuilderSetterWithWrongParameterType() throws IOException {
+    List<String> problems = check(envelopeFrom("widesetter"));
+
+    assertReported(
+        problems,
+        "event_envelope.seq_nr",
+        "event_envelope.seq_nr: Builder.seqNr(java.lang.Object), want seqNr(long)");
+  }
+
+  @Test
+  void reportsMissingAsynchronousStoreMapping() throws IOException {
+    ObjectNode mapping = (ObjectNode) ApiSurfaceFiles.mapping();
+    ArrayNode stores = (ArrayNode) mapping.path("stores");
+    for (int i = stores.size() - 1; i >= 0; i--) {
+      if (stores.get(i).has("wrap")) {
+        stores.remove(i);
+      }
+    }
+
+    List<String> problems = checkWith(mapping);
+
+    assertReported(
+        problems, "event_store", "event_store: no asynchronous store in java.json (stores)");
+  }
+
+  @Test
+  void reportsUnresolvedMissingRequiredMapping() throws IOException {
+    ObjectNode mapping = (ObjectNode) ApiSurfaceFiles.mapping();
+    ((ObjectNode) mapping.path("types").path("event_envelope").path("builder"))
+        .put("missing_required", "contract_violations");
+
+    List<String> problems = checkWith(mapping);
+
+    assertReported(
+        problems,
+        "event_envelope",
+        "event_envelope: java.json builder.missing_required 'contract_violations' is not a mapped"
+            + " error category");
+  }
+
   private static Map<String, String> envelopeFrom(String fixturePackage) {
     Map<String, String> overrides = new HashMap<>();
     overrides.put("EventEnvelope", FIXTURES + fixturePackage + ".EventEnvelope");
     overrides.put("EventEnvelope$Builder", FIXTURES + fixturePackage + ".EventEnvelope$Builder");
     return overrides;
+  }
+
+  private static List<String> checkWith(JsonNode mapping) throws IOException {
+    ClassLookup lookup = ClassLookup.inPackage(mapping.path("package").asText());
+    return ApiSurfaceChecker.check(ApiSurfaceFiles.surface(), mapping, lookup);
   }
 
   private static List<String> check(Map<String, String> overrides) throws IOException {

@@ -193,6 +193,20 @@ final class ApiSurfaceChecker {
               + "()");
       return;
     }
+    Expr built = Expr.parse(typeExpression(type));
+    if (!matches(built, build.getGenericReturnType())) {
+      problems.add(
+          path
+              + ": "
+              + builderClass.get().getSimpleName()
+              + "."
+              + build.getName()
+              + "() returns "
+              + build.getGenericReturnType().getTypeName()
+              + ", want "
+              + describe(built));
+      return;
+    }
     List<JsonNode> elements = new ArrayList<>();
     List<Method> setters = new ArrayList<>();
     boolean complete = true;
@@ -216,10 +230,38 @@ final class ApiSurfaceChecker {
         complete = false;
         continue;
       }
+      Expr wantParameter = Expr.parse(element.path("type").asText());
+      Type parameter = setter.getGenericParameterTypes()[0];
+      if (!matches(wantParameter, parameter)) {
+        problems.add(
+            elementPath
+                + ": "
+                + builderClass.get().getSimpleName()
+                + "."
+                + setterName.asText()
+                + "("
+                + parameter.getTypeName()
+                + "), want "
+                + setterName.asText()
+                + "("
+                + describe(wantParameter)
+                + ")");
+        complete = false;
+        continue;
+      }
       elements.add(element);
       setters.add(setter);
     }
     if (!complete) {
+      return;
+    }
+    String missingRequired = builder.path("missing_required").asText();
+    if (!mapping.path("error_categories").path("names").has(missingRequired)) {
+      problems.add(
+          path
+              + ": java.json builder.missing_required '"
+              + missingRequired
+              + "' is not a mapped error category");
       return;
     }
     Optional<Class<?>> expected =
@@ -347,6 +389,21 @@ final class ApiSurfaceChecker {
     if (!mapping.path("stores").isArray() || mapping.path("stores").size() == 0) {
       problems.add(store.path("name").asText() + ": no mapping in java.json (stores)");
       return;
+    }
+    boolean synchronous = false;
+    boolean asynchronous = false;
+    for (JsonNode storeMapping : mapping.path("stores")) {
+      if (storeMapping.has("wrap")) {
+        asynchronous = true;
+      } else {
+        synchronous = true;
+      }
+    }
+    if (!synchronous) {
+      problems.add(store.path("name").asText() + ": no synchronous store in java.json (stores)");
+    }
+    if (!asynchronous) {
+      problems.add(store.path("name").asText() + ": no asynchronous store in java.json (stores)");
     }
     for (JsonNode storeMapping : mapping.path("stores")) {
       checkStore(store, storeMapping);
@@ -701,5 +758,18 @@ final class ApiSurfaceChecker {
       this.value = value;
       this.error = error;
     }
+  }
+
+  /**
+   * surface の型を、型の引数付きの式（例: event_envelope
+   *
+   * <p>）にする。
+   */
+  private static String typeExpression(JsonNode type) {
+    List<String> parameters = new ArrayList<>();
+    type.path("type_parameters").forEach(p -> parameters.add(p.asText()));
+    return parameters.isEmpty()
+        ? type.path("name").asText()
+        : type.path("name").asText() + "<" + String.join(",", parameters) + ">";
   }
 }
