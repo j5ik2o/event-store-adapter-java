@@ -101,9 +101,11 @@ class CaseClassifierTest {
     Set<String> memory =
         data.cases().stream()
             .filter(c -> EXECUTABLE_CASE_IDS.contains(c.id()) || memoryExecutable(c))
+            // 表現不能のケースは必須にしない（必須のケースは成功だけを認める）。
+            .filter(c -> !c.changeFeedRequested())
             .map(ConformanceCase::id)
             .collect(Collectors.toSet());
-    assertEquals(62, memory.size());
+    assertEquals(61, memory.size());
     assertEquals(memory, required.get(Backend.MEMORY));
     Set<String> dynamodb = new java.util.HashSet<>(EXECUTABLE_CASE_IDS);
     Set<String> configuration =
@@ -164,26 +166,6 @@ class CaseClassifierTest {
 
     assertFalse(CaseClassifier.violatesRequirement(memory, required));
     assertTrue(CaseClassifier.violatesRequirement(dynamo, required));
-  }
-
-  @Test
-  void unrepresentableWithReasonSatisfiesARequiredCaseButWithoutReasonViolatesIt() {
-    Map<Backend, Set<String>> required =
-        Map.of(Backend.MEMORY, Set.of("c"), Backend.DYNAMODB, Set.of());
-    CaseResult withReason = result(ConformanceStatus.UNREPRESENTABLE, "reason");
-    CaseResult blank = result(ConformanceStatus.UNREPRESENTABLE, " ");
-    CaseResult unverified = result(ConformanceStatus.UNVERIFIED, "reason");
-    CaseResult failed = result(ConformanceStatus.FAILED, "reason");
-
-    assertFalse(CaseClassifier.violatesRequirement(withReason, required));
-    assertTrue(CaseClassifier.violatesRequirement(blank, required));
-    assertTrue(CaseClassifier.violatesRequirement(unverified, required));
-    assertTrue(CaseClassifier.violatesRequirement(failed, required));
-  }
-
-  private static CaseResult result(ConformanceStatus status, String reason) {
-    return new CaseResult(
-        "c", "f.json", List.of("R"), Backend.MEMORY, status, reason, null, null, null);
   }
 
   private static boolean memoryExecutable(ConformanceCase c) {
