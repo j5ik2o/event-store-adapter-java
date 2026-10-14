@@ -48,10 +48,14 @@ final class CaseClassifier {
     return Optional.empty();
   }
 
-  /** その保存先の一覧にあるのに成功していないケースか。判定はケース ID と保存先の組で行う。 */
+  /** その保存先の一覧にあるのに、成功でも理由付きの対象外・表現不能でもないケースか。判定はケース ID と保存先の組で行う。 */
   static boolean violatesRequirement(CaseResult r, Map<Backend, Set<String>> required) {
     return required.getOrDefault(r.backend(), Set.of()).contains(r.caseId())
-        && r.status() != ConformanceStatus.PASSED;
+        && !(r.status() == ConformanceStatus.PASSED
+            || ((r.status() == ConformanceStatus.NOT_APPLICABLE
+                    || r.status() == ConformanceStatus.UNREPRESENTABLE)
+                && r.reason() != null
+                && !r.reason().isBlank()));
   }
 
   /** データに存在しない必須の ID。綴りの誤りで必須のケースが黙って飛ばされることを防ぐ。 */

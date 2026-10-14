@@ -22,7 +22,7 @@ import java.util.stream.Stream;
 /** conformance/manifest.json を実ファイルと照合する。tools/conformance/manifest.py の verify に合わせる。 */
 final class ManifestVerifier {
 
-  static final String DATA_VERSION = "1.0.0";
+  static final String DATA_VERSION = "1.1.0";
   private static final String MANIFEST_NAME = "manifest.json";
 
   private ManifestVerifier() {}

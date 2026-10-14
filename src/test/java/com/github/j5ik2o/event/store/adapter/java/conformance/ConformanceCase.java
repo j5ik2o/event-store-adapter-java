@@ -55,6 +55,11 @@ final class ConformanceCase {
     return materialized;
   }
 
+  /** store.change_feed（省略時は false）。変更フィードの提供を求める設定か。 */
+  boolean changeFeedRequested() {
+    return materialized.path("store").path("change_feed").asBoolean(false);
+  }
+
   Optional<String> operation() {
     JsonNode node = raw.get("operation");
     return node == null || !node.isTextual() ? Optional.empty() : Optional.of(node.asText());

@@ -34,7 +34,9 @@ final class DynamoDbCaseRunner {
           "dynamodb-retention-ttl-once",
           "dynamodb-retention-ttl-stale-marked",
           "dynamodb-retention-failure-ttl",
-          "dynamodb-written-item-shapes");
+          "dynamodb-written-item-shapes",
+          "dynamodb-single-aggregate-delete",
+          "dynamodb-single-aggregate-ttl");
 
   static final Set<String> SNAPSHOT_CASE_IDS =
       Set.of(
@@ -83,6 +85,17 @@ final class DynamoDbCaseRunner {
 
   static CaseResult run(ConformanceCase c, DynamoDbConfigurationFixture fixture) {
     if (!supports(c)) throw new IllegalArgumentException("Unsupported DynamoDB case: " + c.id());
+    if (c.changeFeedRequested())
+      return new CaseResult(
+          c.id(),
+          c.file(),
+          c.rules(),
+          Backend.DYNAMODB,
+          ConformanceStatus.UNREPRESENTABLE,
+          "公開設定（DynamoDbTableConfig・EventStoreConfig）に変更フィードを求める項目がなく、change_feed=true を表せない",
+          null,
+          c.materialized(),
+          null);
     ObjectNode actual = ConformanceJson.mapper().createObjectNode();
     try {
       boolean layout = c.format().equals("layout");

@@ -60,8 +60,14 @@ public final class DynamoDbSnapshotRetentionFixture {
                 "requests",
                 "request_count",
                 "minimum_request_count",
-                "no_requests_in_phases")
+                "no_requests_in_phases",
+                "request_scope")
             .contains(field)) return "未接続の観測: " + field;
+        if (field.equals("request_scope")) {
+          JsonNode scope = step.at("/observe/request_scope");
+          if (!fields(scope).equals(Set.of("apis", "aid"))
+              || !scope.path("aid").asText().equals("aggregate_id")) return "未接続の要求範囲観測";
+        }
       }
       if (step.path("observe").has("history")
           && !fields(step.at("/observe/history")).equals(Set.of("active", "marked", "absent")))
@@ -347,6 +353,8 @@ public final class DynamoDbSnapshotRetentionFixture {
     JsonNode expected = step.path("observe");
     List<DynamoDbRequestRecorder.Request> requests = scene.lastRequests();
     AggregateId id = stepAid(scenario, step);
+    if (expected.has("request_scope"))
+      DynamoDbRequestScope.check(expected.path("request_scope"), id.asString(), requests);
     if (expected.has("history")) {
       ObjectNode history = scene.history(id);
       scene.last().set("history", history);

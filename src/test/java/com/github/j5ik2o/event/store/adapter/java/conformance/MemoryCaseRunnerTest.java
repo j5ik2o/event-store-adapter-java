@@ -146,6 +146,34 @@ class MemoryCaseRunnerTest {
                     }));
   }
 
+  @Test
+  void ttlRetentionCaseFailsMemoryStoreCreationAsConfigurationError() throws IOException {
+    CaseResult result = CaseClassifier.classify(find("memory-ttl-unsupported"), Backend.MEMORY);
+
+    assertEquals(ConformanceStatus.PASSED, result.status(), result.reason());
+  }
+
+  @Test
+  void ttlRetentionCaseExpectingAnotherErrorCategoryIsRejected() throws IOException {
+    ConformanceCase original = find("memory-ttl-unsupported");
+    ObjectNode changed = original.materialized().deepCopy();
+    ((ObjectNode) changed.at("/initialization/expect/error")).put("category", "storage");
+
+    CaseResult result = CaseClassifier.classify(copy(original, changed), Backend.MEMORY);
+
+    assertEquals(ConformanceStatus.FAILED, result.status(), result.reason());
+  }
+
+  @Test
+  void changeFeedCaseIsReportedUnrepresentableWithReason() throws IOException {
+    CaseResult result =
+        CaseClassifier.classify(find("memory-change-feed-unsupported"), Backend.MEMORY);
+
+    assertEquals(ConformanceStatus.UNREPRESENTABLE, result.status());
+    org.junit.jupiter.api.Assertions.assertNotNull(result.reason());
+    org.junit.jupiter.api.Assertions.assertFalse(result.reason().isBlank());
+  }
+
   private static ConformanceCase find(String id) throws IOException {
     return ConformanceDataLoader.load(ConformanceTestFiles.REAL_ROOT).cases().stream()
         .filter(c -> c.id().equals(id))

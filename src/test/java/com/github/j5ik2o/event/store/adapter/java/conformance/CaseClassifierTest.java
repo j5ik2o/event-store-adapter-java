@@ -52,7 +52,11 @@ class CaseClassifierTest {
       for (Backend b : Backend.values()) {
         CaseResult r = CaseClassifier.classify(c, b);
         if (EXECUTABLE_CASE_IDS.contains(c.id()) || (b == Backend.MEMORY && memoryExecutable(c))) {
-          assertEquals(ConformanceStatus.PASSED, r.status(), c.id() + "/" + b);
+          ConformanceStatus expected =
+              c.changeFeedRequested()
+                  ? ConformanceStatus.UNREPRESENTABLE
+                  : ConformanceStatus.PASSED;
+          assertEquals(expected, r.status(), c.id() + "/" + b);
         } else {
           assertTrue(
               r.status() == ConformanceStatus.UNVERIFIED
@@ -99,7 +103,7 @@ class CaseClassifierTest {
             .filter(c -> EXECUTABLE_CASE_IDS.contains(c.id()) || memoryExecutable(c))
             .map(ConformanceCase::id)
             .collect(Collectors.toSet());
-    assertEquals(60, memory.size());
+    assertEquals(62, memory.size());
     assertEquals(memory, required.get(Backend.MEMORY));
     Set<String> dynamodb = new java.util.HashSet<>(EXECUTABLE_CASE_IDS);
     Set<String> configuration =
@@ -119,7 +123,7 @@ class CaseClassifierTest {
             .filter(c -> CaseClassifier.exclusion(c, Backend.DYNAMODB).isEmpty())
             .map(ConformanceCase::id)
             .collect(Collectors.toSet());
-    assertEquals(104, targets.size());
+    assertEquals(106, targets.size());
     assertEquals(targets, required.get(Backend.DYNAMODB));
     Set<String> connections =
         data.cases().stream()
@@ -162,9 +166,30 @@ class CaseClassifierTest {
     assertTrue(CaseClassifier.violatesRequirement(dynamo, required));
   }
 
+  @Test
+  void unrepresentableWithReasonSatisfiesARequiredCaseButWithoutReasonViolatesIt() {
+    Map<Backend, Set<String>> required =
+        Map.of(Backend.MEMORY, Set.of("c"), Backend.DYNAMODB, Set.of());
+    CaseResult withReason = result(ConformanceStatus.UNREPRESENTABLE, "reason");
+    CaseResult blank = result(ConformanceStatus.UNREPRESENTABLE, " ");
+    CaseResult unverified = result(ConformanceStatus.UNVERIFIED, "reason");
+    CaseResult failed = result(ConformanceStatus.FAILED, "reason");
+
+    assertFalse(CaseClassifier.violatesRequirement(withReason, required));
+    assertTrue(CaseClassifier.violatesRequirement(blank, required));
+    assertTrue(CaseClassifier.violatesRequirement(unverified, required));
+    assertTrue(CaseClassifier.violatesRequirement(failed, required));
+  }
+
+  private static CaseResult result(ConformanceStatus status, String reason) {
+    return new CaseResult(
+        "c", "f.json", List.of("R"), Backend.MEMORY, status, reason, null, null, null);
+  }
+
   private static boolean memoryExecutable(ConformanceCase c) {
     return !c.timePrecision().map("milliseconds"::equals).orElse(false)
         && (c.file().startsWith("scenarios/core/")
+            || c.file().startsWith("memory/")
             || c.operation().map("validateOccurredAt"::equals).orElse(false));
   }
 }
