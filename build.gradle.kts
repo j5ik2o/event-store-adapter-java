@@ -25,12 +25,12 @@ dependencies {
 
     testImplementation("ch.qos.logback:logback-classic:1.6.5")
     testImplementation("org.testcontainers:testcontainers:2.0.5")
-    testImplementation("software.amazon.awssdk:apache5-client:2.55.15")
-    testImplementation("software.amazon.awssdk:netty-nio-client:2.55.15")
+    testImplementation("software.amazon.awssdk:apache5-client:2.55.16")
+    testImplementation("software.amazon.awssdk:netty-nio-client:2.55.16")
 
     testImplementation("com.networknt:json-schema-validator:2.0.8")
 
-    api("software.amazon.awssdk:dynamodb:2.55.15")
+    api("software.amazon.awssdk:dynamodb:2.55.16")
     api("com.fasterxml.jackson.core:jackson-databind:2.22.3")
     implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.22.3")
     implementation("org.slf4j:slf4j-api:2.0.20")
