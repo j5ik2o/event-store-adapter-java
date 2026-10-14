@@ -87,6 +87,9 @@ jobs:
         run: |
           python3 tools/conformance/manifest.py verify
           echo "61c26614dbbfba88eebce72cc1d2b0220218839e74dcfb64c19268f7ee2302ce  conformance/manifest.json" | sha256sum -c -
+      - name: Verify API surface 0.1.0
+        run: |
+          echo "37c91f8f94e10c73513a9c1deef990ea4deea96d5001ae700d6bf799658d0e32  api-surface/surface.json" | sha256sum -c -
       - name: Test SemVer classification
         run: python3 -m unittest discover -s .github/tests -v
       - name: Check workflows with actionlint
