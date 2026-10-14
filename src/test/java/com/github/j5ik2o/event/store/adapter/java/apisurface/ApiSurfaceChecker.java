@@ -314,7 +314,9 @@ final class ApiSurfaceChecker {
       return new Outcome(build.invoke(builder), null);
     } catch (InvocationTargetException e) {
       return new Outcome(null, e.getCause());
-    } catch (ReflectiveOperationException e) {
+    } catch (ReflectiveOperationException | IllegalArgumentException e) {
+      // 設定のメソッドの引数の型がずれていると、Method.invoke は IllegalArgumentException を投げる。
+      // 照合を止めずに、ずれとして報告する。
       return new Outcome(null, e);
     }
   }
