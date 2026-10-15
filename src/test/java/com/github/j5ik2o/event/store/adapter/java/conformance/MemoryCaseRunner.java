@@ -23,6 +23,10 @@ final class MemoryCaseRunner {
       "公開設定（MemoryStorage・EventStoreConfig）に変更フィードを求める項目がなく、change_feed=true を表せない";
 
   static CaseResult run(ConformanceCase c) {
+    return run(c, ConformanceMemoryOperations.StoreOpener.PUBLIC_API);
+  }
+
+  static CaseResult run(ConformanceCase c, ConformanceMemoryOperations.StoreOpener opener) {
     if (c.changeFeedRequested()) {
       return result(c, ConformanceStatus.UNREPRESENTABLE, REASON_CHANGE_FEED, null, null);
     }
@@ -37,7 +41,7 @@ final class MemoryCaseRunner {
       expected.remove("precision_policy");
       compare(expected, actual, problems, "時刻");
     } else {
-      actual = ConformanceMemoryOperations.executeScenario(input);
+      actual = ConformanceMemoryOperations.executeScenario(input, opener);
       if (actual.has("unsupported")) {
         return result(
             c, ConformanceStatus.UNVERIFIED, actual.path("unsupported").asText(), null, actual);

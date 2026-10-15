@@ -60,7 +60,11 @@
     "core-time-roundtrip-min",
     "core-time-roundtrip-max",
     "core-json-root-values",
-    "memory-ttl-unsupported"
+    "memory-ttl-unsupported",
+    "memory-store-new-independent",
+    "memory-store-shared",
+    "memory-payload-written-mutation",
+    "memory-payload-read-mutation"
   ],
   "dynamodb": [
     "aid-library-format",
