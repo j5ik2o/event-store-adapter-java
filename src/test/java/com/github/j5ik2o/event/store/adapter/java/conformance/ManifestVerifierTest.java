@@ -15,12 +15,12 @@ import org.junit.jupiter.api.io.TempDir;
 class ManifestVerifierTest {
 
   @Test
-  void realDataPassesAndCoversTwentyFourFiles() throws IOException {
+  void realDataPassesAndCoversTwentySixFiles() throws IOException {
     ManifestVerifier.Result result = ManifestVerifier.verify(ConformanceTestFiles.REAL_ROOT);
 
     assertTrue(result.ok(), "mismatches: " + result.mismatches());
     assertTrue(result.mismatches().isEmpty());
-    assertEquals(24, result.fileCount());
+    assertEquals(26, result.fileCount());
   }
 
   @Test
@@ -61,7 +61,7 @@ class ManifestVerifierTest {
   void realDataReportsTheActualManifestVersion() throws IOException {
     ManifestVerifier.Result result = ManifestVerifier.verify(ConformanceTestFiles.REAL_ROOT);
 
-    assertEquals("1.1.0", result.manifestVersion());
+    assertEquals("1.2.0", result.manifestVersion());
     assertTrue(result.versionMatches());
   }
 
@@ -70,7 +70,7 @@ class ManifestVerifierTest {
       throws IOException {
     Path copy = ConformanceTestFiles.copyOfRealData(tempDir);
     ConformanceTestFiles.replaceInFile(
-        copy.resolve("manifest.json"), "\"version\": \"1.1.0\"", "\"version\": \"9.9.9\"");
+        copy.resolve("manifest.json"), "\"version\": \"1.2.0\"", "\"version\": \"9.9.9\"");
 
     ManifestVerifier.Result result = ManifestVerifier.verify(copy);
 
