@@ -347,6 +347,7 @@ class DynamoDbEventWriteBoundaryTest {
         "communication-failure",
         s -> {
           AtomicBoolean disconnected = new AtomicBoolean();
+          AtomicInteger failurePort = new AtomicInteger(1);
           ExecutionInterceptor connection =
               new ExecutionInterceptor() {
                 @Override
@@ -356,7 +357,7 @@ class DynamoDbEventWriteBoundaryTest {
                       && context.request() instanceof TransactWriteItemsRequest) {
                     return context.httpRequest().toBuilder()
                         .host("127.0.0.1")
-                        .port(1)
+                        .port(failurePort.get())
                         .protocol("http")
                         .build();
                   }
@@ -369,7 +370,8 @@ class DynamoDbEventWriteBoundaryTest {
                       DynamoDbTestClients.ACCESS_KEY, "DynamoDbLocalDummySecret"));
           if (s.asynchronous) {
             SdkEventLoopGroup group = SdkEventLoopGroup.builder().numberOfThreads(2).build();
-            try (FaultAsyncHttpClient http =
+            try (ConnectionClosingServer server = ConnectionClosingServer.start();
+                FaultAsyncHttpClient http =
                     new FaultAsyncHttpClient(
                         DynamoDbTestClients.asyncHttp(group).build(), s.c.recorder);
                 DynamoDbAsyncClient client =
@@ -386,8 +388,10 @@ class DynamoDbEventWriteBoundaryTest {
                         .build()) {
               FaultRegistry.Operation generation = s.c.faults.begin(s.nextOperation++, false);
               s.asyncStore = DynamoDbEventStore.createAsync(client, s.tables, s.config).join();
+              failurePort.set(server.port());
               s.finishGeneration(generation);
               exerciseConnection(s, disconnected);
+              assertEquals(1, server.acceptedConnections());
             } finally {
               io.netty.util.concurrent.Future<?> termination =
                   group.eventLoopGroup().shutdownGracefully(0, 15, TimeUnit.SECONDS);

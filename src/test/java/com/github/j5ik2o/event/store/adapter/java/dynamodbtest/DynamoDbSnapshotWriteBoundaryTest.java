@@ -495,6 +495,7 @@ class DynamoDbSnapshotWriteBoundaryTest {
         s -> {
           assertNull(s.write(event(1), snapshot(1), 1, 1));
           AtomicBoolean disconnected = new AtomicBoolean();
+          AtomicInteger failurePort = new AtomicInteger(1);
           ExecutionInterceptor connection =
               new ExecutionInterceptor() {
                 @Override
@@ -503,23 +504,26 @@ class DynamoDbSnapshotWriteBoundaryTest {
                   if (disconnected.get() && context.request() instanceof TransactWriteItemsRequest)
                     return context.httpRequest().toBuilder()
                         .host("127.0.0.1")
-                        .port(1)
+                        .port(failurePort.get())
                         .protocol("http")
                         .build();
                   return context.httpRequest();
                 }
               };
           if (s.asynchronous) {
-            try (FaultAsyncHttpClient http =
+            try (ConnectionClosingServer server = ConnectionClosingServer.start();
+                FaultAsyncHttpClient http =
                     new FaultAsyncHttpClient(
                         DynamoDbTestClients.asyncHttp(fixture.eventLoop()).build(), s.c.recorder);
                 DynamoDbAsyncClient client =
                     DynamoDbTestClients.observedAsync(
                         fixture.endpoint(), s.c.recorder, http, connection)) {
+              failurePort.set(server.port());
               FaultRegistry.Operation generation = s.c.faults.begin(s.nextOperation++, false);
               s.asyncStore = DynamoDbEventStore.createAsync(client, s.tables, s.config).join();
               s.finishGeneration(generation, 1);
               exerciseConnection(s, disconnected);
+              assertEquals(1, server.acceptedConnections());
             }
           } else {
             try (FaultHttpClient http =
