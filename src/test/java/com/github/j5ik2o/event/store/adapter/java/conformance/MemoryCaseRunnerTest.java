@@ -1,11 +1,25 @@
 package com.github.j5ik2o.event.store.adapter.java.conformance;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.DynamicTest.dynamicTest;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.github.j5ik2o.event.store.adapter.java.core.AggregateId;
+import com.github.j5ik2o.event.store.adapter.java.core.EventEnvelope;
+import com.github.j5ik2o.event.store.adapter.java.core.EventStore;
+import com.github.j5ik2o.event.store.adapter.java.core.SnapshotEnvelope;
+import com.github.j5ik2o.event.store.adapter.java.core.SnapshotReadResult;
+import com.github.j5ik2o.event.store.adapter.java.memory.ConformanceMemoryOperations;
+import com.github.j5ik2o.event.store.adapter.java.memory.MemoryEventStore;
+import com.github.j5ik2o.event.store.adapter.java.memory.MemoryStorage;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.Test;
@@ -172,6 +186,116 @@ class MemoryCaseRunnerTest {
     assertEquals(ConformanceStatus.UNREPRESENTABLE, result.status());
     org.junit.jupiter.api.Assertions.assertNotNull(result.reason());
     org.junit.jupiter.api.Assertions.assertFalse(result.reason().isBlank());
+  }
+
+  private static final List<String> NEW_MEMORY_CASES =
+      List.of(
+          "memory-store-new-independent",
+          "memory-store-shared",
+          "memory-payload-written-mutation",
+          "memory-payload-read-mutation");
+
+  @TestFactory
+  Stream<DynamicTest> storeCreationAndPayloadMutationCasesPassOnTheRealMemoryStore() {
+    return NEW_MEMORY_CASES.stream()
+        .map(
+            id ->
+                dynamicTest(
+                    id,
+                    () -> {
+                      CaseResult result = MemoryCaseRunner.run(find(id));
+                      assertEquals(ConformanceStatus.PASSED, result.status(), result.reason());
+                    }));
+  }
+
+  @Test
+  void storeSharingFakeThatIgnoresNewStorageIsRejectedByTheIndependentScenario()
+      throws IOException {
+    AtomicReference<MemoryStorage> first = new AtomicReference<>();
+    ConformanceMemoryOperations.StoreOpener sharing =
+        (storage, config) -> {
+          first.compareAndSet(null, storage);
+          return MemoryEventStore.create(first.get(), config);
+        };
+
+    CaseResult result = MemoryCaseRunner.run(find("memory-store-new-independent"), sharing);
+
+    assertEquals(ConformanceStatus.FAILED, result.status(), result.reason());
+  }
+
+  @Test
+  void storeThatReturnsWrittenPayloadWithoutCopyingIsRejectedByBothPayloadScenarios()
+      throws IOException {
+    ConformanceMemoryOperations.StoreOpener aliasing =
+        (storage, config) -> new AliasingStore(MemoryEventStore.create(storage, config));
+
+    for (String id : List.of("memory-payload-written-mutation", "memory-payload-read-mutation")) {
+      CaseResult result = MemoryCaseRunner.run(find(id), aliasing);
+      assertEquals(ConformanceStatus.FAILED, result.status(), id + ": " + result.reason());
+    }
+  }
+
+  @Test
+  void mutationAtANonexistentPositionIsRejected() throws IOException {
+    ConformanceCase original = find("memory-payload-written-mutation");
+    ObjectNode changed = original.materialized().deepCopy();
+    JsonNode steps = changed.path("steps");
+    ObjectNode mutation = null;
+    for (JsonNode step : steps) {
+      if ("mutateWrittenPayload".equals(step.path("op").asText())) {
+        mutation = (ObjectNode) step.path("arguments");
+      }
+    }
+    assertNotNull(mutation);
+    mutation.put("pointer", "/items/99/qty");
+
+    CaseResult result = MemoryCaseRunner.run(copy(original, changed));
+
+    assertEquals(ConformanceStatus.FAILED, result.status(), result.reason());
+  }
+
+  /** 書き込まれた実体を複製せずに保持し、読み取りでそのまま返す偽の保存先。 */
+  private static final class AliasingStore implements EventStore<JsonNode, JsonNode> {
+    private final EventStore<JsonNode, JsonNode> delegate;
+    private final List<EventEnvelope<JsonNode>> kept = new ArrayList<>();
+
+    AliasingStore(EventStore<JsonNode, JsonNode> delegate) {
+      this.delegate = delegate;
+    }
+
+    @Override
+    public void persistEvent(EventEnvelope<JsonNode> event) {
+      delegate.persistEvent(event);
+      kept.add(event);
+    }
+
+    @Override
+    public void persistEventAndSnapshot(
+        EventEnvelope<JsonNode> event, SnapshotEnvelope<JsonNode> snapshot) {
+      delegate.persistEventAndSnapshot(event, snapshot);
+      kept.add(event);
+    }
+
+    @Override
+    public Optional<SnapshotReadResult<JsonNode>> getLatestSnapshotById(AggregateId aggregateId) {
+      return delegate.getLatestSnapshotById(aggregateId);
+    }
+
+    @Override
+    public List<EventEnvelope<JsonNode>> getEventsByIdSinceSeqNr(
+        AggregateId aggregateId, long seqNr) {
+      List<EventEnvelope<JsonNode>> result = new ArrayList<>();
+      for (EventEnvelope<JsonNode> real : delegate.getEventsByIdSinceSeqNr(aggregateId, seqNr)) {
+        EventEnvelope<JsonNode> same = real;
+        for (EventEnvelope<JsonNode> k : kept) {
+          if (k.aggregateId().equals(real.aggregateId()) && k.seqNr() == real.seqNr()) {
+            same = k;
+          }
+        }
+        result.add(same);
+      }
+      return result;
+    }
   }
 
   private static ConformanceCase find(String id) throws IOException {

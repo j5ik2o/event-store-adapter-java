@@ -1,5 +1,6 @@
 package com.github.j5ik2o.event.store.adapter.java.memory;
 
+import com.fasterxml.jackson.core.JsonPointer;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
@@ -20,8 +21,10 @@ import com.github.j5ik2o.event.store.adapter.java.core.StorageException;
 import java.math.BigInteger;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -31,7 +34,27 @@ public final class ConformanceMemoryOperations {
 
   private ConformanceMemoryOperations() {}
 
-  public static ObjectNode executeScenario(JsonNode scenario) {
+  /** 保存先の上にストアを開く処理。単体試験が偽の保存先を差し込めるようにする。 */
+  @FunctionalInterface
+  public interface StoreOpener {
+    EventStore<JsonNode, JsonNode> open(
+        MemoryStorage storage, EventStoreConfig<JsonNode, JsonNode> config);
+
+    /** 公開 API だけでストアを開く。 */
+    StoreOpener PUBLIC_API = MemoryEventStore::create;
+  }
+
+  private static final class OpenStore {
+    final MemoryStorage storage;
+    final EventStore<JsonNode, JsonNode> store;
+
+    OpenStore(MemoryStorage storage, EventStore<JsonNode, JsonNode> store) {
+      this.storage = storage;
+      this.store = store;
+    }
+  }
+
+  public static ObjectNode executeScenario(JsonNode scenario, StoreOpener opener) {
     ObjectNode result = F.objectNode();
     if (scenario.has("seed")
         || scenario.has("clock")
@@ -44,7 +67,10 @@ public final class ConformanceMemoryOperations {
               "persistEvent",
               "persistEventAndSnapshot",
               "getLatestSnapshotById",
-              "getEventsByIdSinceSeqNr")
+              "getEventsByIdSinceSeqNr",
+              "createStore",
+              "mutateWrittenPayload",
+              "mutateReadPayload")
           .contains(step.path("op").asText())) {
         result.put("unsupported", "メモリへ未接続の操作: " + step.path("op").asText());
         return result;
@@ -71,11 +97,14 @@ public final class ConformanceMemoryOperations {
       return result;
     }
     List<String> notifications = new ArrayList<>();
-    MemoryStorage storage;
-    EventStore<JsonNode, JsonNode> store;
+    Map<String, OpenStore> stores = new HashMap<>();
+    Map<Integer, EventEnvelope<JsonNode>> written = new HashMap<>();
+    Map<Integer, List<EventEnvelope<JsonNode>>> reads = new HashMap<>();
+    RetentionPolicy policy;
+    EventStoreConfig<JsonNode, JsonNode> config;
     try {
       JsonNode settings = scenario.path("store");
-      RetentionPolicy policy =
+      policy =
           settings.path("retention_count").isNull() || !settings.has("retention_count")
               ? RetentionPolicy.none()
               : "ttl".equals(settings.path("retention_mode").asText())
@@ -83,15 +112,14 @@ public final class ConformanceMemoryOperations {
                       settings.path("retention_count").intValue(),
                       settings.path("ttl_grace_seconds").longValue())
                   : RetentionPolicy.delete(settings.path("retention_count").intValue());
-      storage = MemoryStorage.create(policy, faults);
-      store =
-          MemoryEventStore.create(
-              storage,
-              EventStoreConfig.<JsonNode, JsonNode>builder()
-                  .payloadSerializer(faults.serializer("event"))
-                  .snapshotSerializer(faults.serializer("snapshot"))
-                  .retentionFailureListener(failure -> notifications.add("retention-failure"))
-                  .build());
+      config =
+          EventStoreConfig.<JsonNode, JsonNode>builder()
+              .payloadSerializer(faults.serializer("event"))
+              .snapshotSerializer(faults.serializer("snapshot"))
+              .retentionFailureListener(failure -> notifications.add("retention-failure"))
+              .build();
+      MemoryStorage primary = MemoryStorage.create(policy, faults);
+      stores.put(PRIMARY, new OpenStore(primary, opener.open(primary, config)));
       result.putObject("initialization").put("result", "success");
     } catch (EventStoreException failure) {
       result.set("initialization", error(failure));
@@ -104,17 +132,29 @@ public final class ConformanceMemoryOperations {
       faults.operation++;
       notifications.clear();
       JsonNode args = step.path("arguments");
+      String target = step.path("store").asText(PRIMARY);
+      OpenStore current = stores.get(target);
+      if (current == null) {
+        throw new IllegalArgumentException("unknown store: " + target);
+      }
+      EventStore<JsonNode, JsonNode> store = current.store;
+      MemoryStorage storage = current.storage;
       ObjectNode actual;
       try {
         switch (step.path("op").asText()) {
           case "persistEvent":
-            store.persistEvent(event(fixtures.path("events").path(args.path("event").asText())));
+            EventEnvelope<JsonNode> single =
+                event(fixtures.path("events").path(args.path("event").asText()));
+            store.persistEvent(single);
+            written.put(faults.operation, single);
             actual = F.objectNode().put("result", "success");
             break;
           case "persistEventAndSnapshot":
+            EventEnvelope<JsonNode> pair =
+                event(fixtures.path("events").path(args.path("event").asText()));
             store.persistEventAndSnapshot(
-                event(fixtures.path("events").path(args.path("event").asText())),
-                snapshot(fixtures.path("snapshots").path(args.path("snapshot").asText())));
+                pair, snapshot(fixtures.path("snapshots").path(args.path("snapshot").asText())));
+            written.put(faults.operation, pair);
             actual = F.objectNode().put("result", "success");
             break;
           case "getLatestSnapshotById":
@@ -134,12 +174,34 @@ public final class ConformanceMemoryOperations {
           case "getEventsByIdSinceSeqNr":
             actual = F.objectNode().put("result", "events");
             ArrayNode events = actual.putArray("events");
-            for (EventEnvelope<JsonNode> envelope :
+            List<EventEnvelope<JsonNode>> received =
                 store.getEventsByIdSinceSeqNr(
                     aid(args.path("aggregate_id")),
-                    args.path("seq_nr").bigIntegerValue().longValueExact())) {
+                    args.path("seq_nr").bigIntegerValue().longValueExact());
+            reads.put(faults.operation, received);
+            for (EventEnvelope<JsonNode> envelope : received) {
               events.add(eventJson(envelope));
             }
+            break;
+          case "createStore":
+            actual = createStore(args, stores, policy, faults, config, opener);
+            break;
+          case "mutateWrittenPayload":
+            EventEnvelope<JsonNode> target1 = written.get(args.path("operation").asInt());
+            actual =
+                mutation(
+                    target1 == null ? null : target1.payload(),
+                    args.path("pointer").asText(),
+                    args.path("value"));
+            break;
+          case "mutateReadPayload":
+            actual =
+                mutation(
+                    readPayload(
+                        reads.get(args.path("operation").asInt()),
+                        fixtures.path("events").path(args.path("event").asText())),
+                    args.path("pointer").asText(),
+                    args.path("value"));
             break;
           default:
             throw new IllegalArgumentException("unsupported operation: " + step.path("op"));
@@ -165,6 +227,81 @@ public final class ConformanceMemoryOperations {
     }
     faults.finish(result);
     return result;
+  }
+
+  private static final String PRIMARY = "primary";
+
+  private static ObjectNode createStore(
+      JsonNode args,
+      Map<String, OpenStore> stores,
+      RetentionPolicy policy,
+      Faults faults,
+      EventStoreConfig<JsonNode, JsonNode> config,
+      StoreOpener opener) {
+    String name = args.path("name").asText();
+    if (stores.containsKey(name)) {
+      throw new IllegalArgumentException("store name already used: " + name);
+    }
+    MemoryStorage storage;
+    switch (args.path("storage").asText()) {
+      case "new":
+        storage = MemoryStorage.create(policy, faults);
+        break;
+      case "shared":
+        OpenStore source = stores.get(args.path("shared_with").asText());
+        if (source == null) {
+          throw new IllegalArgumentException("unknown shared_with: " + args.path("shared_with"));
+        }
+        storage = source.storage;
+        break;
+      default:
+        throw new IllegalArgumentException("unknown storage: " + args.path("storage"));
+    }
+    stores.put(name, new OpenStore(storage, opener.open(storage, config)));
+    return F.objectNode().put("result", "success");
+  }
+
+  /** 手元のペイロードを JSON Pointer の位置で書き換える。書き換えられなければデータの誤りとして失敗にする。 */
+  private static ObjectNode mutation(JsonNode payload, String pointer, JsonNode value) {
+    boolean replaced = payload != null && replaceAt(payload, pointer, value);
+    return F.objectNode().put("result", replaced ? "success" : "invalid-mutation");
+  }
+
+  private static JsonNode readPayload(List<EventEnvelope<JsonNode>> read, JsonNode fixture) {
+    if (read == null) {
+      return null;
+    }
+    AggregateId id = aid(fixture.path("aggregate_id"));
+    long seqNr = fixture.path("seq_nr").bigIntegerValue().longValueExact();
+    for (EventEnvelope<JsonNode> envelope : read) {
+      if (envelope.aggregateId().equals(id) && envelope.seqNr() == seqNr) {
+        return envelope.payload();
+      }
+    }
+    return null;
+  }
+
+  /** 空の位置、存在しない位置、同じ値への書き換えは行わず false を返す。 */
+  static boolean replaceAt(JsonNode root, String pointer, JsonNode value) {
+    JsonPointer last = JsonPointer.compile(pointer);
+    if (last.matches()) {
+      return false;
+    }
+    JsonNode parent = root.at(last.head());
+    String property = last.last().getMatchingProperty();
+    JsonNode existing = parent.path(property);
+    if (existing.isMissingNode() || existing.equals(value)) {
+      return false;
+    }
+    if (parent instanceof ObjectNode) {
+      ((ObjectNode) parent).set(property, value);
+      return true;
+    }
+    if (parent instanceof ArrayNode) {
+      ((ArrayNode) parent).set(last.last().getMatchingIndex(), value);
+      return true;
+    }
+    return false;
   }
 
   public static ObjectNode validateOccurredAt(JsonNode input, String caseId) {
@@ -212,7 +349,7 @@ public final class ConformanceMemoryOperations {
         .seqNr(input.path("seq_nr").bigIntegerValue().longValueExact())
         .occurredAt(Instant.parse(input.path("occurred_at").asText()))
         .manifest(input.path("manifest").asText(""))
-        .payload(input.get("payload"))
+        .payload(input.get("payload").deepCopy())
         .build();
   }
 
@@ -220,7 +357,7 @@ public final class ConformanceMemoryOperations {
     return SnapshotEnvelope.<JsonNode>builder()
         .seqNr(input.path("seq_nr").bigIntegerValue().longValueExact())
         .manifest(input.path("manifest").asText(""))
-        .aggregate(input.get("aggregate"))
+        .aggregate(input.get("aggregate").deepCopy())
         .build();
   }
 
@@ -232,14 +369,14 @@ public final class ConformanceMemoryOperations {
     json.put("seq_nr", event.seqNr());
     json.put("occurred_at", event.occurredAt().toString());
     json.put("manifest", event.manifest());
-    json.set("payload", event.payload());
+    json.set("payload", event.payload().deepCopy());
     return json;
   }
 
   private static ObjectNode snapshotJson(SnapshotEnvelope<JsonNode> snapshot) {
     ObjectNode json =
         F.objectNode().put("seq_nr", snapshot.seqNr()).put("manifest", snapshot.manifest());
-    json.set("aggregate", snapshot.aggregate());
+    json.set("aggregate", snapshot.aggregate().deepCopy());
     return json;
   }
 
