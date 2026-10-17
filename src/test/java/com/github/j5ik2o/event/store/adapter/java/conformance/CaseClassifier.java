@@ -1,5 +1,6 @@
 package com.github.j5ik2o.event.store.adapter.java.conformance;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -16,6 +17,18 @@ final class CaseClassifier {
   static final String REASON_MILLISECONDS =
       "標準時刻型 Instant はナノ秒を表せるため、milliseconds のケースは対象外（設計文書 5.2）";
   static final String REASON_NOT_EXECUTED = "この分類経路では保存先の公開操作を実行していない（設計文書 5.3）";
+
+  static final String REASON_UNPROVIDED_BACKEND =
+      "この言語はこの保存先（SQLite・Spanner・Bigtable）を提供しない（適合テストデータ 1.3.0）";
+
+  // 値の表は backends を持たないので、操作名で分類する。
+  private static final Set<String> BIGTABLE_VALUE_OPERATIONS =
+      Set.of(
+          "encodeBigtableEventEnvelope",
+          "encodeBigtableSnapshotEnvelope",
+          "decodeBigtableEnvelope");
+  private static final Set<String> PROVIDED_BACKENDS =
+      Arrays.stream(Backend.values()).map(Backend::dataName).collect(Collectors.toSet());
 
   private CaseClassifier() {}
 
@@ -35,6 +48,16 @@ final class CaseClassifier {
   static Optional<CaseResult> exclusion(ConformanceCase c, Backend backend) {
     if (c.operation().map("fnv1a64"::equals).orElse(false)) {
       return Optional.of(result(c, backend, ConformanceStatus.NOT_APPLICABLE, REASON_HASH));
+    }
+    if (c.operation().map(BIGTABLE_VALUE_OPERATIONS::contains).orElse(false)) {
+      return Optional.of(
+          result(c, backend, ConformanceStatus.NOT_APPLICABLE, REASON_UNPROVIDED_BACKEND));
+    }
+    if (c.backends()
+        .map(names -> names.stream().noneMatch(PROVIDED_BACKENDS::contains))
+        .orElse(false)) {
+      return Optional.of(
+          result(c, backend, ConformanceStatus.NOT_APPLICABLE, REASON_UNPROVIDED_BACKEND));
     }
     if (c.backends().map(names -> !names.contains(backend.dataName())).orElse(false)) {
       return Optional.of(result(c, backend, ConformanceStatus.NOT_APPLICABLE, REASON_BACKEND));
