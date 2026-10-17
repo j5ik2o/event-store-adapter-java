@@ -15,6 +15,7 @@ import com.github.j5ik2o.event.store.adapter.java.core.SnapshotReadResult;
 import com.github.j5ik2o.event.store.adapter.java.memory.ConformanceMemoryOperations;
 import com.github.j5ik2o.event.store.adapter.java.memory.MemoryEventStore;
 import com.github.j5ik2o.event.store.adapter.java.memory.MemoryStorage;
+import com.github.j5ik2o.event.store.adapter.java.memory.OwnDefaultConfigurationOpener;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -192,6 +193,7 @@ class MemoryCaseRunnerTest {
       List.of(
           "memory-store-new-independent",
           "memory-store-shared",
+          "memory-store-shared-configuration",
           "memory-payload-written-mutation",
           "memory-payload-read-mutation");
 
@@ -219,6 +221,16 @@ class MemoryCaseRunnerTest {
         };
 
     CaseResult result = MemoryCaseRunner.run(find("memory-store-new-independent"), sharing);
+
+    assertEquals(ConformanceStatus.FAILED, result.status(), result.reason());
+  }
+
+  @Test
+  void sharedStoreThatKeepsItsOwnDefaultConfigurationIsRejectedBySharedConfigurationScenario()
+      throws IOException {
+    CaseResult result =
+        MemoryCaseRunner.run(
+            find("memory-store-shared-configuration"), new OwnDefaultConfigurationOpener());
 
     assertEquals(ConformanceStatus.FAILED, result.status(), result.reason());
   }

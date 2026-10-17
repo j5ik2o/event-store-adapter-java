@@ -105,7 +105,7 @@ class CaseClassifierTest {
             .filter(c -> !c.changeFeedRequested())
             .map(ConformanceCase::id)
             .collect(Collectors.toSet());
-    assertEquals(65, memory.size());
+    assertEquals(66, memory.size());
     assertEquals(memory, required.get(Backend.MEMORY));
     Set<String> dynamodb = new java.util.HashSet<>(EXECUTABLE_CASE_IDS);
     Set<String> configuration =
@@ -166,6 +166,70 @@ class CaseClassifierTest {
 
     assertFalse(CaseClassifier.violatesRequirement(memory, required));
     assertTrue(CaseClassifier.violatesRequirement(dynamo, required));
+  }
+
+  private static final Set<String> BIGTABLE_VALUE_OPERATIONS =
+      Set.of(
+          "encodeBigtableEventEnvelope",
+          "encodeBigtableSnapshotEnvelope",
+          "decodeBigtableEnvelope");
+
+  private static boolean unprovidedBackendOnly(ConformanceCase c) {
+    return c.operation().map(BIGTABLE_VALUE_OPERATIONS::contains).orElse(false)
+        || c.backends()
+            .map(names -> names.stream().noneMatch(n -> n.equals("memory") || n.equals("dynamodb")))
+            .orElse(false);
+  }
+
+  @Test
+  void casesOnlyForUnprovidedBackendsAreNotApplicableWithTheUnprovidedReasonOnBothBackends() {
+    List<ConformanceCase> unprovided =
+        data.cases().stream()
+            .filter(CaseClassifierTest::unprovidedBackendOnly)
+            .collect(Collectors.toList());
+
+    assertEquals(44, unprovided.size());
+    for (ConformanceCase c : unprovided) {
+      for (Backend b : Backend.values()) {
+        CaseResult r = CaseClassifier.classify(c, b);
+        assertEquals(ConformanceStatus.NOT_APPLICABLE, r.status(), c.id() + "/" + b);
+        assertEquals(CaseClassifier.REASON_UNPROVIDED_BACKEND, r.reason(), c.id() + "/" + b);
+        assertFalse(r.reason().isBlank());
+      }
+    }
+  }
+
+  @Test
+  void casesForProvidedBackendsNeverGetTheUnprovidedReason() {
+    for (ConformanceCase c : data.cases()) {
+      if (unprovidedBackendOnly(c)) continue;
+      for (Backend b : Backend.values()) {
+        CaseResult r = CaseClassifier.classify(c, b);
+        assertFalse(CaseClassifier.REASON_UNPROVIDED_BACKEND.equals(r.reason()), c.id() + "/" + b);
+      }
+    }
+  }
+
+  @Test
+  void unknownOperationInAProvidedBackendCaseIsNeverPassedAndViolatesTheRequirement()
+      throws IOException {
+    ConformanceCase original = find("memory-store-shared-configuration");
+    com.fasterxml.jackson.databind.node.ObjectNode changed = original.materialized().deepCopy();
+    ((com.fasterxml.jackson.databind.node.ObjectNode) changed.path("steps").get(0))
+        .put("op", "holdWriteLock");
+    ConformanceCase copy =
+        new ConformanceCase(
+            original.id(),
+            original.file(),
+            original.format(),
+            original.rules(),
+            changed.deepCopy(),
+            changed);
+
+    CaseResult r = CaseClassifier.classify(copy, Backend.MEMORY);
+
+    assertEquals(ConformanceStatus.UNVERIFIED, r.status(), r.reason());
+    assertTrue(CaseClassifier.violatesRequirement(r, RequiredCases.load()));
   }
 
   private static boolean memoryExecutable(ConformanceCase c) {

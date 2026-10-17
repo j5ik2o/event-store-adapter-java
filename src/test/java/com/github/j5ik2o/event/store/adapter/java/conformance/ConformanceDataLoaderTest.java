@@ -27,13 +27,13 @@ class ConformanceDataLoaderTest {
   }
 
   @Test
-  void loadsAllHundredTwentyFourCasesWithUniqueIds() throws IOException {
+  void loadsAllHundredSixtyNineCasesWithUniqueIds() throws IOException {
     ConformanceData data = ConformanceDataLoader.load(ConformanceTestFiles.REAL_ROOT);
 
-    assertEquals(124, data.cases().size());
+    assertEquals(169, data.cases().size());
     Set<String> ids = new HashSet<>();
     data.cases().forEach(c -> assertTrue(ids.add(c.id()), "duplicated id: " + c.id()));
-    assertEquals("1.2.0", data.dataVersion());
+    assertEquals("1.3.0", data.dataVersion());
     assertNotNull(data.coverageExclusions());
   }
 
@@ -41,7 +41,7 @@ class ConformanceDataLoaderTest {
   void unknownVersionFailsOnCopy(@TempDir Path tempDir) throws IOException {
     Path copy = ConformanceTestFiles.copyOfRealData(tempDir);
     ConformanceTestFiles.replaceInFile(
-        copy.resolve("values/aid.json"), "\"version\": \"1.2.0\"", "\"version\": \"9.9.9\"");
+        copy.resolve("values/aid.json"), "\"version\": \"1.3.0\"", "\"version\": \"9.9.9\"");
 
     assertThrows(Exception.class, () -> ConformanceDataLoader.load(copy));
   }
@@ -116,7 +116,7 @@ class ConformanceDataLoaderTest {
     Path copy = ConformanceTestFiles.copyOfRealData(tempDir);
     Files.writeString(
         copy.resolve("values/aid.json"),
-        "{\"format\":\"values\",\"version\":\"1.2.0\",\"cases\":{}}");
+        "{\"format\":\"values\",\"version\":\"1.3.0\",\"cases\":{}}");
 
     IOException e = assertThrows(IOException.class, () -> ConformanceDataLoader.load(copy));
 
@@ -175,7 +175,7 @@ class ConformanceDataLoaderTest {
           "\"byte_length\": 420000",
           "\"byte_length\": " + spelling);
       ConformanceData data = ConformanceDataLoader.load(copy);
-      assertEquals(124, data.cases().size(), spelling);
+      assertEquals(169, data.cases().size(), spelling);
     }
     Path fractional = ConformanceTestFiles.copyOfRealData(tempDir.resolve("fractional"));
     ConformanceTestFiles.replaceInFile(

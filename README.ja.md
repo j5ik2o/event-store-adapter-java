@@ -12,7 +12,7 @@ CQRS/Event Sourcing向けのイベントストアです。MemoryとDynamoDBを�
 
 ## 依存と公開API
 
-現在の成果物版は `5.0.0` で、Maven Central に公開しています。[共通契約 v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md) に従います。メジャーの番号 5 は、共通契約の版と同じです。配布適合データの版は **1.2.0** で、別の番号です。
+現在の成果物版は `5.0.0` で、Maven Central に公開しています。[共通契約 v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md) に従います。メジャーの番号 5 は、共通契約の版と同じです。配布適合データの版は **1.3.0** で、別の番号です。
 
 2.0.0 は版をそろえる決定の前に出した版で、中身は 5.0.0 と同じです。5.0.0 を使ってください。
 
