@@ -50,7 +50,7 @@ class ConformanceReportTest {
   void jsonHasTheRequiredTopLevelFields() {
     JsonNode json = report.toJson();
 
-    assertEquals("1.2.0", json.get("data_version").asText());
+    assertEquals("1.3.0", json.get("data_version").asText());
     assertTrue(json.at("/manifest/result").isTextual(), json.at("/manifest").toString());
     assertEquals("java", json.get("language").asText());
     assertEquals("2.0.0-SNAPSHOT", json.get("implementation_version").asText());
@@ -67,14 +67,14 @@ class ConformanceReportTest {
     for (String state : STATES) {
       assertTrue(text.contains("\"" + state + "\""), "missing state key: " + state);
     }
-    assertEquals(65, findCount(json, "memory", "passed"));
+    assertEquals(66, findCount(json, "memory", "passed"));
     assertEquals(15, findCount(json, "dynamodb-local", "passed"));
     assertEquals(0, findCount(json, "memory", "failed"));
-    assertEquals(58, findCount(json, "memory", "not-applicable"));
+    assertEquals(102, findCount(json, "memory", "not-applicable"));
     assertEquals(0, findCount(json, "memory", "unverified"));
     assertEquals(1, findCount(json, "memory", "unrepresentable"));
     assertEquals(0, findCount(json, "dynamodb-local", "failed"));
-    assertEquals(18, findCount(json, "dynamodb-local", "not-applicable"));
+    assertEquals(63, findCount(json, "dynamodb-local", "not-applicable"));
     assertEquals(91, findCount(json, "dynamodb-local", "unverified"));
     assertEquals(0, findCount(json, "dynamodb-local", "unrepresentable"));
   }
@@ -125,6 +125,40 @@ class ConformanceReportTest {
   }
 
   @Test
+  void ruleEntriesForUnprovidedBackendsAreReportedNotApplicableWithReasonOnBothBackends() {
+    for (String prefix : List.of("SQ-", "SPN-", "BT-")) {
+      int found = 0;
+      for (JsonNode entry : report.toJson().get("rules")) {
+        if (!entry.get("rule").asText().startsWith(prefix)) continue;
+        found++;
+        assertEquals("not-applicable", entry.get("status").asText(), entry.toString());
+        assertFalse(entry.get("reason").asText().isBlank(), entry.toString());
+      }
+      assertTrue(found > 0, "no rule entries with prefix " + prefix);
+    }
+    Set<String> btD6aBackends = new HashSet<>();
+    for (JsonNode entry : report.toJson().get("rules")) {
+      if (entry.get("rule").asText().equals("BT-D6a")) {
+        assertEquals("not-applicable", entry.get("status").asText(), entry.toString());
+        btD6aBackends.add(entry.get("backend").asText());
+      }
+    }
+    assertEquals(Set.of("memory", "dynamodb-local"), btD6aBackends);
+  }
+
+  @Test
+  void memoryRuleTwoIncludesTheSharedConfigurationCaseAsPassed() {
+    boolean passed = false;
+    for (JsonNode entry : report.toJson().get("rules")) {
+      if (entry.get("rule").asText().equals("MEM-2")
+          && entry.get("case_id").asText().equals("memory-store-shared-configuration")
+          && entry.get("backend").asText().equals("memory")
+          && entry.get("status").asText().equals("passed")) passed = true;
+    }
+    assertTrue(passed);
+  }
+
+  @Test
   void caseEntriesCarryStatusAndReason() {
     JsonNode cases = report.toJson().get("cases");
 
@@ -140,7 +174,7 @@ class ConformanceReportTest {
   @Test
   void targetListsIncludeUnverifiedApplicableCasesAndReasonsAreCountedSeparately() {
     JsonNode json = report.toJson();
-    assertEquals(65, json.at("/target_cases/memory").size());
+    assertEquals(66, json.at("/target_cases/memory").size());
     assertEquals(106, json.at("/target_cases/dynamodb-local").size());
     assertTrue(
         json.at("/target_cases/dynamodb-local")
@@ -249,7 +283,7 @@ class ConformanceReportTest {
   void missingCommitIsJsonNull() throws IOException {
     ConformanceReport noCommit =
         new ConformanceReport(
-            "1.2.0",
+            "1.3.0",
             ManifestVerifier.verify(ConformanceTestFiles.REAL_ROOT),
             "2.0.0-SNAPSHOT",
             null,
@@ -272,10 +306,10 @@ class ConformanceReportTest {
       throws IOException {
     Path copy = ConformanceTestFiles.copyOfRealData(tempDir);
     ConformanceTestFiles.replaceInFile(
-        copy.resolve("manifest.json"), "\"version\": \"1.2.0\"", "\"version\": \"9.9.9\"");
+        copy.resolve("manifest.json"), "\"version\": \"1.3.0\"", "\"version\": \"9.9.9\"");
     ConformanceReport tampered =
         new ConformanceReport(
-            "1.2.0",
+            "1.3.0",
             ManifestVerifier.verify(copy),
             "2.0.0-SNAPSHOT",
             null,
@@ -284,9 +318,9 @@ class ConformanceReportTest {
 
     JsonNode manifest = tampered.toJson().get("manifest");
     assertEquals("9.9.9", manifest.get("version").asText());
-    assertEquals("1.2.0", manifest.get("expected_version").asText());
+    assertEquals("1.3.0", manifest.get("expected_version").asText());
     assertFalse(manifest.get("version_matches").asBoolean());
-    assertEquals("1.2.0", report.toJson().at("/manifest/version").asText());
+    assertEquals("1.3.0", report.toJson().at("/manifest/version").asText());
     assertTrue(report.toJson().at("/manifest/version_matches").asBoolean());
   }
 }
