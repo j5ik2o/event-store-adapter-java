@@ -15,9 +15,9 @@ An event store for CQRS/Event Sourcing, with Memory and DynamoDB implementations
 
 ### Versions
 
-The current artifact version is `5.0.0`, published to Maven Central. This library follows [common contract v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md); its major version 5 matches the contract revision. The distributed conformance data has version **1.3.0**, a separate number.
+The current artifact version is `5.0.1`, published to Maven Central. This library follows [common contract v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md); its major version 5 matches the contract revision. The distributed conformance data has version **1.3.0**, a separate number.
 
-Version 2.0.0 was released before the decision to align versions, and its contents are the same as 5.0.0. Use 5.0.0.
+Version 2.0.0 was released before the decision to align versions, and its contents are the same as 5.0.0. Use 5.0.1 or later.
 
 ### Public packages
 
@@ -46,7 +46,7 @@ repositories {
     mavenCentral()
 }
 dependencies {
-    implementation("io.github.j5ik2o:event-store-adapter-java:5.0.0")
+    implementation("io.github.j5ik2o:event-store-adapter-java:5.0.1")
 }
 ```
 

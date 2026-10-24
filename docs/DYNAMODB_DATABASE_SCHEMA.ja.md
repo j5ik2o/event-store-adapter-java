@@ -2,7 +2,7 @@
 
 # DynamoDB の保存先のスキーマ
 
-`com.github.j5ik2o.event.store.adapter.java.dynamodb` が使う配置です。成果物版は `5.0.0` です。[共通契約 v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md) に従います。メジャーの番号 5 は、共通契約の版と同じです。配布適合データは1.3.0です。保存する `layout_version` は **1** で、これらとは別の配置番号です。
+`com.github.j5ik2o.event.store.adapter.java.dynamodb` が使う配置です。成果物版は `5.0.1` です。[共通契約 v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md) に従います。メジャーの番号 5 は、共通契約の版と同じです。配布適合データは1.3.0です。保存する `layout_version` は **1** で、これらとは別の配置番号です。
 
 公開factoryは [README](../README.ja.md)、旧データを独立した新3表へ書き直す手順は [MIGRATION_GUIDE](MIGRATION_GUIDE.ja.md)を参照してください。
 

@@ -4,7 +4,7 @@
 
 ### Version and approach
 
-The current artifact is `5.0.0` and follows the [common contract v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md); its major version 5 matches the contract revision. The distributed conformance data version 1.3.0 and DynamoDB `layout_version=1` are separate numbers.
+The current artifact is `5.0.1` and follows the [common contract v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md); its major version 5 matches the contract revision. The distributed conformance data version 1.3.0 and DynamoDB `layout_version=1` are separate numbers.
 
 For Java 1.x users, migration is a manual procedure: **read with the old library, convert the data into payloads and envelopes in your application, then rewrite it consecutively with the new library**. The new library provides no old public types, old internal types, automatic reading of the old storage layout, compatibility aliases or migration tool. It does not infer missing type information or timestamp precision.
 
