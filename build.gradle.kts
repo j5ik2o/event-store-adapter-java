@@ -23,7 +23,7 @@ dependencies {
     testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.14.4")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
-    testImplementation("ch.qos.logback:logback-classic:1.6.5")
+    testImplementation("ch.qos.logback:logback-classic:1.6.6")
     testImplementation("org.testcontainers:testcontainers:2.0.5")
     testImplementation("software.amazon.awssdk:apache5-client:2.57.3")
     testImplementation("software.amazon.awssdk:netty-nio-client:2.57.3")
