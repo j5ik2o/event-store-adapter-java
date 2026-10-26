@@ -114,11 +114,12 @@ class SqliteCaseRunnerTest {
   void lockWaitCaseExpectingAnOptimisticLockInsteadOfStorageErrorFails() throws IOException {
     ConformanceCase original = find("sqlite-write-lock-busy");
     ObjectNode changed = original.materialized().deepCopy();
-    ((ObjectNode) changed.at("/steps/2/expect/error")).put("category", "optimistic_lock");
+    ((ObjectNode) changed.at("/steps/2/expect/error")).put("category", "optimistic-lock");
 
     CaseResult result = CaseClassifier.classify(copy(original, changed), Backend.SQLITE);
 
     assertEquals(ConformanceStatus.FAILED, result.status(), result.reason());
+    assertEquals("storage", result.actual().at("/steps/2/error/category").asText());
   }
 
   @Test
