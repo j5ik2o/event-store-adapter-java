@@ -12,6 +12,8 @@ CQRS/Event Sourcing向けのイベントストアです。MemoryとDynamoDBを�
 
 [English](README.md)
 
+このリポジトリを変更する開発者は、[CONTRIBUTING](CONTRIBUTING.ja.md) を参照してください。
+
 ## 概要
 
 ### バージョン

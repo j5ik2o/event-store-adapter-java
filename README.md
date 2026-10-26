@@ -11,6 +11,8 @@ An event store for CQRS/Event Sourcing, with Memory and DynamoDB implementations
 
 [日本語](README.ja.md)
 
+Developers changing this repository: see [CONTRIBUTING](CONTRIBUTING.md).
+
 ## Overview
 
 ### Versions
