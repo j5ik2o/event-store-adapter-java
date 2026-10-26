@@ -19,7 +19,7 @@ Implementation classes are under `src/main/java/.../sqlite/`. Most tests are und
 | Rule | Behavior | Implementation | Tests | Conformance cases |
 |---|---|---|---|---|
 | SQ-1 | Private cache; `locking_mode=NORMAL`, `journal_mode=WAL`, `synchronous=FULL`, `read_uncommitted=OFF`; configurable wait | `SqliteConnections` | `SqliteConnectionsTest`, `SqliteStorageConfigTest` | None |
-| SQ-2 | Separate explicit initialization from opening; validate configuration and layout when opening | `SqliteStorage`, `SqliteLayout` | `SqliteInitializeTest`, `SqliteOpenTest` | `sqlite-seeded-*` |
+| SQ-2 | Separate explicit initialization from opening; validate configuration and layout when opening | `SqliteStorage`, `SqliteLayout` | `SqliteInitializeTest`, `SqliteOpenTest`, `SqliteAidCollationTest` | `sqlite-seeded-*` |
 | SQ-3 | Validate inputs, then bind and read `occurred_at_ns` as a signed 64-bit integer, never REAL | `SqliteAppend`, `SqliteRead`, `SqliteEventStore` | `SqliteAppendTest`, including negative one nanosecond, the `Long.MIN/MAX` nanosecond boundaries, and `typeof` | `occurred-at-*` |
 | SQ-4 | Separate manifest and payload columns; bind aid parameters for exact matches | `SqliteAppend`, `SqliteRead` | `SqliteAppendTest`, including aid values with `%` and `_`; `SqliteRustFormatTest` | `aid-*` |
 | SQ-5 | Append in one transaction on one connection; start `BEGIN IMMEDIATE` before checking the head | `SqliteAppend`, `SqliteTransactions` | `SqliteConcurrencyTest` | `sqlite-write-lock-busy` |
@@ -59,13 +59,13 @@ There is no `head_transition` table.
 
 ## 4. Configuration validation and error categories
 
-Opening validates the following in one read transaction. It compares pragma results rather than SQL text, using `pragma_table_list.strict`, `pragma_table_info`, and the primary-key collation from `pragma_index_xinfo`.
+Opening validates the following in one read transaction. It compares pragma results rather than SQL text, using `pragma_table_list.strict`, `pragma_table_info`, and the primary-key collation from `pragma_index_xinfo`. The aid column collation is checked by meaning with a non-writing compound SELECT ordered by aid that reads no stored rows (`SqliteAidCollationTest`).
 
 | Check | Result on mismatch |
 |---|---|
 | All five tables exist and are STRICT | Configuration error |
 | Column names, types, NOT NULL flags, and positions in the primary key match | Configuration error |
-| The primary-key index uses BINARY collation for aid in all four tables that have aid | Configuration error |
+| Both the aid column and the primary-key index use BINARY collation in all four tables that have aid | Configuration error |
 | `config` contains exactly one row | Configuration error |
 | `layout_version` is 1 | Configuration error |
 | `store_id` is a lowercase universally unique identifier (UUID) | Configuration error |
@@ -84,7 +84,7 @@ Runtime errors are classified as follows.
 | Write-lock wait expiration, BUSY, LOCKED, other constraint violations, or failed COMMIT | Storage error |
 | Missing journal sequence number within the requested range | Storage error |
 | Serialization or deserialization failure | Serialization error |
-| TTL retention, invalid lock wait, a file name containing `?`, an old SQLite version, or mismatched connection settings | Configuration error |
+| TTL retention, invalid lock wait, a file name containing `?`, a SQLite version older than 3.51.3, or mismatched connection settings | Configuration error |
 
 ## 5. Minimum SQLite version
 
@@ -121,6 +121,5 @@ The following are not counted as verified success.
 | Whether storage honors `fsync`; power loss, forced process termination, and long-running access from multiple processes | Chapter 10 of the profile declares these unverified; this work does not reproduce them | Remain unverified |
 | SQLite 3.51.3 itself and rejection by a real library older than 3.51.3 | Only one bundled SQLite version is executed | Version-comparison unit tests in `SqliteConnectionsTest` |
 | A mismatch when pragma values are read back | No reproducible condition with the actual SQLite library | Unit tests of `verifySettings` |
-| A primary-key clause that overrides collation while the column declaration uses a different collation | JDBC does not expose the required column metadata; only primary-key index collation is checked | A test rejects a NOCASE primary-key index |
 | Network-filesystem detection | No detection mechanism | Documented as unsupported |
 | Change feed, per SQ-12, SQ-13, and SQ-18 | Not provided in the first version, per SQ-D8 | Not applicable |

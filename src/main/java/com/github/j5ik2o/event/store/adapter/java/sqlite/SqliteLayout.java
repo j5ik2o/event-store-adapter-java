@@ -191,6 +191,34 @@ final class SqliteLayout {
     }
     if (table.hasAid) {
       verifyAidCollation(c, table.name);
+      verifyAidColumnCollation(c, table.name);
+    }
+  }
+
+  /**
+   * aid 列そのものの照合が BINARY であることを、書き込みも行の読み出しもしない複合 SELECT の ORDER BY で確かめる。複合 SELECT の結果列の照合は左端の
+   * SELECT（表の aid 列）で決まり、同順位は第 2 の並び替え項目で決まる。BINARY なら 2 番目の引数が先に並ぶ。NOCASE（'a' と 'A'）や RTRIM（'x ' と
+   * 'x'）では 同値とみなされ、1 番目の引数が先に並ぶ。
+   */
+  private static void verifyAidColumnCollation(Connection c, String table) throws SQLException {
+    if (!sortsAsBinary(c, table, "a", "A") || !sortsAsBinary(c, table, "x ", "x")) {
+      throw mismatch("aid column of " + table + " must use BINARY collation");
+    }
+  }
+
+  private static boolean sortsAsBinary(Connection c, String table, String first, String second)
+      throws SQLException {
+    // 表名は束縛できないので連結する。値の出所は定数 TABLES だけで、外部入力は入らない。
+    try (PreparedStatement p =
+        c.prepareStatement(
+            "SELECT aid, 0 AS ordinal FROM \""
+                + table
+                + "\" WHERE 0 UNION ALL SELECT ?, 0 UNION ALL SELECT ?, 1 ORDER BY aid, ordinal")) {
+      p.setString(1, first);
+      p.setString(2, second);
+      try (ResultSet rs = p.executeQuery()) {
+        return rs.next() && rs.getInt(2) == 1;
+      }
     }
   }
 
