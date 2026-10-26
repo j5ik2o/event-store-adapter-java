@@ -12,7 +12,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DynamicNode;
@@ -73,22 +72,15 @@ class ConformanceRunnerTest {
                 if (!unknown.isEmpty()) {
                   fail(backend.reportName() + ": unknown required case ids " + unknown);
                 }
-                Set<String> targets =
-                    data.cases().stream()
-                        .filter(c -> CaseClassifier.exclusion(c, backend).isEmpty())
-                        .map(ConformanceCase::id)
-                        .collect(Collectors.toSet());
-                if (!targets.equals(required.get(backend))) {
-                  Set<String> missing = new java.util.HashSet<>(targets);
-                  missing.removeAll(required.get(backend));
-                  Set<String> extra = new java.util.HashSet<>(required.get(backend));
-                  extra.removeAll(targets);
+                CaseClassifier.RequiredMismatch mismatch =
+                    CaseClassifier.requiredMismatch(backend, required.get(backend), data.cases());
+                if (!mismatch.missing().isEmpty() || !mismatch.extra().isEmpty()) {
                   fail(
                       backend.reportName()
                           + ": applicable cases not required="
-                          + missing
+                          + mismatch.missing()
                           + ", inapplicable required cases="
-                          + extra);
+                          + mismatch.extra());
                 }
               }
             }));

@@ -8,7 +8,7 @@
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![tokei](https://tokei.rs/b1/github/j5ik2o/event-store-adapter-java)](https://github.com/XAMPPRocky/tokei)
 
-CQRS/Event Sourcing向けのイベントストアです。MemoryとDynamoDBを提供し、Java 11以降で利用できます。
+CQRS/Event Sourcing向けのイベントストアです。Memory、DynamoDB、SQLiteを提供し、Java 11以降で利用できます。
 
 [English](README.md)
 
@@ -29,6 +29,7 @@ CQRS/Event Sourcing向けのイベントストアです。MemoryとDynamoDBを�
 | `com.github.j5ik2o.event.store.adapter.java.core` | ID、封筒、シリアライザ、設定、例外、`EventStore<P,A>`、`AsyncEventStore<P,A>` |
 | `com.github.j5ik2o.event.store.adapter.java.memory` | `MemoryStorage`、`MemoryEventStore` |
 | `com.github.j5ik2o.event.store.adapter.java.dynamodb` | `DynamoDbTableConfig`、`DynamoDbEventStore` |
+| `com.github.j5ik2o.event.store.adapter.java.sqlite` | `SqliteStorageConfig`、`SqliteStorage`、`SqliteEventStore` |
 
 ### リンク
 
@@ -82,7 +83,7 @@ Optional<String> updated = UserAccountExample.restoreAsync(asyncStore, id).join(
 
 ### 操作
 
-両保存先が提供する操作は4つです。
+すべての保存先が提供する操作は4つです。
 
 | 操作 | 結果 |
 |------|------|
@@ -97,7 +98,7 @@ Optional<String> updated = UserAccountExample.restoreAsync(asyncStore, id).join(
 
 `getLatestSnapshotById` の外側の `Optional` が空ならheadがありません。結果があり `snapshot()` が空なら、snapshotなしで集約が存在します。復元はsnapshotなしなら **1**、ありなら **`snapshot.seqNr() + 1`** から始めます。`headSeqNr()` を復元起点やイベント読取りの上限にしません。
 
-Memoryはheadとsnapshotを原子的に読みます。DynamoDBは各項目を強整合で読みますが、組は**非原子的**です。snapshotがheadより古い組も、新しい組も、未処理キー再要求をまたいだ混在も合法です。取得したsnapshotを保持し、その番号より後のイベントだけを適用して、適用済み番号を再適用しません。イベント読取りは全ページを消費し、後から確定した並行追記を含むことがあります。
+MemoryとSQLiteはheadとsnapshotを原子的に読みます。SQLiteは両方を同じ読み取りトランザクションで読みます。DynamoDBは各項目を強整合で読みますが、組は**非原子的**です。snapshotがheadより古い組も、新しい組も、未処理キー再要求をまたいだ混在も合法です。取得したsnapshotを保持し、その番号より後のイベントだけを適用して、適用済み番号を再適用しません。イベント読取りは全ページを消費し、後から確定した並行追記を含むことがあります。
 
 ## 保存先
 
@@ -142,6 +143,32 @@ Optional<String> latest = restored.join(); // Bob
 
 DynamoDBの非同期生成には設定照合の通信があるため、factoryはfutureを返します。生成futureの成功後にストアを利用します。
 
+### SQLite
+
+SQLiteは、同じホスト上のローカルファイル1つにイベントを保存します。5.0.1には含まれず、次の版から使えます。新規または空のファイルは `SqliteStorage.initialize` で一度だけ初期化し、`SqliteStorage.open` で開きます。開く操作はファイルを初期化しません。ファイルがないときは `STORAGE` エラー、未初期化または設定と一致しないときは `CONFIGURATION` エラーで失敗します。`SqliteStorage` はJDBC接続を1本所有し、閉じる必要があります。同じファイルを、同じプロセスまたは同じホストの複数プロセスの複数の `SqliteStorage` から使えます。各オブジェクトは自分の操作を直列化します。`lockWait`（既定5秒）以内に書き込みロックを取れない書込みは `STORAGE` エラーで失敗し、何も確定しません。SQLiteの非同期APIはロック待ちを含めて呼出しスレッドで実行し、完了済みのfutureを返します。ファイルをネットワークファイルシステムに置かないでください。ファイルの形式と運用は [SQLITE_DATABASE_SCHEMA](docs/SQLITE_DATABASE_SCHEMA.ja.md) を参照してください。
+
+```java
+import com.github.j5ik2o.event.store.adapter.java.sqlite.*;
+import java.nio.file.Path;
+import java.time.Duration;
+
+Path file = Path.of("example-events.db");
+SqliteStorageConfig settings = SqliteStorageConfig.builder()
+    .retentionPolicy(RetentionPolicy.none())
+    .lockWait(Duration.ofSeconds(5))
+    .build();
+SqliteStorage.initialize(file, settings); // once, for a new or empty file
+try (SqliteStorage sqlite = SqliteStorage.open(file, settings)) {
+  EventStore<String, String> sqliteStore = SqliteEventStore.create(sqlite, config);
+  AsyncEventStore<String, String> asyncSqlite = SqliteEventStore.createAsync(sqlite, config);
+  AggregateId sqliteId = AggregateId.of("UserAccount", "sqlite-example");
+  sqliteStore.persistEvent(UserAccountExample.event(sqliteId, 1, "Alice"));
+  asyncSqlite.persistEventAndSnapshot(
+      UserAccountExample.event(sqliteId, 2, "Bob"), UserAccountExample.snapshot(2, "Bob")).join();
+  Optional<String> sqliteName = UserAccountExample.restore(sqliteStore, sqliteId); // Bob
+}
+```
+
 ## 直列化
 
 ドメイン型には、`PayloadSerializer<T>` で直列化できることだけを求めます。payloadとsnapshotの型は `EventStoreConfig` の生成時に束縛し、読取り操作に `Class<T>` を渡しません。既定のJSONシリアライザはpayloadまたは集約状態だけを直列化し、封筒のメタデータと分けて保存します。ライブラリは `manifest` を解釈しません。
@@ -150,13 +177,13 @@ DynamoDBの非同期生成には設定照合の通信があるため、factory�
 
 ### 保持方針
 
-既定の `RetentionPolicy.none()` は現在snapshotだけを保存します。`RetentionPolicy.delete(n)` は現在snapshotに加えて最新n件の履歴を残します。DynamoDBは `RetentionPolicy.ttl(n, graceSeconds)` も提供し、snapshot表の `ttl` 属性でTTLを有効にします。印付き履歴は保持件数に数えず、期限を延長しません。MemoryはTTL設定を拒否し、変更フィードを提供しません。
+既定の `RetentionPolicy.none()` は現在snapshotだけを保存します。`RetentionPolicy.delete(n)` は現在snapshotに加えて最新n件の履歴を残します。DynamoDBは `RetentionPolicy.ttl(n, graceSeconds)` も提供し、snapshot表の `ttl` 属性でTTLを有効にします。印付き履歴は保持件数に数えず、期限を延長しません。MemoryとSQLiteはTTL設定を拒否し、変更フィードを提供しません。SQLiteは `RetentionPolicy.none()` と `RetentionPolicy.delete(n)` を提供します。
 
-保持方針は `MemoryStorage.create(policy)` または `DynamoDbTableConfig` に渡します。DynamoDBはsnapshot書込みの確定後に保持を行い、Memoryはイベントだけの追記でも残った履歴の処理を再試行します。保持はjournal・head・現在snapshotを削除しません。
+保持方針は `MemoryStorage.create(policy)`、`DynamoDbTableConfig`、`SqliteStorageConfig` のいずれかに渡します。DynamoDBはsnapshot書込みの確定後に保持を行い、SQLiteは追記の確定後に別のトランザクションで保持を行い、Memoryはイベントだけの追記でも残った履歴の処理を再試行します。保持はjournal・head・現在snapshotを削除しません。
 
 ### 失敗と通知
 
-確定後の保持失敗でも書込みは成功します。最終失敗はWARNログと、任意の `EventStoreConfig.Builder.retentionFailureListener` に1回通知します。通知には集約ID・方式・元原因があり、Memoryはロック解除後に通知します。同期実装とMemory非同期は呼出しスレッド、DynamoDB非同期は公開future完了前のSDK完了スレッドで通知します。通知先はブロックしない実装にします。通知先の失敗でも、確定済み書込みを失敗にしません。
+確定後の保持失敗でも書込みは成功します。最終失敗はWARNログと、任意の `EventStoreConfig.Builder.retentionFailureListener` に1回通知します。通知には集約ID・方式・元原因があり、MemoryとSQLiteはロック解除後に通知します。同期実装、Memory非同期、SQLite非同期は呼出しスレッド、DynamoDB非同期は公開future完了前のSDK完了スレッドで通知します。通知先はブロックしない実装にします。通知先の失敗でも、確定済み書込みを失敗にしません。
 
 ## エラー
 
@@ -170,7 +197,7 @@ APIの変更と「旧版で読む→利用者が変換→新版へ書き直す�
 
 配布する適合データ（版1.3.0）は [conformance/](conformance/README.md) にあります。
 
-[Memory利用試験](src/test/java/com/github/j5ik2o/event/store/adapter/java/examples/UserAccountExampleTest.java)と[DynamoDB利用試験](src/test/java/com/github/j5ik2o/event/store/adapter/java/dynamodbtest/DynamoDbPublicApiUsageTest.java)は、この例を4つの公開factoryでコンパイル・実行します。DynamoDB試験は固定されたDynamoDB Localイメージを使うためDockerが必要です。
+[Memory利用試験](src/test/java/com/github/j5ik2o/event/store/adapter/java/examples/UserAccountExampleTest.java)、[DynamoDB利用試験](src/test/java/com/github/j5ik2o/event/store/adapter/java/dynamodbtest/DynamoDbPublicApiUsageTest.java)、[SQLite利用試験](src/test/java/com/github/j5ik2o/event/store/adapter/java/examples/SqliteUserAccountExampleTest.java)は、この例を4つの公開factoryでコンパイル・実行します。DynamoDB試験は固定されたDynamoDB Localイメージを使うためDockerが必要です。SQLite試験は一時的なローカルファイルを使うためDockerは不要です。
 
 ```sh
 ./gradlew spotlessCheck test

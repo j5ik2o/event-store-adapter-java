@@ -4,7 +4,7 @@
 
 ## Overview
 
-This guide is for developers who change this repository. It is the Java implementation of [common contract v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md). The public packages are `core`, `memory` and `dynamodb`. Documentation for library users is in the [README](README.md) and `docs/`.
+This guide is for developers who change this repository. It is the Java implementation of [common contract v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md). The public packages are `core`, `memory`, `dynamodb` and `sqlite`. Documentation for library users is in the [README](README.md) and `docs/`.
 
 ## Shared contract and decisions
 
@@ -16,7 +16,7 @@ Some files are fixed copies from the hub, and CI checks them with SHA-256: `conf
 
 - The code is compiled for Java 11 (the Gradle toolchain and `options.release` in `build.gradle.kts`). Tests run on the JDK selected by `-PtestJavaVersion` (default 11).
 - Use the Gradle wrapper (`./gradlew`, Gradle 9.8.2). CI runs Gradle itself on JDK 25.
-- The DynamoDB tests start a DynamoDB Local image pinned by digest through Testcontainers, so Docker is required.
+- The DynamoDB tests start a DynamoDB Local image pinned by digest through Testcontainers, so Docker is required. The SQLite tests use the bundled JDBC driver and temporary local files, so they do not need Docker.
 - The release tooling checks use Python 3. CI uses Python 3.15. `tools/user-docs/check.py` requires Python 3.10 or later.
 
 ## Checks
