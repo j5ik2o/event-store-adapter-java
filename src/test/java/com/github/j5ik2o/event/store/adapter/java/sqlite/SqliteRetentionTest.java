@@ -113,12 +113,15 @@ class SqliteRetentionTest {
   @Test
   void aListenerExceptionDoesNotFailTheAppend() {
     Path file = initialized(directory, RetentionPolicy.delete(1));
+    int[] deleteCalls = {0};
+    int[] listenerCalls = {0};
     SqliteStorageHooks hooks =
         new SqliteStorageHooks() {
           @Override
           public void beforeRetentionDelete(
               com.github.j5ik2o.event.store.adapter.java.core.AggregateId aggregateId,
               List<Long> seqNrs) {
+            deleteCalls[0]++;
             throw new StorageException("injected retention failure");
           }
         };
@@ -129,12 +132,17 @@ class SqliteRetentionTest {
               storage,
               configuration(
                   failure -> {
+                    listenerCalls[0]++;
                     throw new IllegalStateException("listener failure");
                   }));
+      store.persistEventAndSnapshot(event(1), snapshot(1));
 
-      assertDoesNotThrow(() -> store.persistEventAndSnapshot(event(1), snapshot(1)));
+      assertDoesNotThrow(() -> store.persistEventAndSnapshot(event(2), snapshot(2)));
     }
-    assertEquals(List.of(1L), longs(file, "SELECT seq_nr FROM head"));
+    assertEquals(1, deleteCalls[0]);
+    assertEquals(1, listenerCalls[0]);
+    assertEquals(List.of(2L), longs(file, "SELECT seq_nr FROM head"));
+    assertEquals(List.of(1L, 2L), longs(file, HISTORY));
   }
 
   @Test

@@ -108,14 +108,14 @@ public final class SqliteEventStore {
       try {
         LOG.warn(
             "sqlite retention failed: aid={}", failure.aggregateId().asString(), failure.cause());
-      } catch (Exception loggingFailure) {
+      } catch (Throwable loggingFailure) {
         // ログ経路の失敗でも、確定済みの追記の成功を維持する。
       }
       try {
         config
             .retentionFailureListener()
             .ifPresent(listener -> listener.onRetentionFailure(failure));
-      } catch (Exception listenerFailure) {
+      } catch (Throwable listenerFailure) {
         // 通知先の失敗を、確定済みの追記から隔離する。
       }
     }
