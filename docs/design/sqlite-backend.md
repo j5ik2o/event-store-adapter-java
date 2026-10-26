@@ -1,121 +1,126 @@
-# SQLite 保存先の設計記録
+# SQLite backend design
 
-Java の SQLite 保存先が、ハブの SQLite プロファイル（共通契約 v5）の規則をどう実装し、何の試験で確かめているかを対応づける短い記録です。規範（ハブの `docs/spec`）と配布データ（`conformance/` 1.3.0）は変更していません。利用者向けの形式の説明は [SQLITE_DATABASE_SCHEMA](../SQLITE_DATABASE_SCHEMA.ja.md) にあります。
+[日本語](sqlite-backend.ja.md)
 
-## 1. 公開型と接続の所有
+This record maps the Java SQLite backend to the hub's SQLite profile for common contract v5. The specification and conformance data 1.3.0 remain the reference. The user-facing format is described in [SQLite storage schema](../SQLITE_DATABASE_SCHEMA.md).
 
-- `SqliteStorageConfig`: 保持方式（既定 `RetentionPolicy.none()`）と書き込みロックの待ち時間（既定 5 秒）。TTL・null・負の値・`Integer.MAX_VALUE` ミリ秒超は `build()` が設定エラーにする。変更フィードを求める設定項目は持たない。
-- `SqliteStorage`: 1 つのローカルファイルと、JDBC 接続を 1 本所有する。`initialize`（未初期化の空ファイルだけ）、`open`（既存ファイルを開いて照合。初期化はしない）、`close`（冪等）。各操作は `ReentrantLock` で直列化する。
-- `SqliteEventStore`: `create`（同期）と `createAsync`（呼び出しスレッドで実行して完了済みの Future を返す。メモリ保存先と同じ形）。
-- 利用者が `Connection` や `DataSource` を渡す形は採らない。共有キャッシュの無効化や pragma の確認を、すべての接続で保証するため。
-- 公開 API に `java.sql` の型は出さない。依存 `org.xerial:sqlite-jdbc:3.53.4.0` は `implementation`。
+## 1. Public types and connection ownership
 
-## 2. 規則と実装・試験の対応
+- `SqliteStorageConfig` holds the retention policy, which defaults to `RetentionPolicy.none()`, and the write-lock wait, which defaults to 5 seconds. `build()` rejects retention using time to live (TTL), null values, negative waits, and waits greater than `Integer.MAX_VALUE` milliseconds as configuration errors. The public configuration has no change-feed option.
+- `SqliteStorage` owns one local file and one Java Database Connectivity (JDBC) connection. `initialize` accepts only an uninitialized empty file. `open` validates an existing file without initializing it. `close` is idempotent. A `ReentrantLock` serializes operations on this storage instance.
+- `SqliteEventStore.create` provides the synchronous interface. `createAsync` runs operations on the calling thread and returns completed futures, as the memory backend does.
+- Callers do not supply a `Connection` or `DataSource`. The backend controls every connection so it can disable shared caches and verify the pragma settings.
+- The public API exposes no `java.sql` types. `org.xerial:sqlite-jdbc:3.53.4.0` is an `implementation` dependency.
 
-実装は `src/main/java/.../sqlite/`、試験は `src/test/java/.../sqlite/` などにあります（クラス名のみ記載）。適合ケース ID は `conformance/` のものです。
+## 2. Rules, implementation, and tests
 
-| 規則 | 内容 | 実装 | 試験 | 適合ケース |
-|------|------|------|------|------------|
-| SQ-1 | 専用キャッシュ、`locking_mode=NORMAL`・`journal_mode=WAL`・`synchronous=FULL`・`read_uncommitted=OFF`、待ち時間は設定 | `SqliteConnections` | `SqliteConnectionsTest`、`SqliteStorageConfigTest` | — |
-| SQ-2 | 明示的な初期化と、開く操作の分離。開く時に config と配置を照合 | `SqliteStorage`、`SqliteLayout` | `SqliteInitializeTest`、`SqliteOpenTest` | `sqlite-seeded-*` |
-| SQ-3 | 入力検査後、`occurred_at_ns` を符号付き 64 ビット整数で束縛・取得し、REAL を使わない | `SqliteAppend`、`SqliteRead`、`SqliteEventStore` | `SqliteAppendTest`（−1ns、`Long.MIN/MAX` ns、`typeof`） | `occurred-at-*` |
-| SQ-4 | manifest と payload は別列。aid はパラメータで完全一致 | `SqliteAppend`、`SqliteRead` | `SqliteAppendTest`（`%`・`_` を含む aid）、`SqliteRustFormatTest` | `aid-*` |
-| SQ-5 | 追記は 1 接続の 1 トランザクション。`BEGIN IMMEDIATE` を head 確認の前に開始 | `SqliteAppend`、`SqliteTransactions` | `SqliteConcurrencyTest` | `sqlite-write-lock-busy` |
-| SQ-6 | `COMMIT` の成功が確定点。途中の失敗は `ROLLBACK`。`COMMIT` の失敗は保存先エラー | `SqliteAppend` | `SqliteAppendTest`（確定前の失敗で全表 0 行） | `core-*` の確定前の障害 |
-| SQ-7 | BUSY・LOCKED・待ち時間超過は保存先エラー。journal と新規 head の主キー重複だけ楽観ロック | `SqliteAppend`、`SqliteTransactions` | `SqliteAppendTest`、`SqliteConcurrencyTest` | `sqlite-write-lock-busy`、`store-shared-persistent` |
-| SQ-8 | 最新 snapshot は head と `snapshot_current` を同じ読み取りトランザクションで読む | `SqliteRead` | `SqliteReadTest` | `core-*` の読み取り |
-| SQ-9 | イベント取得は head と journal を同じ読み取りトランザクションで読み、`start = max(1, seqNr)`。欠番は保存先エラー | `SqliteRead` | `SqliteReadTest` | `core-*` の読み取り |
-| SQ-10 | snapshot 付き追記の確定後、別の `BEGIN IMMEDIATE` で古い履歴だけを削除 | `SqliteRetention`、`SqliteEventStore` | `SqliteRetentionTest` | `core-retention-*` |
-| SQ-11 | 保持の失敗は通知し、追記の成功を変えない。TTL 方式と保持件数 0 は設定エラー | `SqliteRetention`、`SqliteStorageConfig` | `SqliteRetentionTest`、`SqliteStorageConfigTest` | `core-retention-failure-after-commit`、`sqlite-ttl-unsupported` |
-| SQ-12 | 変更フィード提供時の追記（head_transition） | 対象外（フィードを提供しない。SQ-D8） | — | — |
-| SQ-13 | 変更フィードの購読（草案） | 対象外（同上） | — | — |
-| SQ-14 | すべての接続で WAL と FULL を設定して読み直す。違えば設定エラー | `SqliteConnections` | `SqliteConnectionsTest` | — |
-| SQ-15 | 実際に使う SQLite の版が 3.51.3 以上。各部分を整数で比べる | `SqliteConnections.meetsMinimumVersion` | `SqliteConnectionsTest`、`SqliteDriverSmokeTest` | — |
-| SQ-16 | すべてのテーブルを STRICT にし、宣言を照合 | `SqliteLayout` | `SqliteInitializeTest`、`SqliteOpenTest` | — |
-| SQ-17 | 追記は `BEGIN IMMEDIATE`、読み取りは明示的な読み取りトランザクション | `SqliteAppend`、`SqliteRead` | `SqliteConcurrencyTest`、`SqliteReadTest` | — |
-| SQ-18 | 変更フィード提供時の head_transition の保持 | 対象外（同上） | — | — |
-| SQ-19 | 保持件数を config と照合する。食い違いは設定エラー | `SqliteLayout.verify` | `SqliteOpenTest` | `sqlite-seeded-keep-count-mismatch`、`sqlite-seeded-layout-version-mismatch`、`sqlite-seeded-configuration-match` |
-| SQ-20 | 変更フィードを提供しない。`change_feed_enabled` は 0 で記録し、1 のストアは開けない。head_transition を作らない | `SqliteLayout` | `SqliteInitializeTest`、`SqliteOpenTest` | `sqlite-seeded-change-feed-enabled`、`sqlite-change-feed-unsupported` |
+Implementation classes are under `src/main/java/.../sqlite/`. Most tests are under `src/test/java/.../sqlite/`. The table lists class names and case identifiers from `conformance/`.
 
-適合データの実行では、必須 67 件が実ファイルで成功し、失敗 0・未検証 0 です。`sqlite-change-feed-unsupported` は、公開設定に変更フィードを求める項目がなく `change_feed=true` を表せないため「表現不能」とし、必須には入れていません。DynamoDB の配置のケースは SQLite に該当せず対象外です。結果は `build/reports/conformance/report.json` にあります。
+| Rule | Behavior | Implementation | Tests | Conformance cases |
+|---|---|---|---|---|
+| SQ-1 | Private cache; `locking_mode=NORMAL`, `journal_mode=WAL`, `synchronous=FULL`, `read_uncommitted=OFF`; configurable wait | `SqliteConnections` | `SqliteConnectionsTest`, `SqliteStorageConfigTest` | None |
+| SQ-2 | Separate explicit initialization from opening; validate configuration and layout when opening | `SqliteStorage`, `SqliteLayout` | `SqliteInitializeTest`, `SqliteOpenTest` | `sqlite-seeded-*` |
+| SQ-3 | Validate inputs, then bind and read `occurred_at_ns` as a signed 64-bit integer, never REAL | `SqliteAppend`, `SqliteRead`, `SqliteEventStore` | `SqliteAppendTest`, including negative one nanosecond, the `Long.MIN/MAX` nanosecond boundaries, and `typeof` | `occurred-at-*` |
+| SQ-4 | Separate manifest and payload columns; bind aid parameters for exact matches | `SqliteAppend`, `SqliteRead` | `SqliteAppendTest`, including aid values with `%` and `_`; `SqliteRustFormatTest` | `aid-*` |
+| SQ-5 | Append in one transaction on one connection; start `BEGIN IMMEDIATE` before checking the head | `SqliteAppend`, `SqliteTransactions` | `SqliteConcurrencyTest` | `sqlite-write-lock-busy` |
+| SQ-6 | Successful `COMMIT` is the commit point; roll back earlier failures; classify a failed `COMMIT` as a storage error | `SqliteAppend` | `SqliteAppendTest`, including zero rows in all tables after a failure before commit | Failures before commit in `core-*` |
+| SQ-7 | Classify BUSY, LOCKED, and wait expiration as storage errors; only duplicate journal or new-head primary keys are optimistic-lock errors | `SqliteAppend`, `SqliteTransactions` | `SqliteAppendTest`, `SqliteConcurrencyTest` | `sqlite-write-lock-busy`, `store-shared-persistent` |
+| SQ-8 | Read the head and `snapshot_current` in the same read transaction | `SqliteRead` | `SqliteReadTest` | Reads in `core-*` |
+| SQ-9 | Read the head and journal in the same read transaction, starting at `max(1, seqNr)`; report a gap as a storage error | `SqliteRead` | `SqliteReadTest` | Reads in `core-*` |
+| SQ-10 | After committing an append with a snapshot, delete only old history in a separate `BEGIN IMMEDIATE` transaction | `SqliteRetention`, `SqliteEventStore` | `SqliteRetentionTest` | `core-retention-*` |
+| SQ-11 | Report retention failures without changing a successful append; reject TTL retention and a retention count of zero | `SqliteRetention`, `SqliteStorageConfig` | `SqliteRetentionTest`, `SqliteStorageConfigTest` | `core-retention-failure-after-commit`, `sqlite-ttl-unsupported` |
+| SQ-12 | Append change-feed transitions | Not applicable because the change feed is not provided, per SQ-D8 | None | None |
+| SQ-13 | Subscribe to the change feed, a draft rule | Not applicable for the same reason | None | None |
+| SQ-14 | Set and read back WAL and FULL on every connection; reject a mismatch as a configuration error | `SqliteConnections` | `SqliteConnectionsTest` | None |
+| SQ-15 | Require SQLite 3.51.3 or later and compare version components as integers | `SqliteConnections.meetsMinimumVersion` | `SqliteConnectionsTest`, `SqliteDriverSmokeTest` | None |
+| SQ-16 | Create every table as STRICT and validate its declaration | `SqliteLayout` | `SqliteInitializeTest`, `SqliteOpenTest` | None |
+| SQ-17 | Use `BEGIN IMMEDIATE` for appends and explicit read transactions for reads | `SqliteAppend`, `SqliteRead` | `SqliteConcurrencyTest`, `SqliteReadTest` | None |
+| SQ-18 | Retain change-feed transitions | Not applicable because the change feed is not provided | None | None |
+| SQ-19 | Compare the retention count with config; reject a mismatch as a configuration error | `SqliteLayout.verify` | `SqliteOpenTest` | `sqlite-seeded-keep-count-mismatch`, `sqlite-seeded-layout-version-mismatch`, `sqlite-seeded-configuration-match` |
+| SQ-20 | Record `change_feed_enabled=0`; reject stores with value 1; do not create `head_transition` | `SqliteLayout` | `SqliteInitializeTest`, `SqliteOpenTest` | `sqlite-seeded-change-feed-enabled`, `sqlite-change-feed-unsupported` |
 
-## 3. テーブルと列の型
+The 67 required SQLite conformance cases pass against real files, with zero failures and zero unverified cases. `sqlite-change-feed-unsupported` is unrepresentable because the public configuration cannot express `change_feed=true`, so it is excluded from the required case set. DynamoDB layout cases do not apply to SQLite. Results are written to `build/reports/conformance/report.json`.
 
-5 つのテーブルをすべて `STRICT` で作ります。列の型と制約は Rust 実装と同じです。
+The initial implementation referenced Rust's local `main` at `fe2ae0b`. The coordinator later compared it with `origin/main` at `c29f305`. The four changed files under `lib/src/sqlite/` differ only in visibility modifiers. Their contents match after those modifiers are removed; the storage format is unchanged.
 
-| テーブル | 列と型（`NOT NULL` は記載） | 主キー |
-|----------|------------------------------|--------|
-| `journal` | `aid` TEXT（BINARY）、`seq_nr` INTEGER（1〜2^53−1）、`occurred_at_ns` INTEGER、`manifest` TEXT、`payload` BLOB。すべて `NOT NULL` | `(aid, seq_nr)` |
-| `head` | `aid` TEXT（BINARY）、`type_name` TEXT、`seq_nr` INTEGER（1〜2^53−1）、`event_occurred_at_ns` INTEGER、`event_manifest` TEXT、`event_payload` BLOB。すべて `NOT NULL` | `aid` |
-| `snapshot_current` | `aid` TEXT（BINARY）、`seq_nr` INTEGER（1〜2^53−1）、`manifest` TEXT、`payload` BLOB。すべて `NOT NULL` | `aid` |
-| `snapshot_history` | `snapshot_current` と同じ列 | `(aid, seq_nr)` |
-| `config` | `singleton` INTEGER（=1）、`store_id` TEXT、`layout_version` INTEGER、`keep_snapshot_count` INTEGER（NULL か 1 以上）、`retention_mode` TEXT（`delete`）、`change_feed_enabled` INTEGER（0 か 1）。`keep_snapshot_count` 以外は `NOT NULL` | `singleton` |
+## 3. Tables and column types
 
-`head_transition` は作りません。
+All five tables are STRICT and use the same column types and constraints as the Rust implementation.
 
-## 4. 設定の照合とエラー分類
+| Table | Columns and types | Primary key |
+|---|---|---|
+| `journal` | `aid` TEXT with BINARY collation, `seq_nr` INTEGER from 1 through 2^53-1, `occurred_at_ns` INTEGER, `manifest` TEXT, `payload` BLOB; all NOT NULL | `(aid, seq_nr)` |
+| `head` | `aid` TEXT with BINARY collation, `type_name` TEXT, `seq_nr` INTEGER from 1 through 2^53-1, `event_occurred_at_ns` INTEGER, `event_manifest` TEXT, `event_payload` BLOB; all NOT NULL | `aid` |
+| `snapshot_current` | `aid` TEXT with BINARY collation, `seq_nr` INTEGER from 1 through 2^53-1, `manifest` TEXT, `payload` BLOB; all NOT NULL | `aid` |
+| `snapshot_history` | The same columns as `snapshot_current` | `(aid, seq_nr)` |
+| `config` | `singleton` INTEGER equal to 1, `store_id` TEXT, `layout_version` INTEGER, `keep_snapshot_count` INTEGER that is NULL or at least 1, `retention_mode` TEXT equal to `delete`, `change_feed_enabled` INTEGER equal to 0 or 1; all except `keep_snapshot_count` are NOT NULL | `singleton` |
 
-開く時に、1 つの読み取りトランザクションで次を照合します。DDL の文字列ではなく、pragma の意味（`pragma_table_list` の `strict`、`pragma_table_info`、主キー索引の `pragma_index_xinfo` の照合順序）で比べます。
+There is no `head_transition` table.
 
-| 照合項目 | 不一致の扱い |
-|----------|--------------|
-| 5 つのテーブルが存在し、STRICT であること | 設定エラー |
-| 各テーブルの列の名前・型・`NOT NULL`・主キー内の位置 | 設定エラー |
-| `aid` を持つ 4 つのテーブルの主キー索引の `aid` が BINARY 照合 | 設定エラー |
-| `config` がちょうど 1 行 | 設定エラー |
-| `layout_version` が 1 | 設定エラー |
-| `store_id` が小文字の UUID | 設定エラー |
-| `retention_mode` が `delete` | 設定エラー |
-| `change_feed_enabled` が 0（1 は「変更フィードは提供しない」） | 設定エラー |
-| `keep_snapshot_count` がクライアントの保持件数と同じ（NULL は保持なし） | 設定エラー |
-| 未初期化のファイル | 設定エラー（表は作らない） |
-| ファイルが存在しない | 保存先エラー（ファイルは作らない） |
+## 4. Configuration validation and error categories
 
-実行時のエラー分類は次のとおりです。
+Opening validates the following in one read transaction. It compares pragma results rather than SQL text, using `pragma_table_list.strict`, `pragma_table_info`, and the primary-key collation from `pragma_index_xinfo`.
 
-| 事象 | 分類 |
-|------|------|
-| ヘッド以下の番号、journal・新規 head の主キー重複 | 楽観ロック |
-| head + 1 以外の番号（飛び番、W-8） | 契約違反 |
-| 書き込みロックの待ち時間超過、BUSY、LOCKED、その他の制約違反、COMMIT の失敗 | 保存先エラー |
-| 範囲内の journal の欠番 | 保存先エラー |
-| 直列化・復元の失敗 | 直列化エラー |
-| TTL 方式、不正な待ち時間、`?` を含むファイル名、版が古い、接続設定の食い違い | 設定エラー |
+| Check | Result on mismatch |
+|---|---|
+| All five tables exist and are STRICT | Configuration error |
+| Column names, types, NOT NULL flags, and positions in the primary key match | Configuration error |
+| The primary-key index uses BINARY collation for aid in all four tables that have aid | Configuration error |
+| `config` contains exactly one row | Configuration error |
+| `layout_version` is 1 | Configuration error |
+| `store_id` is a lowercase universally unique identifier (UUID) | Configuration error |
+| `retention_mode` is `delete` | Configuration error |
+| `change_feed_enabled` is 0; value 1 requests an unsupported change feed | Configuration error |
+| `keep_snapshot_count` matches the client's retention count; NULL means no history | Configuration error |
+| The file is uninitialized | Configuration error; no tables are created |
+| The file does not exist | Storage error; no file is created |
 
-## 5. SQLite 本体の最低版
+Runtime errors are classified as follows.
 
-最低版は **3.51.3** です。開いた接続で `SELECT sqlite_version()` を取得し、`.` で 3 つに分けて各部分を整数で比べます（"3.100.0" は 3.51.3 以上、"3.51" は偽）。下回る場合と、形式が不正な場合は設定エラーです。同梱するドライバー `sqlite-jdbc 3.53.4.0` の SQLite の版は、`SqliteUserAccountExampleTest` が書く `build/reports/public-api-usage/sqlite.json` の `sqlite_version` で実測できます（この作業で実測した値は 3.53.4）。
+| Event | Category |
+|---|---|
+| Sequence number at or below the head; duplicate journal or new-head primary key | Optimistic-lock error |
+| Sequence number other than head plus one, per W-8 | Contract violation |
+| Write-lock wait expiration, BUSY, LOCKED, other constraint violations, or failed COMMIT | Storage error |
+| Missing journal sequence number within the requested range | Storage error |
+| Serialization or deserialization failure | Serialization error |
+| TTL retention, invalid lock wait, a file name containing `?`, an old SQLite version, or mismatched connection settings | Configuration error |
 
-## 6. 接続の設定
+## 5. Minimum SQLite version
 
-| 設定 | 値 |
-|------|----|
-| 開き方 | 共有キャッシュなし（専用キャッシュ）。存在しないファイルは作らない（`initialize` だけが作る） |
-| ファイル名 | 絶対パスにする。`?` を含む名前は拒否する |
-| `busy_timeout` | `lockWait`（既定 5 秒）のミリ秒 |
+The minimum is **3.51.3**. The backend reads `SELECT sqlite_version()` from the open connection and compares three integer components. For example, `3.100.0` meets the minimum and `3.51` does not. An older or malformed version is a configuration error. `SqliteUserAccountExampleTest` records the actual bundled version in the `sqlite_version` field of `build/reports/public-api-usage/sqlite.json`. The observed version for `sqlite-jdbc 3.53.4.0` was 3.53.4.
+
+## 6. Connection settings
+
+| Setting | Value |
+|---|---|
+| Open mode | Private cache; opening does not create missing files; only `initialize` creates them |
+| File name | Converted to an absolute path; names containing `?` are rejected |
+| `busy_timeout` | `lockWait` in milliseconds, defaulting to 5 seconds |
 | `locking_mode` | NORMAL |
 | `journal_mode` | WAL |
-| `synchronous` | FULL（2） |
-| `read_uncommitted` | OFF（0） |
-| 自動確定 | 有効のまま、`BEGIN IMMEDIATE`／`BEGIN`／`COMMIT`／`ROLLBACK` を SQL で明示する |
+| `synchronous` | FULL, numeric value 2 |
+| `read_uncommitted` | OFF, numeric value 0 |
+| Auto-commit | Left enabled; transactions use explicit SQL `BEGIN IMMEDIATE`, `BEGIN`, `COMMIT`, and `ROLLBACK` |
 
-設定したあとで pragma を読み直し、食い違いは設定エラーにします。
+The backend reads the pragma values back after setting them and rejects mismatches as configuration errors.
 
-## 7. 保持方式
+## 7. Retention
 
-- 方式は `delete` だけです。`none()` では履歴行を作らず、`delete(n)` では新しい `n` 件の履歴を残します。
-- 期限切れ方式（TTL）は設定エラーです。
-- 保持は、snapshot 付きの追記が `COMMIT` された後に、別の `BEGIN IMMEDIATE` トランザクションで実行します。journal・head・現在の snapshot は削除しません。
-- 保持の失敗は確定済みの追記の成功を変えず、WARN ログと任意の通知先へ 1 回通知します（ロック解放後）。残った履歴は次の snapshot 付き追記で整理します。イベントだけの追記では保持を走らせません。
+- The only retention mode is `delete`. `none()` creates no history rows. `delete(n)` retains the newest `n` history rows.
+- TTL retention is a configuration error.
+- After an append with a snapshot commits, retention runs in a separate `BEGIN IMMEDIATE` transaction. It never deletes journal rows, the head, or the current snapshot.
+- A retention failure preserves the successful append. After releasing the lock, the backend emits a WARN log and notifies the optional listener once. A later append with a snapshot cleans up remaining history. An append without a snapshot does not run retention.
 
-## 8. 検証できないもの（成功とは扱わない）
+## 8. Verification limits
 
-| 項目 | 理由 | 代わりに行っていること |
-|------|------|------------------------|
-| 保存先が `fsync` を守ること、電源断、プロセスの強制終了、長時間の複数プロセスの実行 | プロファイル 10 章が未検証と定める。この作業では再現できない | なし。未検証として残す |
-| 3.51.3 そのもの、および 3.51.3 未満の実ライブラリでの拒否 | 同梱の 1 つの版しか動かせない | 版の比較の単体試験（`SqliteConnectionsTest`） |
-| pragma の読み直しが食い違う状況 | 実 SQLite で再現する条件がない | 判定関数 `verifySettings` の単体試験 |
-| 主キー句で照合順序を上書きして、列宣言だけ別の照合順序にした場合 | JDBC から列メタデータを取れず、主キー索引の照合順序だけを確認している | 主キー索引が NOCASE の拒否の試験 |
-| ネットワークファイルシステムの検出 | 検出する手段がない | 文書で使わないよう案内するだけ |
-| Rust 実装の `origin/main`（c29f305）との差 | 計画の段階では別リポジトリを読めず、ローカルの `main`（fe2ae0b）を参照した。11 コミットの差の内容は確認していない | 保存形式は Rust の DDL と INSERT の形を定数にした `SqliteRustFormatTest` で確認 |
-| 変更フィード（SQ-12・SQ-13・SQ-18） | 最初の版で提供しない（SQ-D8） | 対象外 |
+The following are not counted as verified success.
+
+| Item | Limit | Other evidence |
+|---|---|---|
+| Whether storage honors `fsync`; power loss, forced process termination, and long-running access from multiple processes | Chapter 10 of the profile declares these unverified; this work does not reproduce them | Remain unverified |
+| SQLite 3.51.3 itself and rejection by a real library older than 3.51.3 | Only one bundled SQLite version is executed | Version-comparison unit tests in `SqliteConnectionsTest` |
+| A mismatch when pragma values are read back | No reproducible condition with the actual SQLite library | Unit tests of `verifySettings` |
+| A primary-key clause that overrides collation while the column declaration uses a different collation | JDBC does not expose the required column metadata; only primary-key index collation is checked | A test rejects a NOCASE primary-key index |
+| Network-filesystem detection | No detection mechanism | Documented as unsupported |
+| Change feed, per SQ-12, SQ-13, and SQ-18 | Not provided in the first version, per SQ-D8 | Not applicable |
