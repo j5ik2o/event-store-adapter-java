@@ -10,6 +10,8 @@
 
 Java 1.x の利用者向けには、手順書による移行を提供します。**旧版で読む→利用者がpayloadと封筒へ変換→新版へ連続して書き直す**流れです。新版は旧公開型・旧internal・旧保存形式の自動読取り・互換alias・移行ツールを提供しません。欠けた型情報や時刻の精度も推測しません。
 
+Java 1.x には SQLite の保存先がないため、移行する SQLite のデータも、そのための移行ツールもありません。SQLite を使うときは `SqliteStorage.initialize` で新しいファイルを初期化します。5.0.1 の次の版から使えます。[SQLite の保存先のスキーマ](SQLITE_DATABASE_SCHEMA.ja.md)を参照してください。
+
 ### 関連する文書
 
 公開factory・コンパイル可能なサンプル・実利用試験は [README](../README.ja.md)、実3表と全属性は [DynamoDBの保存先のスキーマ](DYNAMODB_DATABASE_SCHEMA.ja.md)を参照してください。
@@ -18,7 +20,7 @@ Java 1.x の利用者向けには、手順書による移行を提供します�
 
 ### APIの対応
 
-新しい型は `com.github.j5ik2o.event.store.adapter.java.core`、保存先は `memory` と `dynamodb` にあります。直下の旧公開パッケージと旧 `internal` は削除しています。
+新しい型は `com.github.j5ik2o.event.store.adapter.java.core`、保存先は `memory`、`dynamodb`、`sqlite` にあります。直下の旧公開パッケージと旧 `internal` は削除しています。
 
 | 1.x | 新API・扱い |
 |-----|------------|
@@ -26,6 +28,7 @@ Java 1.x の利用者向けには、手順書による移行を提供します�
 | `EventStoreAsync<AID,A,E>` | `core.AsyncEventStore<P,A>` |
 | `EventStore.ofDynamoDB`、`EventStoreAsync.ofDynamoDB` | `DynamoDbEventStore.create`、`createAsync`。3表とsnapshot GSI名を指定 |
 | 旧実装のみのDynamoDB入口 | Memoryは `MemoryEventStore.create/createAsync` と `MemoryStorage.create` で利用 |
+| （1.x にはなし） | `SqliteStorage.initialize/open`、`SqliteEventStore.create/createAsync`、`SqliteStorageConfig`。5.0.1 の次の版で追加 |
 | 利用者が実装する `AggregateId` | `core.AggregateId.of(typeName, value)`。型名と値からライブラリが文字列を組み立てる |
 | `Aggregate`、`Event` | 実装要件を削除。ドメインpayload・状態を `EventEnvelope<P>`、`SnapshotEnvelope<A>` で包む |
 | `AggregateAndEvent` | 削除。イベントとsnapshotの封筒を別々に渡す |

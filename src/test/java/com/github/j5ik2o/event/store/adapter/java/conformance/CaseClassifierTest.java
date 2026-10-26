@@ -51,7 +51,9 @@ class CaseClassifierTest {
     for (ConformanceCase c : data.cases()) {
       for (Backend b : Backend.values()) {
         CaseResult r = CaseClassifier.classify(c, b);
-        if (EXECUTABLE_CASE_IDS.contains(c.id()) || (b == Backend.MEMORY && memoryExecutable(c))) {
+        if (EXECUTABLE_CASE_IDS.contains(c.id())
+            || (b == Backend.MEMORY && memoryExecutable(c))
+            || (b == Backend.SQLITE && sqliteExecutable(c))) {
           ConformanceStatus expected =
               c.changeFeedRequested()
                   ? ConformanceStatus.UNREPRESENTABLE
@@ -177,7 +179,11 @@ class CaseClassifierTest {
   private static boolean unprovidedBackendOnly(ConformanceCase c) {
     return c.operation().map(BIGTABLE_VALUE_OPERATIONS::contains).orElse(false)
         || c.backends()
-            .map(names -> names.stream().noneMatch(n -> n.equals("memory") || n.equals("dynamodb")))
+            .map(
+                names ->
+                    names.stream()
+                        .noneMatch(
+                            n -> n.equals("memory") || n.equals("dynamodb") || n.equals("sqlite")))
             .orElse(false);
   }
 
@@ -188,7 +194,7 @@ class CaseClassifierTest {
             .filter(CaseClassifierTest::unprovidedBackendOnly)
             .collect(Collectors.toList());
 
-    assertEquals(44, unprovided.size());
+    assertEquals(36, unprovided.size());
     for (ConformanceCase c : unprovided) {
       for (Backend b : Backend.values()) {
         CaseResult r = CaseClassifier.classify(c, b);
@@ -230,6 +236,33 @@ class CaseClassifierTest {
 
     assertEquals(ConformanceStatus.UNVERIFIED, r.status(), r.reason());
     assertTrue(CaseClassifier.violatesRequirement(r, RequiredCases.load()));
+  }
+
+  private static boolean sqliteExecutable(ConformanceCase c) {
+    return !c.timePrecision().map("milliseconds"::equals).orElse(false)
+        && (c.file().startsWith("scenarios/core/")
+            || c.file().startsWith("sqlite/")
+            || c.file().equals("scenarios/stores/shared.json")
+            || c.operation().map("validateOccurredAt"::equals).orElse(false));
+  }
+
+  @Test
+  void sqliteTargetsAreSixtySevenCasesEqualToTheRequiredListAndAllConnected() throws IOException {
+    Set<String> targets =
+        data.cases().stream()
+            .filter(c -> CaseClassifier.exclusion(c, Backend.SQLITE).isEmpty())
+            .map(ConformanceCase::id)
+            .collect(Collectors.toSet());
+
+    assertEquals(67, targets.size());
+    assertEquals(targets, RequiredCases.load().get(Backend.SQLITE));
+    for (ConformanceCase c : data.cases()) {
+      if (targets.contains(c.id())) {
+        assertTrue(
+            ValueCaseRunner.supports(c) || SqliteCaseRunner.supports(c),
+            c.id() + " is a SQLite target without a runner");
+      }
+    }
   }
 
   private static boolean memoryExecutable(ConformanceCase c) {

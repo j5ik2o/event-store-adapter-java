@@ -73,6 +73,11 @@ class ConformanceReportTest {
     assertEquals(102, findCount(json, "memory", "not-applicable"));
     assertEquals(0, findCount(json, "memory", "unverified"));
     assertEquals(1, findCount(json, "memory", "unrepresentable"));
+    assertEquals(67, findCount(json, "sqlite", "passed"));
+    assertEquals(0, findCount(json, "sqlite", "failed"));
+    assertEquals(101, findCount(json, "sqlite", "not-applicable"));
+    assertEquals(0, findCount(json, "sqlite", "unverified"));
+    assertEquals(1, findCount(json, "sqlite", "unrepresentable"));
     assertEquals(0, findCount(json, "dynamodb-local", "failed"));
     assertEquals(63, findCount(json, "dynamodb-local", "not-applicable"));
     assertEquals(91, findCount(json, "dynamodb-local", "unverified"));
@@ -126,7 +131,7 @@ class ConformanceReportTest {
 
   @Test
   void ruleEntriesForUnprovidedBackendsAreReportedNotApplicableWithReasonOnBothBackends() {
-    for (String prefix : List.of("SQ-", "SPN-", "BT-")) {
+    for (String prefix : List.of("SPN-", "BT-")) {
       int found = 0;
       for (JsonNode entry : report.toJson().get("rules")) {
         if (!entry.get("rule").asText().startsWith(prefix)) continue;
@@ -136,6 +141,22 @@ class ConformanceReportTest {
       }
       assertTrue(found > 0, "no rule entries with prefix " + prefix);
     }
+    int sqliteRules = 0;
+    for (JsonNode entry : report.toJson().get("rules")) {
+      if (!entry.get("rule").asText().startsWith("SQ-")) continue;
+      String backend = entry.get("backend").asText();
+      if (backend.equals("sqlite")) {
+        sqliteRules++;
+        assertTrue(
+            entry.get("status").asText().equals("passed")
+                || (entry.get("rule").asText().equals("SQ-20")
+                    && entry.get("status").asText().equals("unrepresentable")),
+            entry.toString());
+      } else {
+        assertEquals("not-applicable", entry.get("status").asText(), entry.toString());
+      }
+    }
+    assertTrue(sqliteRules > 0, "no SQ- rule entries on sqlite");
     Set<String> btD6aBackends = new HashSet<>();
     for (JsonNode entry : report.toJson().get("rules")) {
       if (entry.get("rule").asText().equals("BT-D6a")) {
@@ -143,7 +164,7 @@ class ConformanceReportTest {
         btD6aBackends.add(entry.get("backend").asText());
       }
     }
-    assertEquals(Set.of("memory", "dynamodb-local"), btD6aBackends);
+    assertEquals(Set.of("memory", "dynamodb-local", "sqlite"), btD6aBackends);
   }
 
   @Test
@@ -176,11 +197,12 @@ class ConformanceReportTest {
     JsonNode json = report.toJson();
     assertEquals(66, json.at("/target_cases/memory").size());
     assertEquals(106, json.at("/target_cases/dynamodb-local").size());
+    assertEquals(67, json.at("/target_cases/sqlite").size());
     assertTrue(
         json.at("/target_cases/dynamodb-local")
             .toString()
             .contains("dynamodb-events-over-one-megabyte"));
-    for (String backend : List.of("memory", "dynamodb-local")) {
+    for (String backend : List.of("memory", "dynamodb-local", "sqlite")) {
       for (String status : List.of("not-applicable", "unverified", "unrepresentable")) {
         int count = 0;
         for (JsonNode group : json.at("/reasons/" + backend + "/" + status)) {

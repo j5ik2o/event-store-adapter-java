@@ -5,24 +5,20 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.github.j5ik2o.event.store.adapter.java.conformance.fixture.ScenarioEnvelopes;
+import com.github.j5ik2o.event.store.adapter.java.conformance.fixture.ScenarioFaults;
 import com.github.j5ik2o.event.store.adapter.java.core.AggregateId;
-import com.github.j5ik2o.event.store.adapter.java.core.ContractViolationException;
 import com.github.j5ik2o.event.store.adapter.java.core.EventEnvelope;
 import com.github.j5ik2o.event.store.adapter.java.core.EventStore;
 import com.github.j5ik2o.event.store.adapter.java.core.EventStoreConfig;
 import com.github.j5ik2o.event.store.adapter.java.core.EventStoreException;
 import com.github.j5ik2o.event.store.adapter.java.core.JsonPayloadSerializer;
-import com.github.j5ik2o.event.store.adapter.java.core.PayloadSerializer;
 import com.github.j5ik2o.event.store.adapter.java.core.RetentionPolicy;
-import com.github.j5ik2o.event.store.adapter.java.core.SerializationException;
-import com.github.j5ik2o.event.store.adapter.java.core.SnapshotEnvelope;
 import com.github.j5ik2o.event.store.adapter.java.core.SnapshotReadResult;
-import com.github.j5ik2o.event.store.adapter.java.core.StorageException;
 import java.math.BigInteger;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -92,7 +88,7 @@ public final class ConformanceMemoryOperations {
       }
     }
     Faults faults = new Faults(scenario.path("faults"));
-    if (!faults.supported()) {
+    if (!faults.scenario.supported()) {
       result.put("unsupported", "メモリへ接続できない障害がある");
       return result;
     }
@@ -114,22 +110,22 @@ public final class ConformanceMemoryOperations {
                   : RetentionPolicy.delete(settings.path("retention_count").intValue());
       config =
           EventStoreConfig.<JsonNode, JsonNode>builder()
-              .payloadSerializer(faults.serializer("event"))
-              .snapshotSerializer(faults.serializer("snapshot"))
+              .payloadSerializer(faults.scenario.serializer("event"))
+              .snapshotSerializer(faults.scenario.serializer("snapshot"))
               .retentionFailureListener(failure -> notifications.add("retention-failure"))
               .build();
       MemoryStorage primary = MemoryStorage.create(policy, faults);
       stores.put(PRIMARY, new OpenStore(primary, opener.open(primary, config)));
       result.putObject("initialization").put("result", "success");
     } catch (EventStoreException failure) {
-      result.set("initialization", error(failure));
-      faults.finish(result);
+      result.set("initialization", ScenarioEnvelopes.error(failure));
+      faults.scenario.finish(result);
       return result;
     }
     ArrayNode steps = result.putArray("steps");
     JsonNode fixtures = scenario.path("fixtures");
     for (JsonNode step : scenario.path("steps")) {
-      faults.operation++;
+      faults.scenario.startOperation();
       notifications.clear();
       JsonNode args = step.path("arguments");
       String target = step.path("store").asText(PRIMARY);
@@ -144,22 +140,24 @@ public final class ConformanceMemoryOperations {
         switch (step.path("op").asText()) {
           case "persistEvent":
             EventEnvelope<JsonNode> single =
-                event(fixtures.path("events").path(args.path("event").asText()));
+                ScenarioEnvelopes.event(fixtures.path("events").path(args.path("event").asText()));
             store.persistEvent(single);
-            written.put(faults.operation, single);
+            written.put(faults.scenario.operation(), single);
             actual = F.objectNode().put("result", "success");
             break;
           case "persistEventAndSnapshot":
             EventEnvelope<JsonNode> pair =
-                event(fixtures.path("events").path(args.path("event").asText()));
+                ScenarioEnvelopes.event(fixtures.path("events").path(args.path("event").asText()));
             store.persistEventAndSnapshot(
-                pair, snapshot(fixtures.path("snapshots").path(args.path("snapshot").asText())));
-            written.put(faults.operation, pair);
+                pair,
+                ScenarioEnvelopes.snapshot(
+                    fixtures.path("snapshots").path(args.path("snapshot").asText())));
+            written.put(faults.scenario.operation(), pair);
             actual = F.objectNode().put("result", "success");
             break;
           case "getLatestSnapshotById":
             Optional<SnapshotReadResult<JsonNode>> read =
-                store.getLatestSnapshotById(aid(args.path("aggregate_id")));
+                store.getLatestSnapshotById(ScenarioEnvelopes.aid(args.path("aggregate_id")));
             actual = F.objectNode().put("result", read.isPresent() ? "snapshot" : "none");
             if (read.isPresent()) {
               actual.put("head_seq_nr", read.get().headSeqNr());
@@ -167,7 +165,7 @@ public final class ConformanceMemoryOperations {
                   "snapshot",
                   read.get()
                       .snapshot()
-                      .<JsonNode>map(ConformanceMemoryOperations::snapshotJson)
+                      .<JsonNode>map(ScenarioEnvelopes::snapshotJson)
                       .orElse(F.nullNode()));
             }
             break;
@@ -176,11 +174,11 @@ public final class ConformanceMemoryOperations {
             ArrayNode events = actual.putArray("events");
             List<EventEnvelope<JsonNode>> received =
                 store.getEventsByIdSinceSeqNr(
-                    aid(args.path("aggregate_id")),
+                    ScenarioEnvelopes.aid(args.path("aggregate_id")),
                     args.path("seq_nr").bigIntegerValue().longValueExact());
-            reads.put(faults.operation, received);
+            reads.put(faults.scenario.operation(), received);
             for (EventEnvelope<JsonNode> envelope : received) {
-              events.add(eventJson(envelope));
+              events.add(ScenarioEnvelopes.eventJson(envelope));
             }
             break;
           case "createStore":
@@ -207,7 +205,7 @@ public final class ConformanceMemoryOperations {
             throw new IllegalArgumentException("unsupported operation: " + step.path("op"));
         }
       } catch (EventStoreException failure) {
-        actual = error(failure);
+        actual = ScenarioEnvelopes.error(failure);
       }
       ObjectNode observe = actual.putObject("observe");
       ArrayNode notified = observe.putArray("notifications");
@@ -219,13 +217,15 @@ public final class ConformanceMemoryOperations {
                 : fixtures.path("events").path(args.path("event").asText()).path("aggregate_id");
         ObjectNode history = observe.putObject("history");
         ArrayNode active = history.putArray("active");
-        storage.historySeqNrs(aid(aggregate)).stream().sorted().forEach(active::add);
+        storage.historySeqNrs(ScenarioEnvelopes.aid(aggregate)).stream()
+            .sorted()
+            .forEach(active::add);
         history.putArray("marked");
       }
       steps.add(actual);
-      faults.finishOperation(result);
+      faults.scenario.finishOperation(result);
     }
-    faults.finish(result);
+    faults.scenario.finish(result);
     return result;
   }
 
@@ -271,7 +271,7 @@ public final class ConformanceMemoryOperations {
     if (read == null) {
       return null;
     }
-    AggregateId id = aid(fixture.path("aggregate_id"));
+    AggregateId id = ScenarioEnvelopes.aid(fixture.path("aggregate_id"));
     long seqNr = fixture.path("seq_nr").bigIntegerValue().longValueExact();
     for (EventEnvelope<JsonNode> envelope : read) {
       if (envelope.aggregateId().equals(id) && envelope.seqNr() == seqNr) {
@@ -326,7 +326,7 @@ public final class ConformanceMemoryOperations {
               .add(BigInteger.valueOf(actual.getNano()));
       return F.objectNode().put("value", nanos.toString());
     } catch (EventStoreException failure) {
-      return error(failure);
+      return ScenarioEnvelopes.error(failure);
     }
   }
 
@@ -339,208 +339,31 @@ public final class ConformanceMemoryOperations {
         .build();
   }
 
-  private static AggregateId aid(JsonNode input) {
-    return AggregateId.of(input.path("type_name").asText(), input.path("value").asText());
-  }
-
-  private static EventEnvelope<JsonNode> event(JsonNode input) {
-    return EventEnvelope.<JsonNode>builder()
-        .aggregateId(aid(input.path("aggregate_id")))
-        .seqNr(input.path("seq_nr").bigIntegerValue().longValueExact())
-        .occurredAt(Instant.parse(input.path("occurred_at").asText()))
-        .manifest(input.path("manifest").asText(""))
-        .payload(input.get("payload").deepCopy())
-        .build();
-  }
-
-  private static SnapshotEnvelope<JsonNode> snapshot(JsonNode input) {
-    return SnapshotEnvelope.<JsonNode>builder()
-        .seqNr(input.path("seq_nr").bigIntegerValue().longValueExact())
-        .manifest(input.path("manifest").asText(""))
-        .aggregate(input.get("aggregate").deepCopy())
-        .build();
-  }
-
-  private static ObjectNode eventJson(EventEnvelope<JsonNode> event) {
-    ObjectNode json = F.objectNode();
-    json.putObject("aggregate_id")
-        .put("type_name", event.aggregateId().typeName())
-        .put("value", event.aggregateId().value());
-    json.put("seq_nr", event.seqNr());
-    json.put("occurred_at", event.occurredAt().toString());
-    json.put("manifest", event.manifest());
-    json.set("payload", event.payload().deepCopy());
-    return json;
-  }
-
-  private static ObjectNode snapshotJson(SnapshotEnvelope<JsonNode> snapshot) {
-    ObjectNode json =
-        F.objectNode().put("seq_nr", snapshot.seqNr()).put("manifest", snapshot.manifest());
-    json.set("aggregate", snapshot.aggregate().deepCopy());
-    return json;
-  }
-
-  private static ObjectNode error(EventStoreException failure) {
-    ObjectNode actual = F.objectNode();
-    ObjectNode error = actual.putObject("error");
-    error.put(
-        "category", failure.category().name().toLowerCase(java.util.Locale.ROOT).replace('_', '-'));
-    error.put("message", failure.getMessage());
-    if (failure instanceof ContractViolationException) {
-      ContractViolationException violation = (ContractViolationException) failure;
-      error.put("rule", violation.rule());
-      violation.seqNr().ifPresent(seq -> error.put("seq_nr", seq));
-    }
-    return actual;
-  }
-
   private static final class Faults implements MemoryStorageHooks {
-    final List<JsonNode> registered = new ArrayList<>();
-    final List<Integer> fired = new ArrayList<>();
-    int operation;
+    final ScenarioFaults scenario;
 
     Faults(JsonNode faults) {
-      faults.forEach(
-          fault -> {
-            registered.add(fault);
-            fired.add(0);
-          });
-    }
-
-    boolean supported() {
-      Set<String> phases =
-          Set.of(
-              "serialize-event",
-              "serialize-snapshot",
-              "deserialize-event",
-              "deserialize-snapshot",
-              "commit",
-              "read-events",
-              "read-snapshot",
-              "retention-query",
-              "retention-delete");
-      for (JsonNode fault : registered) {
-        String kind = fault.path("kind").asText(), phase = fault.path("phase").asText();
-        if (!phases.contains(phase)) return false;
-        Set<String> details = new HashSet<>();
-        fault.path("details").fieldNames().forEachRemaining(details::add);
-        if (kind.equals("serialization-error")
-            && phase.matches("(serialize|deserialize)-(event|snapshot)")
-            && Set.of("message").containsAll(details)) continue;
-        if (kind.equals("storage-error")
-            && Set.of(
-                    "commit", "read-events", "read-snapshot", "retention-query", "retention-delete")
-                .contains(phase)
-            && Set.of("message", "scope").containsAll(details)
-            && (!details.contains("scope")
-                || fault.at("/details/scope").asText().equals("final-retention-failure"))) continue;
-        if (kind.equals("sdk-response")
-            && phase.equals("retention-query")
-            && details.equals(Set.of("history_pages"))) continue;
-        return false;
-      }
-      return true;
-    }
-
-    JsonNode fire(String phase) {
-      for (int i = 0; i < registered.size(); i++) {
-        JsonNode fault = registered.get(i);
-        boolean repeated =
-            fault.path("repeat").path("mode").asText().equals("until-operation-finishes")
-                || fired.get(i) < fault.path("repeat").path("count").asInt(1);
-        if (fault.path("operation").asInt() == operation
-            && fault.path("phase").asText().equals(phase)
-            && repeated) {
-          fired.set(i, fired.get(i) + 1);
-          String kind = fault.path("kind").asText();
-          String message = fault.path("details").path("message").asText();
-          if (kind.equals("serialization-error")) {
-            throw new SerializationException(message);
-          }
-          if (kind.equals("storage-error")) {
-            throw new StorageException(message);
-          }
-          return fault.path("details");
-        }
-      }
-      return null;
-    }
-
-    void finishOperation(ObjectNode result) {
-      for (int i = 0; i < registered.size(); i++) {
-        if (registered.get(i).path("operation").asInt() == operation) {
-          result
-              .withArray("faults")
-              .addObject()
-              .put("operation", operation)
-              .put("phase", registered.get(i).path("phase").asText())
-              .put("applications", fired.get(i))
-              .set("repeat", registered.get(i).path("repeat"));
-          checkApplications(i, result);
-        }
-      }
-    }
-
-    private void checkApplications(int index, ObjectNode result) {
-      JsonNode fault = registered.get(index);
-      int count = fired.get(index);
-      boolean finite = fault.at("/repeat/mode").asText().equals("count");
-      if ((count == 0 || (finite && count != fault.at("/repeat/count").intValue()))
-          && !result.has("fault_failure")) {
-        result.put("fault_failure", "障害の実適用回数が指定と一致しない: " + fault);
-        result.put("fault_operation", fault.path("operation").intValue());
-      }
-    }
-
-    void finish(ObjectNode result) {
-      for (int i = 0; i < registered.size(); i++) {
-        checkApplications(i, result);
-      }
-    }
-
-    PayloadSerializer<JsonNode> serializer(String name) {
-      PayloadSerializer<JsonNode> delegate = JsonPayloadSerializer.of(JsonNode.class);
-      return new PayloadSerializer<JsonNode>() {
-        public byte[] serialize(JsonNode value) {
-          fire("serialize-" + name);
-          return delegate.serialize(value);
-        }
-
-        public JsonNode deserialize(byte[] bytes) {
-          fire("deserialize-" + name);
-          return delegate.deserialize(bytes);
-        }
-      };
+      scenario = new ScenarioFaults(faults);
     }
 
     public void beforeCommit(AggregateId id) {
-      fire("commit");
+      scenario.beforeCommit();
     }
 
     public void beforeReadEvents(AggregateId id) {
-      fire("read-events");
+      scenario.beforeReadEvents();
     }
 
     public void beforeReadSnapshot(AggregateId id) {
-      fire("read-snapshot");
+      scenario.beforeReadSnapshot();
     }
 
     public void beforeRetentionDelete(AggregateId id, List<Long> seqNrs) {
-      fire("retention-delete");
+      scenario.beforeRetentionDelete();
     }
 
     public List<Long> readHistory(AggregateId id, List<Long> actualHistory) {
-      JsonNode response = fire("retention-query");
-      if (response == null) {
-        return actualHistory;
-      }
-      List<Long> candidates = new ArrayList<>();
-      for (JsonNode page : response.path("history_pages")) {
-        for (JsonNode seq : page) {
-          candidates.add(seq.bigIntegerValue().longValueExact());
-        }
-      }
-      return candidates;
+      return scenario.readHistory(actualHistory);
     }
   }
 }
