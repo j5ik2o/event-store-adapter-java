@@ -19,11 +19,11 @@
 - コードは Java 11 向けにコンパイルします（`build.gradle.kts` の Gradle toolchain と `options.release`）。テストは `-PtestJavaVersion`（既定 11）で選んだ JDK で実行します。
 - Gradle wrapper（`./gradlew`、Gradle 9.8.2）を使います。CI は Gradle 自体を JDK 25 で動かします。
 - DynamoDB のテストは、digest で固定した DynamoDB Local のイメージを Testcontainers で起動するので、Docker が必要です。
-- リリース用の道具の検査には Python 3 を使います。CI は Python 3.15 を使います。
+- リリース用の道具の検査には Python 3 を使います。CI は Python 3.15 を使います。 `tools/user-docs/check.py` は Python 3.10 以上が必要です。
 
 ## 検査
 
-CI が実行する検査です（`.github/workflows/ci.yml`）。pull request を出す前に実行してください。
+手元で使う検査コマンドです。[CI のワークフロー](.github/workflows/ci.yml) は Java の版ごとに `test` タスク全体を実行し、公開する型の形の試験も含めます。下の `--tests '*apisurface*'` は、その試験だけを手元で実行する場合の指定です。
 
 ```sh
 ./gradlew spotlessCheck

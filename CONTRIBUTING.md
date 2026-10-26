@@ -17,11 +17,11 @@ Some files are fixed copies from the hub, and CI checks them with SHA-256: `conf
 - The code is compiled for Java 11 (the Gradle toolchain and `options.release` in `build.gradle.kts`). Tests run on the JDK selected by `-PtestJavaVersion` (default 11).
 - Use the Gradle wrapper (`./gradlew`, Gradle 9.8.2). CI runs Gradle itself on JDK 25.
 - The DynamoDB tests start a DynamoDB Local image pinned by digest through Testcontainers, so Docker is required.
-- The release tooling checks use Python 3. CI uses Python 3.15.
+- The release tooling checks use Python 3. CI uses Python 3.15. `tools/user-docs/check.py` requires Python 3.10 or later.
 
 ## Checks
 
-These are the checks that CI runs (`.github/workflows/ci.yml`). Run them before opening a pull request.
+These are local check commands. [The CI workflow](.github/workflows/ci.yml) runs the full `test` task with its Java-version matrix, including the API-surface tests; `--tests '*apisurface*'` below is an optional targeted local run.
 
 ```sh
 ./gradlew spotlessCheck
