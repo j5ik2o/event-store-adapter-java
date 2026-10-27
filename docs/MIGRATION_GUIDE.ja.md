@@ -12,7 +12,10 @@ Java 1.x の利用者向けには、手順書による移行を提供します�
 
 Java 1.x には Spanner の保存先もないため、移行する Spanner のデータも、そのための移行ツールもありません。Spanner を使うときは、[Spanner の保存先のスキーマ](SPANNER_DATABASE_SCHEMA.ja.md)の DDL で 5 つの表と設定の行を作り、自分で作った `DatabaseClient` を渡して `SpannerStorage.open` を呼びます。5.0.1 の次の版から使えます。
 
-Java 1.x には Bigtable の保存先もないため、移行する Bigtable のデータも、そのための移行ツールもありません。移行ではなく、新規の導入です。Bigtable を使うときは、[Bigtable の保存先のスキーマ](BIGTABLE_DATABASE_SCHEMA.ja.md)のコマンドで 2 つの表と列ファミリを作り、自分で作った `BigtableDataClient` を渡して `BigtableStorage.initialize` を 1 回呼んで設定の行を書き、続けて自分で作った `BigtableDataClient` と `BigtableTableAdminClient` を渡して `BigtableStorage.open` を呼びます。5.0.1 の次の版から使えます。表は Rust の v5 実装と同じ配置なので、その実装が書いた保存先もそのまま開けます。
+Java 1.x には Bigtable の保存先もないため、移行する Bigtable のデータも、そのための移行ツールもありません。移行ではなく、新規の導入です。Bigtable を使うときは、[Bigtable の保存先のスキーマ](BIGTABLE_DATABASE_SCHEMA.ja.md)のコマンドで 2 つの表と列ファミリを作ります。5.0.1 の次の版から使えます。表は Rust の v5 実装と同じ配置です。
+
+- 新しい空の表では、自分で作った `BigtableDataClient` を渡して `BigtableStorage.initialize` を 1 回呼んで設定の行を書き、続けて自分で作った `BigtableDataClient` と `BigtableTableAdminClient` を渡して `BigtableStorage.open` を呼びます。
+- Rust の v5 実装が書いた既存の保存先では、`BigtableStorage.initialize` を呼びません。設定の行が既にあるので `ConfigurationException` になります。`BigtableStorageConfig` を設定の行に記録された値（保持する数と `envelopeLimitBytes`）に合わせ、`BigtableStorage.open` を直接呼びます。
 
 Java 1.x には SQLite の保存先がないため、移行する SQLite のデータも、そのための移行ツールもありません。SQLite を使うときは `SqliteStorage.initialize` で新しいファイルを初期化します。5.0.1 の次の版から使えます。[SQLite の保存先のスキーマ](SQLITE_DATABASE_SCHEMA.ja.md)を参照してください。
 

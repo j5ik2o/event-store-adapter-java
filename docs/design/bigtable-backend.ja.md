@@ -18,7 +18,7 @@ Java の Bigtable 保存先が、ハブの Bigtable プロファイル（共通�
 |---|---|---|---|---|
 | BT-1 | すべての操作を 1 つのクラスタに向ける。呼び出し側のクライアントの設定で、ライブラリは確かめられない | ライブラリには該当なし（クライアントは呼び出し側が所有） | なし。スキーマ文書に書く | なし（データ上は対象外） |
 | BT-2 | 列ファミリがあること。データの列ファミリはちょうど 1 版を残すこと。`config` に年齢の規則を付けないこと | `BigtableLayout` | `BigtableOpenTest`（列ファミリの欠落、年齢による GC、2 版以上） | `bigtable-seeded-*` |
-| BT-3 / BT-4 / K-1 | 行キーは `H || L16 || A`、journal はその後ろに `U64BE(seq_nr)`。範囲は `prefix + 0xff` を使わない | `BigtableKey` | `BigtableKeyTest`、`BigtableHashCollisionTest`（ハッシュを衝突させる） | `hash-fnv1a64-*`、`aid-*` |
+| BT-3 / BT-4 / K-1 | 行キーは `H \|\| L16 \|\| A`、journal はその後ろに `U64BE(seq_nr)`。範囲は `prefix + 0xff` を使わない | `BigtableKey` | `BigtableKeyTest`、`BigtableHashCollisionTest`（ハッシュを衝突させる） | `hash-fnv1a64-*`、`aid-*` |
 | BT-5 | journal の行は `event:envelope` がないときだけ、1 回の条件付き更新で作る。既にある行は照合し、retired の行はそのまま受け入れる | `BigtableAppend.writeJournalRow` | `BigtableAppendTest`、`BigtableRetentionTest.aDelayedWriterCannotReviveHistory…` | `core-*` |
 | BT-6 | セルは時刻 0 で書く。置き換える列は、1 回の変更の中で削除して書き直す。条件は最新の 1 セルだけを見る | `BigtableRows`（`replaceCell`、`latestCellEquals`） | `BigtableAppendTest.afterEveryAppend…`、`aConditionThatMatchesOnlyAnOlderCellVersion…` | `core-*` |
 | BT-7 | head を読み、直前のイベントを書き出し、head を条件付きで更新し（確定点）、新しい末尾を書き出す。応答が届かなければ保存先エラーで、再送しない | `BigtableAppend`、`BigtableRows.checkAndMutate` | `BigtableAppendTest`、`BigtableTransportTest.aLostConditionalUpdateResponseIsNeverResent…`、`BigtableConcurrencyTest` | `bigtable-previous-event-write-failure`、`bigtable-new-tail-write-failure`、`bigtable-cas-response-lost`、`core-*` |

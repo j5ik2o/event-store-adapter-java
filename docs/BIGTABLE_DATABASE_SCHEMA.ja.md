@@ -71,6 +71,17 @@ cbt -project PROJECT -instance INSTANCE setgcpolicy esa_head snapshot maxversion
 
 `open` は、確かめる項目が欠けているか一致しないと `ConfigurationException` を投げます。対象は、存在しない表、足りない列ファミリ、GC の規則が「最大 1 版」でないデータの列ファミリ、設定行の欠落や不正、クライアントの設定と違う値です。Bigtable に届かないときは `StorageException` を投げます。何も修復しません。利用中の表や列ファミリの変更、ライブラリを通らないデータの変更は対象外です。
 
+### 途中で止まった初期化からの戻し方
+
+`BigtableStorage.initialize` は 2 つの設定行を、先に journal の表、次に head の表へ、順に書きます。Bigtable には行や表をまたぐトランザクションがありません。1 つ目の書き込みの後で呼び出しが止まる（クラッシュ、接続の切断、2 つ目の表からの `StorageException`）と、journal の表にだけ設定行が残ります。ライブラリは、自分が今書いたのではない設定は信用できないので、足りない行を自分では補いません。この状態では、設定行が既にあるため `BigtableStorage.initialize` は `ConfigurationException` を投げ、head の表に行がないため `BigtableStorage.open` も `ConfigurationException` を投げます。
+
+戻し方:
+
+1. 2 つの表のすべての書き手と読み手を止めたままにします。
+2. 両方の表で行キー `0x00` の行を読みます。両方にあれば初期化は終わっているので、何も消しません。片方にしかないときは、どちらの表にもデータの行がないこと、つまり保存先が一度も使われていないことを確かめます。データの行があれば、途中で止まった初期化ではないので、この手順は当てはまりません。その行を消してはいけません。
+3. 行キー `0x00` の残った行（`config:metadata` のセル）を、それがある表から消します。任意の Bigtable のクライアント（たとえば `DeleteFromRow` の変更）を使います。
+4. 同じ設定で `BigtableStorage.initialize` をもう一度呼びます。
+
 ## 記録
 
 行キー（BT-3、BT-4）。`A` は `aid` の UTF-8 のバイト列、`H` は `A` の FNV-1a 64 のハッシュを 8 バイトの big-endian にしたもの、`L16` は `A` のバイト長を符号なし 16 ビットの big-endian にしたものです。

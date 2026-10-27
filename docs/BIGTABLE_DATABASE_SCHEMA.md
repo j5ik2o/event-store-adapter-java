@@ -69,6 +69,17 @@ Run this procedure outside the application, while no client is writing.
 
 `open` throws a `ConfigurationException` when anything it checks is missing or does not match: a table that does not exist, a missing column family, a data column family whose GC rule is not "at most 1 version", a missing or invalid configuration row, or a value that differs from the client's setting. It throws a `StorageException` when Bigtable cannot be reached. It does not repair anything. Table or column family changes while the store is in use, and data changes that bypass the library, are not supported.
 
+### Recovering from an interrupted initialization
+
+`BigtableStorage.initialize` writes the two configuration rows one after the other, first to the journal table and then to the head table, and Bigtable has no transaction across rows or tables. If the call stops after the first write (a crash, a lost connection, a `StorageException` from the second table), only the journal table has a configuration row. The library does not complete the missing row on its own, because a configuration the library did not just write cannot be trusted. In that state `BigtableStorage.initialize` throws a `ConfigurationException` because a configuration row already exists, and `BigtableStorage.open` throws a `ConfigurationException` because the head table has no row.
+
+To recover:
+
+1. Keep every writer and reader of the two tables stopped.
+2. Read the row with key `0x00` in both tables. If both tables have it, the initialization finished; do not delete anything. If only one table has it, check that neither table has a data row, that is, that the store was never used. If a data row exists, this is not an interrupted initialization and this procedure does not apply: do not delete the row.
+3. Delete the leftover row with key `0x00` (its `config:metadata` cell) from the table that has it, (a `MutateRow` with a `DeleteFromRow` mutation, using any Bigtable client).
+4. Call `BigtableStorage.initialize` again with the same settings.
+
 ## Records
 
 Row keys (BT-3, BT-4). `A` is the UTF-8 bytes of `aid`, `H` is the 8-byte big-endian FNV-1a 64 hash of `A`, and `L16` is the byte length of `A` as an unsigned 16-bit big-endian number:
