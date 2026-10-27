@@ -10,6 +10,8 @@ For Java 1.x users, migration is a manual procedure: **read with the old library
 
 Java 1.x has no Spanner storage either, so there is no Spanner data to migrate and no migration tool for it. To use Spanner, create the five tables and the configuration row with the DDL in the [Spanner storage schema](SPANNER_DATABASE_SCHEMA.md), then call `SpannerStorage.open` with your own `DatabaseClient`; it is available from the release after 5.0.1.
 
+Java 1.x has no Bigtable storage either, so there is no Bigtable data to migrate and no migration tool for it. This is a new installation, not a migration. To use Bigtable, create the two tables and their column families with the commands in the [Bigtable storage schema](BIGTABLE_DATABASE_SCHEMA.md), call `BigtableStorage.initialize` once with your own `BigtableDataClient` to write the configuration rows, then call `BigtableStorage.open` with your own `BigtableDataClient` and `BigtableTableAdminClient`; it is available from the release after 5.0.1. The tables use the same layout as the Rust v5 implementation, so a store written by that implementation can be opened as it is.
+
 Java 1.x has no SQLite storage, so there is no SQLite data to migrate and no migration tool for it. To use SQLite, initialize a new file with `SqliteStorage.initialize`; it is available from the release after 5.0.1. See the [SQLite storage schema](SQLITE_DATABASE_SCHEMA.md).
 
 ### Related documents
@@ -20,7 +22,7 @@ For the public factories, compilable examples and executable usage tests, see th
 
 ### API mapping
 
-The new types are in `com.github.j5ik2o.event.store.adapter.java.core`, and the storages are in `memory`, `dynamodb`, `sqlite` and `spanner`. The old public packages directly under the base package and the old `internal` packages have been removed.
+The new types are in `com.github.j5ik2o.event.store.adapter.java.core`, and the storages are in `memory`, `dynamodb`, `sqlite`, `spanner` and `bigtable`. The old public packages directly under the base package and the old `internal` packages have been removed.
 
 | 1.x | New API / handling |
 |-----|--------------------|
@@ -30,6 +32,7 @@ The new types are in `com.github.j5ik2o.event.store.adapter.java.core`, and the 
 | DynamoDB-only entry points of the old implementation | Memory is available through `MemoryEventStore.create/createAsync` and `MemoryStorage.create` |
 | (none in 1.x) | `SqliteStorage.initialize/open`, `SqliteEventStore.create/createAsync` and `SqliteStorageConfig`; new in the release after 5.0.1 |
 | (none in 1.x) | `SpannerStorage.open`, `SpannerEventStore.create/createAsync`, `SpannerStorageConfig` and `SpannerRetentionPolicy`; new in the release after 5.0.1 |
+| (none in 1.x) | `BigtableStorage.initialize/open`, `BigtableEventStore.create/createAsync` and `BigtableStorageConfig`; new in the release after 5.0.1 |
 | User-implemented `AggregateId` | `core.AggregateId.of(typeName, value)`. The library builds the string from the type name and the value |
 | `Aggregate`, `Event` | The implementation requirement is removed. Wrap domain payloads and state in `EventEnvelope<P>` and `SnapshotEnvelope<A>` |
 | `AggregateAndEvent` | Removed. Pass the event envelope and the snapshot envelope separately |

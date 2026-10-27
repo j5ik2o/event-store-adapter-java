@@ -32,7 +32,7 @@ jobs:
       - run: ./gradlew spotlessCheck --info
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     needs: lint
     env:
       JAVA_OPTS: -Xms2048M -Xmx2048M -Xss6M -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
@@ -61,6 +61,10 @@ jobs:
         # Pinned by digest, as in SpannerEmulator. The Spanner tests and the required
         # Spanner conformance cases fail the build when they cannot run.
         run: docker pull gcr.io/cloud-spanner-emulator/emulator:1.5.58@sha256:c6f3402f2599684f295a0fdefb6fbbbfb18a0e43e309ff5456ccb452a4570a79
+      - name: Pull the Cloud Bigtable emulator image
+        # Pinned by digest, as in BigtableEmulator. The Bigtable tests and the required
+        # Bigtable conformance cases fail the build when they cannot run.
+        run: docker pull gcr.io/google.com/cloudsdktool/google-cloud-cli@sha256:8d8573471c489a409f03891d2c24d177fa531276184f7002b9a2d853d1b3ed54
       - name: Run tests
         env:
           TEST_JAVA_VERSION: ${{ matrix.java }}

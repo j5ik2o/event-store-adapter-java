@@ -5,7 +5,8 @@ enum Backend {
   MEMORY("memory", "memory"),
   DYNAMODB("dynamodb", "dynamodb-local"),
   SQLITE("sqlite", "sqlite"),
-  SPANNER("spanner", "spanner-emulator");
+  SPANNER("spanner", "spanner-emulator"),
+  BIGTABLE("bigtable", "bigtable-emulator");
 
   private final String dataName;
   private final String reportName;

@@ -41,6 +41,14 @@ public final class ScenarioFaults {
    * @param spannerCommitFaults Spanner の commit の差し込み口（中断・応答の喪失）を持つ保存先か
    */
   public boolean supported(boolean spannerCommitFaults) {
+    return supported(spannerCommitFaults, false);
+  }
+
+  /**
+   * @param spannerCommitFaults Spanner の commit の差し込み口（中断・応答の喪失）を持つ保存先か
+   * @param bigtableJournalWrites Bigtable の journal 書き出し（直前のイベント・新しい末尾）の差し込み口を持つ保存先か
+   */
+  public boolean supported(boolean spannerCommitFaults, boolean bigtableJournalWrites) {
     Set<String> phases =
         Set.of(
             "serialize-event",
@@ -51,12 +59,23 @@ public final class ScenarioFaults {
             "read-events",
             "read-snapshot",
             "retention-query",
-            "retention-delete");
+            "retention-delete",
+            "journal-write-previous",
+            "journal-write-tail");
     for (JsonNode fault : registered) {
       String kind = fault.path("kind").asText(), phase = fault.path("phase").asText();
       if (!phases.contains(phase)) return false;
       Set<String> details = new HashSet<>();
       fault.path("details").fieldNames().forEachRemaining(details::add);
+      if (phase.startsWith("journal-write-")) {
+        // 書き出しの障害は、書き出しの差し込み口を持つ保存先の「保存先エラー（message だけ）」に限る。
+        if (bigtableJournalWrites
+            && kind.equals("storage-error")
+            && details.equals(Set.of("message"))) {
+          continue;
+        }
+        return false;
+      }
       if (spannerCommitFaults
           && kind.equals("transaction-aborted")
           && phase.equals("commit")
@@ -166,6 +185,16 @@ public final class ScenarioFaults {
   /** 応答の置き換えを適用する。保存先エラーの障害なら StorageException を投げる。 */
   public void afterCommit() {
     fire("commit", true);
+  }
+
+  /** 直前のイベントの journal への書き出しに保存先エラーを起こす。 */
+  public void journalWritePrevious() {
+    fire("journal-write-previous");
+  }
+
+  /** 確定後の新しい末尾の journal への書き出しに保存先エラーを起こす。 */
+  public void journalWriteTail() {
+    fire("journal-write-tail");
   }
 
   public void beforeReadEvents() {

@@ -3,6 +3,7 @@ package com.github.j5ik2o.event.store.adapter.java.conformance;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.github.j5ik2o.event.store.adapter.java.bigtable.ConformanceBigtableOperations;
 import com.github.j5ik2o.event.store.adapter.java.core.AggregateId;
 import com.github.j5ik2o.event.store.adapter.java.core.ConformanceValueOperations;
 import com.github.j5ik2o.event.store.adapter.java.core.ContractViolationException;
@@ -22,7 +23,14 @@ final class ValueCaseRunner {
 
   static boolean supports(ConformanceCase c) {
     return c.operation()
-        .map(op -> op.equals("buildAid") || op.equals("validateSeqNr") || op.equals("fnv1a64"))
+        .map(
+            op ->
+                op.equals("buildAid")
+                    || op.equals("validateSeqNr")
+                    || op.equals("fnv1a64")
+                    || op.equals("encodeBigtableEventEnvelope")
+                    || op.equals("encodeBigtableSnapshotEnvelope")
+                    || op.equals("decodeBigtableEnvelope"))
         .orElse(false);
   }
 
@@ -59,10 +67,38 @@ final class ValueCaseRunner {
             break;
           }
         case "fnv1a64":
+          // Spanner と Bigtable は、それぞれの保存先が実際に使うハッシュの実装で計算する。
           actual.put(
               "value",
               String.format(
-                  "0x%016x", ConformanceSpannerOperations.fnv1a64(input.path("utf8").asText())));
+                  "0x%016x",
+                  backend == Backend.BIGTABLE
+                      ? ConformanceBigtableOperations.fnv1a64(input.path("utf8").asText())
+                      : ConformanceSpannerOperations.fnv1a64(input.path("utf8").asText())));
+          break;
+        case "encodeBigtableEventEnvelope":
+          actual.put(
+              "value",
+              ConformanceBigtableOperations.encodeEvent(
+                  input.path("aid").asText(),
+                  input.path("seq_nr").bigIntegerValue().longValueExact(),
+                  new BigInteger(input.path("occurred_at_ns").asText()).longValueExact(),
+                  input.path("manifest").asText(),
+                  input.path("payload_hex").asText()));
+          break;
+        case "encodeBigtableSnapshotEnvelope":
+          actual.put(
+              "value",
+              ConformanceBigtableOperations.encodeSnapshot(
+                  input.path("seq_nr").bigIntegerValue().longValueExact(),
+                  input.path("manifest").asText(),
+                  input.path("payload_hex").asText()));
+          break;
+        case "decodeBigtableEnvelope":
+          actual.put(
+              "value",
+              ConformanceBigtableOperations.decode(
+                  input.path("kind").asText(), input.path("bytes_hex").asText()));
           break;
         default:
           throw new IllegalStateException("unsupported operation");

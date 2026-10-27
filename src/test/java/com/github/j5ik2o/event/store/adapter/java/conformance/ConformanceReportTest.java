@@ -130,15 +130,19 @@ class ConformanceReportTest {
   }
 
   @Test
-  void ruleEntriesForUnprovidedBackendsAreReportedNotApplicableWithReasonOnBothBackends() {
+  void ruleEntriesForEachBackendAreReportedWithTheirOwnStatus() {
     int bigtableRules = 0;
     for (JsonNode entry : report.toJson().get("rules")) {
       if (!entry.get("rule").asText().startsWith("BT-")) continue;
-      bigtableRules++;
-      assertEquals("not-applicable", entry.get("status").asText(), entry.toString());
-      assertFalse(entry.get("reason").asText().isBlank(), entry.toString());
+      if (entry.get("backend").asText().equals("bigtable-emulator")) {
+        bigtableRules++;
+        assertEquals("passed", entry.get("status").asText(), entry.toString());
+      } else {
+        assertEquals("not-applicable", entry.get("status").asText(), entry.toString());
+        assertFalse(entry.get("reason").asText().isBlank(), entry.toString());
+      }
     }
-    assertTrue(bigtableRules > 0, "no rule entries with prefix BT-");
+    assertTrue(bigtableRules > 0, "no BT- rule entries on bigtable-emulator");
     int spannerRules = 0;
     for (JsonNode entry : report.toJson().get("rules")) {
       if (!entry.get("rule").asText().startsWith("SPN-")) continue;
@@ -170,11 +174,17 @@ class ConformanceReportTest {
     Set<String> btD6aBackends = new HashSet<>();
     for (JsonNode entry : report.toJson().get("rules")) {
       if (entry.get("rule").asText().equals("BT-D6a")) {
-        assertEquals("not-applicable", entry.get("status").asText(), entry.toString());
+        boolean onBigtable = entry.get("backend").asText().equals("bigtable-emulator");
+        assertEquals(
+            onBigtable ? "passed" : "not-applicable",
+            entry.get("status").asText(),
+            entry.toString());
         btD6aBackends.add(entry.get("backend").asText());
       }
     }
-    assertEquals(Set.of("memory", "dynamodb-local", "sqlite", "spanner-emulator"), btD6aBackends);
+    assertEquals(
+        Set.of("memory", "dynamodb-local", "sqlite", "spanner-emulator", "bigtable-emulator"),
+        btD6aBackends);
   }
 
   @Test

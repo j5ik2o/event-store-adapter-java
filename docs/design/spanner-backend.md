@@ -33,7 +33,7 @@ Implementation classes are under `src/main/java/.../spanner/`. Tests are under `
 | SPN-16 | The TTL grace in days must equal the client value, `ttl_grace_days` and the `INTERVAL n DAY` of the row deletion policy; delete mode has no policy | `SpannerStorageConfig`, `SpannerLayout` | `SpannerOpenTest`, `SpannerStorageConfigTest` | `spanner-seeded-ttl-*`, `spanner-ttl-grace-days-not-positive` |
 | SPN-17 | `change_feed_enabled=true` in the row, or a configuration requesting the feed, is a configuration error | `SpannerStorageConfig`, `SpannerLayout` | `SpannerStorageConfigTest`, `SpannerOpenTest` | `spanner-change-feed-unsupported`, `spanner-seeded-change-feed-enabled` |
 
-All 79 required Spanner conformance cases pass against the real emulator, with zero failures and zero unverified cases; `SpannerCaseRunnerTest` runs each of them, and `ConformanceRunnerTest` writes the results to `build/reports/conformance/report.json` under `spanner-emulator`. Bigtable-only cases remain "not provided" and DynamoDB layout cases do not apply to Spanner. A required case that is not executed fails the build.
+All 79 required Spanner conformance cases pass against the real emulator, with zero failures and zero unverified cases; `SpannerCaseRunnerTest` runs each of them, and `ConformanceRunnerTest` writes the results to `build/reports/conformance/report.json` under `spanner-emulator`. Bigtable-only cases and DynamoDB layout cases do not apply to Spanner. A required case that is not executed fails the build.
 
 ## 3. Rules outside the shared data
 

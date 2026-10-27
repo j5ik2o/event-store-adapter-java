@@ -86,6 +86,63 @@ class ValueCaseRunnerTest {
     assertEquals(ConformanceStatus.FAILED, ValueCaseRunner.run(wrong, Backend.SPANNER).status());
   }
 
+  @Test
+  void bigtableFnv1a64UsesTheBigtableHashAndFailsOnAWrongExpectation() {
+    ConformanceCase ok = fnv1a64Case("a", "0xaf63dc4c8601ec8c");
+    ConformanceCase wrong = fnv1a64Case("a", "0xaf63dc4c8601ec8d");
+
+    assertEquals(ConformanceStatus.PASSED, ValueCaseRunner.run(ok, Backend.BIGTABLE).status());
+    assertEquals(ConformanceStatus.FAILED, ValueCaseRunner.run(wrong, Backend.BIGTABLE).status());
+  }
+
+  @Test
+  void bigtableEventEnvelopeEncodingMatchesTheExpectedHexAndFailsOnAWrongOne() {
+    String expected = "0100074f726465722d39000000000000000100000000000000000000000000000000";
+    ConformanceCase ok = encodeEventEnvelopeCase(expected);
+    ConformanceCase wrong = encodeEventEnvelopeCase(expected.replace("0001", "0002"));
+
+    assertEquals(ConformanceStatus.PASSED, ValueCaseRunner.run(ok, Backend.BIGTABLE).status());
+    assertEquals(ConformanceStatus.FAILED, ValueCaseRunner.run(wrong, Backend.BIGTABLE).status());
+  }
+
+  @Test
+  void bigtableEnvelopeDecodeWithTrailingBytesPassesOnlyAsAStorageError() {
+    ObjectNode raw = F.objectNode();
+    raw.put("operation", "decodeBigtableEnvelope");
+    ObjectNode materialized = F.objectNode();
+    ObjectNode input = materialized.putObject("input");
+    input.put("kind", "event");
+    input.put(
+        "bytes_hex", "0100074f726465722d3900000000000000010000000000000000000000000000000000");
+    ObjectNode error = materialized.putObject("expect").putObject("error");
+    error.put("category", "storage");
+    ConformanceCase storage =
+        new ConformanceCase("synthetic", "synthetic.json", "values", List.of(), raw, materialized);
+    ObjectNode other = materialized.deepCopy();
+    ((ObjectNode) other.at("/expect/error")).put("category", "configuration");
+    ConformanceCase configuration =
+        new ConformanceCase("synthetic", "synthetic.json", "values", List.of(), raw, other);
+
+    assertEquals(ConformanceStatus.PASSED, ValueCaseRunner.run(storage, Backend.BIGTABLE).status());
+    assertEquals(
+        ConformanceStatus.FAILED, ValueCaseRunner.run(configuration, Backend.BIGTABLE).status());
+  }
+
+  private static ConformanceCase encodeEventEnvelopeCase(String expectedHex) {
+    ObjectNode raw = F.objectNode();
+    raw.put("operation", "encodeBigtableEventEnvelope");
+    ObjectNode materialized = F.objectNode();
+    ObjectNode input = materialized.putObject("input");
+    input.put("aid", "Order-9");
+    input.put("seq_nr", 1);
+    input.put("occurred_at_ns", "0");
+    input.put("manifest", "");
+    input.put("payload_hex", "");
+    materialized.putObject("expect").put("value", expectedHex);
+    return new ConformanceCase(
+        "synthetic", "synthetic.json", "values", List.of(), raw, materialized);
+  }
+
   private static ConformanceCase fnv1a64Case(String utf8, String expected) {
     ObjectNode raw = F.objectNode();
     raw.put("operation", "fnv1a64");

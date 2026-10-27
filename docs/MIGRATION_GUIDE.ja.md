@@ -12,6 +12,8 @@ Java 1.x の利用者向けには、手順書による移行を提供します�
 
 Java 1.x には Spanner の保存先もないため、移行する Spanner のデータも、そのための移行ツールもありません。Spanner を使うときは、[Spanner の保存先のスキーマ](SPANNER_DATABASE_SCHEMA.ja.md)の DDL で 5 つの表と設定の行を作り、自分で作った `DatabaseClient` を渡して `SpannerStorage.open` を呼びます。5.0.1 の次の版から使えます。
 
+Java 1.x には Bigtable の保存先もないため、移行する Bigtable のデータも、そのための移行ツールもありません。移行ではなく、新規の導入です。Bigtable を使うときは、[Bigtable の保存先のスキーマ](BIGTABLE_DATABASE_SCHEMA.ja.md)のコマンドで 2 つの表と列ファミリを作り、自分で作った `BigtableDataClient` を渡して `BigtableStorage.initialize` を 1 回呼んで設定の行を書き、続けて自分で作った `BigtableDataClient` と `BigtableTableAdminClient` を渡して `BigtableStorage.open` を呼びます。5.0.1 の次の版から使えます。表は Rust の v5 実装と同じ配置なので、その実装が書いた保存先もそのまま開けます。
+
 Java 1.x には SQLite の保存先がないため、移行する SQLite のデータも、そのための移行ツールもありません。SQLite を使うときは `SqliteStorage.initialize` で新しいファイルを初期化します。5.0.1 の次の版から使えます。[SQLite の保存先のスキーマ](SQLITE_DATABASE_SCHEMA.ja.md)を参照してください。
 
 ### 関連する文書
@@ -22,7 +24,7 @@ Java 1.x には SQLite の保存先がないため、移行する SQLite のデ�
 
 ### APIの対応
 
-新しい型は `com.github.j5ik2o.event.store.adapter.java.core`、保存先は `memory`、`dynamodb`、`sqlite`、`spanner` にあります。直下の旧公開パッケージと旧 `internal` は削除しています。
+新しい型は `com.github.j5ik2o.event.store.adapter.java.core`、保存先は `memory`、`dynamodb`、`sqlite`、`spanner`、`bigtable` にあります。直下の旧公開パッケージと旧 `internal` は削除しています。
 
 | 1.x | 新API・扱い |
 |-----|------------|
@@ -31,6 +33,7 @@ Java 1.x には SQLite の保存先がないため、移行する SQLite のデ�
 | `EventStore.ofDynamoDB`、`EventStoreAsync.ofDynamoDB` | `DynamoDbEventStore.create`、`createAsync`。3表とsnapshot GSI名を指定 |
 | 旧実装のみのDynamoDB入口 | Memoryは `MemoryEventStore.create/createAsync` と `MemoryStorage.create` で利用 |
 | （1.x にはなし） | `SpannerStorage.open`、`SpannerEventStore.create/createAsync`、`SpannerStorageConfig`、`SpannerRetentionPolicy`。5.0.1 の次の版で追加 |
+| （1.x にはなし） | `BigtableStorage.initialize/open`、`BigtableEventStore.create/createAsync`、`BigtableStorageConfig`。5.0.1 の次の版で追加 |
 | （1.x にはなし） | `SqliteStorage.initialize/open`、`SqliteEventStore.create/createAsync`、`SqliteStorageConfig`。5.0.1 の次の版で追加 |
 | 利用者が実装する `AggregateId` | `core.AggregateId.of(typeName, value)`。型名と値からライブラリが文字列を組み立てる |
 | `Aggregate`、`Event` | 実装要件を削除。ドメインpayload・状態を `EventEnvelope<P>`、`SnapshotEnvelope<A>` で包む |
