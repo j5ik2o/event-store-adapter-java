@@ -4,7 +4,8 @@ package com.github.j5ik2o.event.store.adapter.java.conformance;
 enum Backend {
   MEMORY("memory", "memory"),
   DYNAMODB("dynamodb", "dynamodb-local"),
-  SQLITE("sqlite", "sqlite");
+  SQLITE("sqlite", "sqlite"),
+  SPANNER("spanner", "spanner-emulator");
 
   private final String dataName;
   private final String reportName;

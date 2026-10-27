@@ -76,4 +76,23 @@ class ValueCaseRunnerTest {
     assertNotNull(r.reason());
     assertFalse(r.reason().isBlank(), r.reason());
   }
+
+  @Test
+  void fnv1a64MatchesTheReferenceValueAndFailsOnAWrongExpectation() {
+    ConformanceCase ok = fnv1a64Case("a", "0xaf63dc4c8601ec8c");
+    ConformanceCase wrong = fnv1a64Case("a", "0xaf63dc4c8601ec8d");
+
+    assertEquals(ConformanceStatus.PASSED, ValueCaseRunner.run(ok, Backend.SPANNER).status());
+    assertEquals(ConformanceStatus.FAILED, ValueCaseRunner.run(wrong, Backend.SPANNER).status());
+  }
+
+  private static ConformanceCase fnv1a64Case(String utf8, String expected) {
+    ObjectNode raw = F.objectNode();
+    raw.put("operation", "fnv1a64");
+    ObjectNode materialized = F.objectNode();
+    materialized.putObject("input").put("utf8", utf8);
+    materialized.putObject("expect").put("value", expected);
+    return new ConformanceCase(
+        "synthetic", "synthetic.json", "values", List.of(), raw, materialized);
+  }
 }

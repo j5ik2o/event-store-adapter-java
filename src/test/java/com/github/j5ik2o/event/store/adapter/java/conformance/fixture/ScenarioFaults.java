@@ -34,6 +34,13 @@ public final class ScenarioFaults {
   }
 
   public boolean supported() {
+    return supported(false);
+  }
+
+  /**
+   * @param spannerCommitFaults Spanner の commit の差し込み口（中断・応答の喪失）を持つ保存先か
+   */
+  public boolean supported(boolean spannerCommitFaults) {
     Set<String> phases =
         Set.of(
             "serialize-event",
@@ -50,6 +57,10 @@ public final class ScenarioFaults {
       if (!phases.contains(phase)) return false;
       Set<String> details = new HashSet<>();
       fault.path("details").fieldNames().forEachRemaining(details::add);
+      if (spannerCommitFaults
+          && kind.equals("transaction-aborted")
+          && phase.equals("commit")
+          && Set.of("message").containsAll(details)) continue;
       if (kind.equals("serialization-error")
           && phase.matches("(serialize|deserialize)-(event|snapshot)")
           && Set.of("message").containsAll(details)) continue;
@@ -68,13 +79,22 @@ public final class ScenarioFaults {
   }
 
   public JsonNode fire(String phase) {
+    return fire(phase, null);
+  }
+
+  /**
+   * @param response true なら応答の置き換え、false なら要求の置き換えだけを対象にする。null は両方。
+   */
+  private JsonNode fire(String phase, Boolean response) {
     for (int i = 0; i < registered.size(); i++) {
       JsonNode fault = registered.get(i);
       boolean repeated =
           fault.path("repeat").path("mode").asText().equals("until-operation-finishes")
               || fired.get(i) < fault.path("repeat").path("count").asInt(1);
+      boolean replacesResponse = fault.path("injection").asText().equals("replace-response");
       if (fault.path("operation").asInt() == operation
           && fault.path("phase").asText().equals(phase)
+          && (response == null || response == replacesResponse)
           && repeated) {
         fired.set(i, fired.get(i) + 1);
         String kind = fault.path("kind").asText();
@@ -138,8 +158,14 @@ public final class ScenarioFaults {
     };
   }
 
-  public void beforeCommit() {
-    fire("commit");
+  /** 要求の置き換えを適用する。中断（transaction-aborted）が発火したら true を返す。 */
+  public boolean beforeCommit() {
+    return fire("commit", false) != null;
+  }
+
+  /** 応答の置き換えを適用する。保存先エラーの障害なら StorageException を投げる。 */
+  public void afterCommit() {
+    fire("commit", true);
   }
 
   public void beforeReadEvents() {

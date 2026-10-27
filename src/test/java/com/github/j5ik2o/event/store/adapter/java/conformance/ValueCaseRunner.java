@@ -8,6 +8,7 @@ import com.github.j5ik2o.event.store.adapter.java.core.ConformanceValueOperation
 import com.github.j5ik2o.event.store.adapter.java.core.ContractViolationException;
 import com.github.j5ik2o.event.store.adapter.java.core.ErrorCategory;
 import com.github.j5ik2o.event.store.adapter.java.core.EventStoreException;
+import com.github.j5ik2o.event.store.adapter.java.spanner.ConformanceSpannerOperations;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.List;
@@ -21,7 +22,7 @@ final class ValueCaseRunner {
 
   static boolean supports(ConformanceCase c) {
     return c.operation()
-        .map(op -> op.equals("buildAid") || op.equals("validateSeqNr"))
+        .map(op -> op.equals("buildAid") || op.equals("validateSeqNr") || op.equals("fnv1a64"))
         .orElse(false);
   }
 
@@ -57,6 +58,12 @@ final class ValueCaseRunner {
             actual.put("value", v);
             break;
           }
+        case "fnv1a64":
+          actual.put(
+              "value",
+              String.format(
+                  "0x%016x", ConformanceSpannerOperations.fnv1a64(input.path("utf8").asText())));
+          break;
         default:
           throw new IllegalStateException("unsupported operation");
       }

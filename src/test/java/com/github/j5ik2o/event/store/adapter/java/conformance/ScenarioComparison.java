@@ -21,7 +21,7 @@ final class ScenarioComparison {
 
   static CaseResult run(
       ConformanceCase c, Backend backend, String changeFeedReason, Execution execution) {
-    if (c.changeFeedRequested()) {
+    if (c.changeFeedRequested() && changeFeedReason != null) {
       return result(c, backend, ConformanceStatus.UNREPRESENTABLE, changeFeedReason, null, null);
     }
     JsonNode input = c.materialized();

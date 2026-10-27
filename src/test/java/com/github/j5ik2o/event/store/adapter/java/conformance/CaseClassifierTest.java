@@ -53,9 +53,11 @@ class CaseClassifierTest {
         CaseResult r = CaseClassifier.classify(c, b);
         if (EXECUTABLE_CASE_IDS.contains(c.id())
             || (b == Backend.MEMORY && memoryExecutable(c))
-            || (b == Backend.SQLITE && sqliteExecutable(c))) {
+            || (b == Backend.SQLITE && sqliteExecutable(c))
+            || (b == Backend.SPANNER && spannerExecutable(c))) {
+          // Spanner takes a change-feed request as a configuration error, so the case runs.
           ConformanceStatus expected =
-              c.changeFeedRequested()
+              c.changeFeedRequested() && b != Backend.SPANNER
                   ? ConformanceStatus.UNREPRESENTABLE
                   : ConformanceStatus.PASSED;
           assertEquals(expected, r.status(), c.id() + "/" + b);
@@ -71,12 +73,16 @@ class CaseClassifierTest {
   }
 
   @Test
-  void fnv1a64CasesAreNotApplicableWithAHashReasonOnBothBackends() {
+  void fnv1a64CasesAreNotApplicableWithAHashReasonExceptOnSpanner() {
     for (int i = 1; i <= 4; i++) {
       for (Backend b : Backend.values()) {
         CaseResult r = CaseClassifier.classify(find("hash-fnv1a64-" + i), b);
-        assertEquals(ConformanceStatus.NOT_APPLICABLE, r.status());
-        assertTrue(r.reason().contains("ハッシュ"), r.reason());
+        if (b == Backend.SPANNER) {
+          assertEquals(ConformanceStatus.PASSED, r.status(), r.reason());
+        } else {
+          assertEquals(ConformanceStatus.NOT_APPLICABLE, r.status());
+          assertTrue(r.reason().contains("ハッシュ"), r.reason());
+        }
       }
     }
   }
@@ -183,7 +189,11 @@ class CaseClassifierTest {
                 names ->
                     names.stream()
                         .noneMatch(
-                            n -> n.equals("memory") || n.equals("dynamodb") || n.equals("sqlite")))
+                            n ->
+                                n.equals("memory")
+                                    || n.equals("dynamodb")
+                                    || n.equals("sqlite")
+                                    || n.equals("spanner")))
             .orElse(false);
   }
 
@@ -194,7 +204,7 @@ class CaseClassifierTest {
             .filter(CaseClassifierTest::unprovidedBackendOnly)
             .collect(Collectors.toList());
 
-    assertEquals(36, unprovided.size());
+    assertEquals(22, unprovided.size());
     for (ConformanceCase c : unprovided) {
       for (Backend b : Backend.values()) {
         CaseResult r = CaseClassifier.classify(c, b);
@@ -261,6 +271,50 @@ class CaseClassifierTest {
         assertTrue(
             ValueCaseRunner.supports(c) || SqliteCaseRunner.supports(c),
             c.id() + " is a SQLite target without a runner");
+      }
+    }
+  }
+
+  private static boolean spannerExecutable(ConformanceCase c) {
+    return !c.timePrecision().map("milliseconds"::equals).orElse(false)
+        && (c.file().startsWith("scenarios/core/")
+            || c.file().startsWith("spanner/")
+            || c.file().equals("scenarios/stores/shared.json")
+            || c.operation().map("validateOccurredAt"::equals).orElse(false)
+            || c.operation().map("fnv1a64"::equals).orElse(false));
+  }
+
+  @Test
+  void spannerTargetsEqualTheRequiredListAndAreAllConnectedAndNeverExcludedAsUnprovided()
+      throws IOException {
+    Set<String> targets =
+        data.cases().stream()
+            .filter(c -> CaseClassifier.exclusion(c, Backend.SPANNER).isEmpty())
+            .map(ConformanceCase::id)
+            .collect(Collectors.toSet());
+
+    assertEquals(targets, RequiredCases.load().get(Backend.SPANNER));
+    assertTrue(targets.containsAll(Set.of("hash-fnv1a64-1", "spanner-change-feed-unsupported")));
+    assertFalse(targets.contains("dynamodb-layout-v1"));
+    for (ConformanceCase c : data.cases()) {
+      if (targets.contains(c.id())) {
+        assertTrue(
+            ValueCaseRunner.supports(c) || SpannerCaseRunner.supports(c),
+            c.id() + " is a Spanner target without a runner");
+      }
+    }
+  }
+
+  @Test
+  void bigtableOnlyCasesStayUnprovidedAndNoSpannerScenarioIsExcludedAsUnprovided() {
+    for (ConformanceCase c : data.cases()) {
+      if (c.file().startsWith("spanner/")) {
+        assertTrue(CaseClassifier.exclusion(c, Backend.SPANNER).isEmpty(), c.id());
+      }
+      if (c.file().startsWith("bigtable/")) {
+        CaseResult r = CaseClassifier.classify(c, Backend.SPANNER);
+        assertEquals(ConformanceStatus.NOT_APPLICABLE, r.status(), c.id());
+        assertEquals(CaseClassifier.REASON_UNPROVIDED_BACKEND, r.reason(), c.id());
       }
     }
   }

@@ -8,6 +8,8 @@ The current artifact is `5.0.1` and follows the [common contract v5](https://git
 
 For Java 1.x users, migration is a manual procedure: **read with the old library, convert the data into payloads and envelopes in your application, then rewrite it consecutively with the new library**. The new library provides no old public types, old internal types, automatic reading of the old storage layout, compatibility aliases or migration tool. It does not infer missing type information or timestamp precision.
 
+Java 1.x has no Spanner storage either, so there is no Spanner data to migrate and no migration tool for it. To use Spanner, create the five tables and the configuration row with the DDL in the [Spanner storage schema](SPANNER_DATABASE_SCHEMA.md), then call `SpannerStorage.open` with your own `DatabaseClient`; it is available from the release after 5.0.1.
+
 Java 1.x has no SQLite storage, so there is no SQLite data to migrate and no migration tool for it. To use SQLite, initialize a new file with `SqliteStorage.initialize`; it is available from the release after 5.0.1. See the [SQLite storage schema](SQLITE_DATABASE_SCHEMA.md).
 
 ### Related documents
@@ -18,7 +20,7 @@ For the public factories, compilable examples and executable usage tests, see th
 
 ### API mapping
 
-The new types are in `com.github.j5ik2o.event.store.adapter.java.core`, and the storages are in `memory`, `dynamodb` and `sqlite`. The old public packages directly under the base package and the old `internal` packages have been removed.
+The new types are in `com.github.j5ik2o.event.store.adapter.java.core`, and the storages are in `memory`, `dynamodb`, `sqlite` and `spanner`. The old public packages directly under the base package and the old `internal` packages have been removed.
 
 | 1.x | New API / handling |
 |-----|--------------------|
@@ -27,6 +29,7 @@ The new types are in `com.github.j5ik2o.event.store.adapter.java.core`, and the 
 | `EventStore.ofDynamoDB`, `EventStoreAsync.ofDynamoDB` | `DynamoDbEventStore.create`, `createAsync`. Specify the three table names and the snapshot GSI name |
 | DynamoDB-only entry points of the old implementation | Memory is available through `MemoryEventStore.create/createAsync` and `MemoryStorage.create` |
 | (none in 1.x) | `SqliteStorage.initialize/open`, `SqliteEventStore.create/createAsync` and `SqliteStorageConfig`; new in the release after 5.0.1 |
+| (none in 1.x) | `SpannerStorage.open`, `SpannerEventStore.create/createAsync`, `SpannerStorageConfig` and `SpannerRetentionPolicy`; new in the release after 5.0.1 |
 | User-implemented `AggregateId` | `core.AggregateId.of(typeName, value)`. The library builds the string from the type name and the value |
 | `Aggregate`, `Event` | The implementation requirement is removed. Wrap domain payloads and state in `EventEnvelope<P>` and `SnapshotEnvelope<A>` |
 | `AggregateAndEvent` | Removed. Pass the event envelope and the snapshot envelope separately |

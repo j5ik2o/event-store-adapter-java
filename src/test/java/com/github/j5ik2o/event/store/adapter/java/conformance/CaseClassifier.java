@@ -15,12 +15,12 @@ final class CaseClassifier {
   static final String REASON_BACKEND = "保存先が backends に含まれない（設計文書 5.3 の 1）";
   static final String REASON_LAYOUT = "DynamoDB の配置の照合であり、メモリに該当しない（設計文書 5.4）";
   static final String REASON_LAYOUT_SQLITE = "DynamoDB の配置の照合であり、SQLite に該当しない";
+  static final String REASON_LAYOUT_SPANNER = "DynamoDB の配置の照合であり、Spanner に該当しない";
   static final String REASON_MILLISECONDS =
       "標準時刻型 Instant はナノ秒を表せるため、milliseconds のケースは対象外（設計文書 5.2）";
   static final String REASON_NOT_EXECUTED = "この分類経路では保存先の公開操作を実行していない（設計文書 5.3）";
 
-  static final String REASON_UNPROVIDED_BACKEND =
-      "この言語はこの保存先（Spanner・Bigtable）を提供しない（適合テストデータ 1.3.0）";
+  static final String REASON_UNPROVIDED_BACKEND = "この言語はこの保存先（Bigtable）を提供しない（適合テストデータ 1.3.0）";
 
   // 値の表は backends を持たないので、操作名で分類する。
   private static final Set<String> BIGTABLE_VALUE_OPERATIONS =
@@ -45,12 +45,15 @@ final class CaseClassifier {
     if (backend == Backend.SQLITE && SqliteCaseRunner.supports(c)) {
       return SqliteCaseRunner.run(c);
     }
+    if (backend == Backend.SPANNER && SpannerCaseRunner.supports(c)) {
+      return SpannerCaseRunner.run(c);
+    }
     return result(c, backend, ConformanceStatus.UNVERIFIED, REASON_NOT_EXECUTED);
   }
 
   /** Capability selection is independent of which cases have been connected to a runner. */
   static Optional<CaseResult> exclusion(ConformanceCase c, Backend backend) {
-    if (c.operation().map("fnv1a64"::equals).orElse(false)) {
+    if (backend != Backend.SPANNER && c.operation().map("fnv1a64"::equals).orElse(false)) {
       return Optional.of(result(c, backend, ConformanceStatus.NOT_APPLICABLE, REASON_HASH));
     }
     if (c.operation().map(BIGTABLE_VALUE_OPERATIONS::contains).orElse(false)) {
@@ -66,7 +69,7 @@ final class CaseClassifier {
     if (c.backends().map(names -> !names.contains(backend.dataName())).orElse(false)) {
       return Optional.of(result(c, backend, ConformanceStatus.NOT_APPLICABLE, REASON_BACKEND));
     }
-    if (c.changeFeedRequested()) {
+    if (c.changeFeedRequested() && backend != Backend.SPANNER) {
       return Optional.of(
           result(
               c,
@@ -82,6 +85,10 @@ final class CaseClassifier {
     if ("layout".equals(c.format()) && backend == Backend.SQLITE) {
       return Optional.of(
           result(c, backend, ConformanceStatus.NOT_APPLICABLE, REASON_LAYOUT_SQLITE));
+    }
+    if ("layout".equals(c.format()) && backend == Backend.SPANNER) {
+      return Optional.of(
+          result(c, backend, ConformanceStatus.NOT_APPLICABLE, REASON_LAYOUT_SPANNER));
     }
     if (c.timePrecision().map("milliseconds"::equals).orElse(false)) {
       return Optional.of(result(c, backend, ConformanceStatus.NOT_APPLICABLE, REASON_MILLISECONDS));

@@ -32,7 +32,7 @@ jobs:
       - run: ./gradlew spotlessCheck --info
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     needs: lint
     env:
       JAVA_OPTS: -Xms2048M -Xmx2048M -Xss6M -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
@@ -57,6 +57,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-provider: basic
+      - name: Pull the Cloud Spanner emulator image
+        # Pinned by digest, as in SpannerEmulator. The Spanner tests and the required
+        # Spanner conformance cases fail the build when they cannot run.
+        run: docker pull gcr.io/cloud-spanner-emulator/emulator:1.5.58@sha256:c6f3402f2599684f295a0fdefb6fbbbfb18a0e43e309ff5456ccb452a4570a79
       - name: Run tests
         env:
           TEST_JAVA_VERSION: ${{ matrix.java }}
