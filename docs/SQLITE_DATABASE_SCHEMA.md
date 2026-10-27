@@ -2,7 +2,7 @@
 
 This is the layout used by `com.github.j5ik2o.event.store.adapter.java.sqlite`. It is not part of `5.0.1`; it is available from the next release. The library follows the [common contract v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md) and its [SQLite profile](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/storage/sqlite.md). Conformance data is 1.3.0. The stored `layout_version` is **1**, a separate storage-layout number. The files use the same layout as the Rust implementation.
 
-See [README](../README.md) for the public types and [MIGRATION_GUIDE](MIGRATION_GUIDE.md) for the version differences. The design record, in Japanese, is [sqlite-backend](design/sqlite-backend.md).
+See [README](../README.md) for the public types and [MIGRATION_GUIDE](MIGRATION_GUIDE.md) for the version differences. The design record is [sqlite-backend](design/sqlite-backend.md).
 
 ## Layout
 

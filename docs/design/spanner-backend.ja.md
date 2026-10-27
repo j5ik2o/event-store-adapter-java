@@ -33,7 +33,7 @@ Java の Spanner 保存先が、ハブの Spanner プロファイル（共通契
 | SPN-16 | TTL の猶予の日数は、クライアントの値・`ttl_grace_days`・行削除ポリシーの `INTERVAL n DAY` が一致する。delete 方式ではポリシーがない | `SpannerStorageConfig`、`SpannerLayout` | `SpannerOpenTest`、`SpannerStorageConfigTest` | `spanner-seeded-ttl-*`、`spanner-ttl-grace-days-not-positive` |
 | SPN-17 | 行の `change_feed_enabled=true`、またはフィードを求める設定は設定エラー | `SpannerStorageConfig`、`SpannerLayout` | `SpannerStorageConfigTest`、`SpannerOpenTest` | `spanner-change-feed-unsupported`、`spanner-seeded-change-feed-enabled` |
 
-Spanner の必須の適合ケース 79 件は、実際のエミュレーターで失敗 0・未検証 0 で合格します。`SpannerCaseRunnerTest` が 1 件ずつ実行し、結果は `build/reports/conformance/report.json` の `spanner-emulator` に出力します。Bigtable だけのケースは「未提供」のままで、DynamoDB の配置のケースは Spanner に該当しません。必須のケースが実行されないとビルドが失敗します。
+Spanner の必須の適合ケース 79 件は、実際のエミュレーターで失敗 0・未検証 0 で合格します。`SpannerCaseRunnerTest` が 1 件ずつ実行し、`ConformanceRunnerTest` が結果を `build/reports/conformance/report.json` の `spanner-emulator` に書き出します。Bigtable だけのケースは「未提供」のままで、DynamoDB の配置のケースは Spanner に該当しません。必須のケースが実行されないとビルドが失敗します。
 
 ## 3. 共通データの外にある規則
 
