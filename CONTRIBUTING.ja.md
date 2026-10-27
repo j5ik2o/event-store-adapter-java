@@ -6,7 +6,7 @@
 
 ## 概要
 
-この案内は、このリポジトリに変更を加える開発者向けです。[共通契約 v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md) の Java 実装です。公開パッケージは `core`・`memory`・`dynamodb`・`sqlite`・`spanner` です。ライブラリの利用者向けの文書は [README](README.ja.md) と `docs/` にあります。
+この案内は、このリポジトリに変更を加える開発者向けです。[共通契約 v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md) の Java 実装です。公開パッケージは `core`・`memory`・`dynamodb`・`sqlite`・`spanner`・`bigtable` です。ライブラリの利用者向けの文書は [README](README.ja.md) と `docs/` にあります。
 
 ## 共有する契約と設計判断
 
@@ -18,7 +18,7 @@
 
 - コードは Java 11 向けにコンパイルします（`build.gradle.kts` の Gradle toolchain と `options.release`）。テストは `-PtestJavaVersion`（既定 11）で選んだ JDK で実行します。
 - Gradle wrapper（`./gradlew`、Gradle 9.8.2）を使います。CI は Gradle 自体を JDK 25 で動かします。
-- DynamoDB のテストは、digest で固定した DynamoDB Local のイメージを Testcontainers で起動するので、Docker が必要です。Spanner のテストは、digest で固定した Cloud Spanner エミュレーターのイメージ `gcr.io/cloud-spanner-emulator/emulator:1.5.58` を Testcontainers で起動するので、Docker が必要です。実行されない必須の Spanner 適合ケースがあるとビルドが失敗します。SQLite のテストは同梱の JDBC ドライバーと一時的なローカルファイルを使うので、Docker は不要です。
+- DynamoDB のテストは、digest で固定した DynamoDB Local のイメージを Testcontainers で起動するので、Docker が必要です。Spanner のテストは、digest で固定した Cloud Spanner エミュレーターのイメージ `gcr.io/cloud-spanner-emulator/emulator:1.5.58` を Testcontainers で起動するので、Docker が必要です。実行されない必須の Spanner 適合ケースがあるとビルドが失敗します。SQLite のテストは同梱の JDBC ドライバーと一時的なローカルファイルを使うので、Docker は不要です。Bigtable のテストは、digest で固定した Cloud Bigtable エミュレーターのイメージ `gcr.io/google.com/cloudsdktool/google-cloud-cli` を Testcontainers で起動するので、Docker が必要です。実行されない必須の Bigtable 適合ケースがあるとビルドが失敗します。初回の実行はイメージを取得するので時間がかかります。
 - リリース用の道具の検査には Python 3 を使います。CI は Python 3.15 を使います。 `tools/user-docs/check.py` は Python 3.10 以上が必要です。
 
 ## 検査

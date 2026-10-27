@@ -8,7 +8,7 @@
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![tokei](https://tokei.rs/b1/github/j5ik2o/event-store-adapter-java)](https://github.com/XAMPPRocky/tokei)
 
-CQRS/Event Sourcing向けのイベントストアです。Memory、DynamoDB、SQLite、Spannerを提供し、Java 11以降で利用できます。
+CQRS/Event Sourcing向けのイベントストアです。Memory、DynamoDB、SQLite、Spanner、Bigtableを提供し、Java 11以降で利用できます。
 
 [English](README.md)
 
@@ -31,6 +31,7 @@ CQRS/Event Sourcing向けのイベントストアです。Memory、DynamoDB、SQ
 | `com.github.j5ik2o.event.store.adapter.java.dynamodb` | `DynamoDbTableConfig`、`DynamoDbEventStore` |
 | `com.github.j5ik2o.event.store.adapter.java.sqlite` | `SqliteStorageConfig`、`SqliteStorage`、`SqliteEventStore` |
 | `com.github.j5ik2o.event.store.adapter.java.spanner` | `SpannerStorageConfig`、`SpannerRetentionPolicy`、`SpannerStorage`、`SpannerEventStore` |
+| `com.github.j5ik2o.event.store.adapter.java.bigtable` | `BigtableStorageConfig`、`BigtableStorage`、`BigtableEventStore` |
 
 ### リンク
 
@@ -99,7 +100,7 @@ Optional<String> updated = UserAccountExample.restoreAsync(asyncStore, id).join(
 
 `getLatestSnapshotById` の外側の `Optional` が空ならheadがありません。結果があり `snapshot()` が空なら、snapshotなしで集約が存在します。復元はsnapshotなしなら **1**、ありなら **`snapshot.seqNr() + 1`** から始めます。`headSeqNr()` を復元起点やイベント読取りの上限にしません。
 
-MemoryとSQLiteはheadとsnapshotを原子的に読みます。SQLiteは両方を同じ読み取りトランザクションで、Spannerは両方を同じstrongの読み取り専用トランザクションで読みます。DynamoDBは各項目を強整合で読みますが、組は**非原子的**です。snapshotがheadより古い組も、新しい組も、未処理キー再要求をまたいだ混在も合法です。取得したsnapshotを保持し、その番号より後のイベントだけを適用して、適用済み番号を再適用しません。イベント読取りは全ページを消費し、後から確定した並行追記を含むことがあります。
+MemoryとSQLiteはheadとsnapshotを原子的に読みます。SQLiteは両方を同じ読み取りトランザクションで、Spannerは両方を同じstrongの読み取り専用トランザクションで、Bigtableは両方をheadの1行から読みます。DynamoDBは各項目を強整合で読みますが、組は**非原子的**です。snapshotがheadより古い組も、新しい組も、未処理キー再要求をまたいだ混在も合法です。取得したsnapshotを保持し、その番号より後のイベントだけを適用して、適用済み番号を再適用しません。イベント読取りは全ページを消費し、後から確定した並行追記を含むことがあります。
 
 ## 保存先
 
@@ -194,6 +195,33 @@ asyncSpanner.persistEventAndSnapshot(
 Optional<String> spannerName = UserAccountExample.restore(spannerStore, spannerId); // Bob
 ```
 
+### Bigtable
+
+Bigtableは、Cloud Bigtableの1つのインスタンスの2つの表（journal表とhead表）にイベントを保存します。5.0.1には含まれず、次の版から使えます。2つの表、列ファミリ、ガベージコレクションの規則は、[BIGTABLE_DATABASE_SCHEMA](docs/BIGTABLE_DATABASE_SCHEMA.ja.md) のコマンドで利用者が作成し、その後 `BigtableStorage.initialize(BigtableDataClient, BigtableStorageConfig)` を1回呼んで、同じ設定の行を両方の表に書きます。ライブラリは表を作りません。`BigtableStorage.open(BigtableDataClient, BigtableTableAdminClient, BigtableStorageConfig)` は配置を照合するだけです。表・列ファミリ・ガベージコレクションの規則・設定の行の欠落や不一致は `CONFIGURATION` エラー、Bigtableに届かないときは `STORAGE` エラーになります。2つのクライアント（認証、1つのクラスタに固定したapp profile、エミュレーターの接続先を含む）は利用者が作って所有し、ライブラリは閉じません。追記は、headの行の条件付き更新1回で確定します。直前のイベントはその前に、新しいイベントはその後にjournalへ書き出します。その更新の条件が成り立たないときは `OPTIMISTIC_LOCK` エラーになり、更新を再試行することはありません。応答を失ったときは、成否不明の `STORAGE` エラーになります。同じ封筒を送り直すと、最初の更新が通っていれば `OPTIMISTIC_LOCK` エラーになります。直列化した封筒が `envelopeLimitBytes`（既定1 MiB、最大8 MiB、両方の設定の行の値と同じ）を超えると、何も書く前に規則 `BT-16` の `CONTRACT_VIOLATION` エラーになります。保持方針は `RetentionPolicy.none()` または `delete(n)` で、TTLはbuildで失敗します。非同期のBigtable APIは呼出しスレッドで実行し、完了済みのfutureを返します。変更フィードは提供せず、`BigtableStorageConfig.Builder.changeFeed(true)` は `CONFIGURATION` エラーになります。表はRustのv5実装と同じ配置です。
+
+```java
+import com.github.j5ik2o.event.store.adapter.java.bigtable.*;
+import com.google.cloud.bigtable.admin.v2.BigtableTableAdminClient;
+import com.google.cloud.bigtable.data.v2.BigtableDataClient;
+
+BigtableDataClient data = BigtableDataClient.create("project", "instance");
+BigtableTableAdminClient admin = BigtableTableAdminClient.create("project", "instance");
+BigtableStorageConfig settings = BigtableStorageConfig.builder()
+    .journalTableId("esa_journal")
+    .headTableId("esa_head")
+    .retentionPolicy(RetentionPolicy.none())
+    .build();
+BigtableStorage.initialize(data, settings); // 新しい空の表に1回だけ
+BigtableStorage storage = BigtableStorage.open(data, admin, settings); // 配置の照合だけを行う
+EventStore<String, String> bigtableStore = BigtableEventStore.create(storage, config);
+AsyncEventStore<String, String> asyncBigtable = BigtableEventStore.createAsync(storage, config);
+AggregateId bigtableId = AggregateId.of("UserAccount", "bigtable-example");
+bigtableStore.persistEvent(UserAccountExample.event(bigtableId, 1, "Alice"));
+asyncBigtable.persistEventAndSnapshot(
+    UserAccountExample.event(bigtableId, 2, "Bob"), UserAccountExample.snapshot(2, "Bob")).join();
+Optional<String> bigtableName = UserAccountExample.restore(bigtableStore, bigtableId); // Bob
+```
+
 ## 直列化
 
 ドメイン型には、`PayloadSerializer<T>` で直列化できることだけを求めます。payloadとsnapshotの型は `EventStoreConfig` の生成時に束縛し、読取り操作に `Class<T>` を渡しません。既定のJSONシリアライザはpayloadまたは集約状態だけを直列化し、封筒のメタデータと分けて保存します。ライブラリは `manifest` を解釈しません。
@@ -202,13 +230,13 @@ Optional<String> spannerName = UserAccountExample.restore(spannerStore, spannerI
 
 ### 保持方針
 
-既定の `RetentionPolicy.none()` は現在snapshotだけを保存します。`RetentionPolicy.delete(n)` は現在snapshotに加えて最新n件の履歴を残します。DynamoDBは `RetentionPolicy.ttl(n, graceSeconds)` も提供し、snapshot表の `ttl` 属性でTTLを有効にします。印付き履歴は保持件数に数えず、期限を延長しません。MemoryとSQLiteはTTL設定を拒否し、変更フィードを提供しません。SQLiteは `RetentionPolicy.none()` と `RetentionPolicy.delete(n)` を提供します。Spannerは猶予を日数で数えるため、独自の `SpannerRetentionPolicy`（`none()`、`delete(n)`、`ttl(n, graceDays)`）を使い、変更フィードを提供しません。
+既定の `RetentionPolicy.none()` は現在snapshotだけを保存します。`RetentionPolicy.delete(n)` は現在snapshotに加えて最新n件の履歴を残します。DynamoDBは `RetentionPolicy.ttl(n, graceSeconds)` も提供し、snapshot表の `ttl` 属性でTTLを有効にします。印付き履歴は保持件数に数えず、期限を延長しません。MemoryとSQLiteはTTL設定を拒否し、変更フィードを提供しません。SQLiteは `RetentionPolicy.none()` と `RetentionPolicy.delete(n)` を提供します。Spannerは猶予を日数で数えるため、独自の `SpannerRetentionPolicy`（`none()`、`delete(n)`、`ttl(n, graceDays)`）を使い、変更フィードを提供しません。Bigtableはcoreの `RetentionPolicy.none()` または `delete(n)` を `BigtableStorageConfig` に渡し、TTLは拒否して、変更フィードを提供しません。
 
-保持方針は `MemoryStorage.create(policy)`、`DynamoDbTableConfig`、`SqliteStorageConfig`、`SpannerStorageConfig` のいずれかに渡します。DynamoDBはsnapshot書込みの確定後に保持を行い、SQLiteとSpannerは追記の確定後に別のトランザクションで保持を行い（Spannerは1回500行以下に分割）、Memoryはイベントだけの追記でも残った履歴の処理を再試行します。保持はjournal・head・現在snapshotを削除しません。
+保持方針は `MemoryStorage.create(policy)`、`DynamoDbTableConfig`、`SqliteStorageConfig`、`SpannerStorageConfig`、`BigtableStorageConfig` のいずれかに渡します。DynamoDBはsnapshot書込みの確定後に保持を行い、SQLiteとSpannerは追記の確定後に別のトランザクションで保持を行い（Spannerは1回500行以下に分割）、Bigtableは追記の確定後に古い履歴の行を1回の条件付き更新ずつretiredにし、Memoryはイベントだけの追記でも残った履歴の処理を再試行します。保持はjournal・head・現在snapshotを削除しません。
 
 ### 失敗と通知
 
-確定後の保持失敗でも書込みは成功します。最終失敗はWARNログと、任意の `EventStoreConfig.Builder.retentionFailureListener` に1回通知します。通知には集約ID・方式・元原因があり、Memory・SQLite・Spannerはロックやトランザクションの解放後に通知します。同期実装、Memory非同期、SQLite非同期、Spanner非同期は呼出しスレッド、DynamoDB非同期は公開future完了前のSDK完了スレッドで通知します。通知先はブロックしない実装にします。通知先の失敗でも、確定済み書込みを失敗にしません。
+確定後の保持失敗でも書込みは成功します。最終失敗はWARNログと、任意の `EventStoreConfig.Builder.retentionFailureListener` に1回通知します。通知には集約ID・方式・元原因があり、Memory・SQLite・Spannerはロックやトランザクションの解放後に通知します。同期実装、Memory非同期、SQLite非同期、Spanner非同期、Bigtable非同期は呼出しスレッド、DynamoDB非同期は公開future完了前のSDK完了スレッドで通知します。通知先はブロックしない実装にします。通知先の失敗でも、確定済み書込みを失敗にしません。Bigtableは、確定後に新しい末尾のイベントをjournalへ書き出せなかった失敗も、ロガー `com.github.j5ik2o.event.store.adapter.java.bigtable.journal` にWARNで記録します。この失敗ではリスナーを呼ばず、追記は確定したままです。ログやリスナーが `Error` を投げても、確定済みの追記は変わりません。
 
 ## エラー
 
@@ -222,7 +250,7 @@ APIの変更と「旧版で読む→利用者が変換→新版へ書き直す�
 
 配布する適合データ（版1.3.0）は [conformance/](conformance/README.md) にあります。
 
-[Memory利用試験](src/test/java/com/github/j5ik2o/event/store/adapter/java/examples/UserAccountExampleTest.java)、[DynamoDB利用試験](src/test/java/com/github/j5ik2o/event/store/adapter/java/dynamodbtest/DynamoDbPublicApiUsageTest.java)、[SQLite利用試験](src/test/java/com/github/j5ik2o/event/store/adapter/java/examples/SqliteUserAccountExampleTest.java)、[Spanner利用試験](src/test/java/com/github/j5ik2o/event/store/adapter/java/examples/SpannerUserAccountExampleTest.java)は、この例を公開factoryでコンパイル・実行します。DynamoDB試験は固定されたDynamoDB Localイメージ、Spanner試験は固定されたCloud Spannerエミュレーターのイメージを使うため、どちらもDockerが必要です。SQLite試験は一時的なローカルファイルを使うためDockerは不要です。
+[Memory利用試験](src/test/java/com/github/j5ik2o/event/store/adapter/java/examples/UserAccountExampleTest.java)、[DynamoDB利用試験](src/test/java/com/github/j5ik2o/event/store/adapter/java/dynamodbtest/DynamoDbPublicApiUsageTest.java)、[SQLite利用試験](src/test/java/com/github/j5ik2o/event/store/adapter/java/examples/SqliteUserAccountExampleTest.java)、[Spanner利用試験](src/test/java/com/github/j5ik2o/event/store/adapter/java/examples/SpannerUserAccountExampleTest.java)、[Bigtable利用試験](src/test/java/com/github/j5ik2o/event/store/adapter/java/examples/BigtableUserAccountExampleTest.java)は、この例を公開factoryでコンパイル・実行します。DynamoDB試験は固定されたDynamoDB Localイメージ、Spanner試験は固定されたCloud Spannerエミュレーターのイメージ、Bigtable試験は固定されたCloud Bigtableエミュレーターのイメージを使うため、いずれもDockerが必要です。SQLite試験は一時的なローカルファイルを使うためDockerは不要です。
 
 ```sh
 ./gradlew spotlessCheck test

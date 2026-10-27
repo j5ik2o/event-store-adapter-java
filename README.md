@@ -7,7 +7,7 @@
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![tokei](https://tokei.rs/b1/github/j5ik2o/event-store-adapter-java)](https://github.com/XAMPPRocky/tokei)
 
-An event store for CQRS/Event Sourcing, with Memory, DynamoDB, SQLite and Spanner implementations. Java 11 or later is required.
+An event store for CQRS/Event Sourcing, with Memory, DynamoDB, SQLite, Spanner and Bigtable implementations. Java 11 or later is required.
 
 [日本語](README.ja.md)
 
@@ -30,6 +30,7 @@ Version 2.0.0 was released before the decision to align versions, and its conten
 | `com.github.j5ik2o.event.store.adapter.java.dynamodb` | `DynamoDbTableConfig`, `DynamoDbEventStore` |
 | `com.github.j5ik2o.event.store.adapter.java.sqlite` | `SqliteStorageConfig`, `SqliteStorage`, `SqliteEventStore` |
 | `com.github.j5ik2o.event.store.adapter.java.spanner` | `SpannerStorageConfig`, `SpannerRetentionPolicy`, `SpannerStorage`, `SpannerEventStore` |
+| `com.github.j5ik2o.event.store.adapter.java.bigtable` | `BigtableStorageConfig`, `BigtableStorage`, `BigtableEventStore` |
 
 ### Links
 
@@ -98,7 +99,7 @@ Sequence 1 creates an aggregate, including without a snapshot. Every later event
 
 An empty outer `Optional` from `getLatestSnapshotById` means no head exists. A present result with an empty `snapshot()` means the aggregate exists without a snapshot. Start replay at **1** in that case, or at **`snapshot.seqNr() + 1`** when a snapshot exists. Do not use `headSeqNr()` as the replay start or an upper bound.
 
-Memory and SQLite read the head and snapshot atomically; SQLite reads both in one read transaction, and Spanner reads both in one strong read-only transaction. DynamoDB reads both items strongly consistently, but the pair is **non-atomic**: the snapshot may be older or newer than the returned head, including across retries for unprocessed keys. Both combinations are valid. Keep the returned snapshot and replay only later events, so its sequence is not applied twice. Event reads consume every page and can include later concurrent appends.
+Memory and SQLite read the head and snapshot atomically; SQLite reads both in one read transaction, Spanner reads both in one strong read-only transaction, and Bigtable reads both from one head row. DynamoDB reads both items strongly consistently, but the pair is **non-atomic**: the snapshot may be older or newer than the returned head, including across retries for unprocessed keys. Both combinations are valid. Keep the returned snapshot and replay only later events, so its sequence is not applied twice. Event reads consume every page and can include later concurrent appends.
 
 ## Storages
 
@@ -193,6 +194,33 @@ asyncSpanner.persistEventAndSnapshot(
 Optional<String> spannerName = UserAccountExample.restore(spannerStore, spannerId); // Bob
 ```
 
+### Bigtable
+
+Bigtable stores events in two tables of one Cloud Bigtable instance: a journal table and a head table. It is not available in 5.0.1; use the next release. You create the two tables, their column families and garbage-collection rules with the commands in [BIGTABLE_DATABASE_SCHEMA](docs/BIGTABLE_DATABASE_SCHEMA.md), then call `BigtableStorage.initialize(BigtableDataClient, BigtableStorageConfig)` once to write the same configuration row into both tables; the library never creates a table. `BigtableStorage.open(BigtableDataClient, BigtableTableAdminClient, BigtableStorageConfig)` only verifies the layout. It fails with a `CONFIGURATION` error when a table, a column family, a garbage-collection rule or a configuration row is missing or does not match, and with a `STORAGE` error when Bigtable cannot be reached. You build and own both clients, including the credentials, the app profile pinned to one cluster and the emulator host; the library never closes them. A single conditional update of the head row commits an append; the previous event is written to the journal before it, and the new event after it. A mismatch of that update is an `OPTIMISTIC_LOCK` error, and the update is never retried: when its response is lost, the append fails with a `STORAGE` error whose outcome is unknown, and sending the same envelope again then fails with an `OPTIMISTIC_LOCK` error if the first update went through. A serialized envelope larger than `envelopeLimitBytes` (default 1 MiB, at most 8 MiB, and equal to the value in both configuration rows) is rejected before anything is written as a `CONTRACT_VIOLATION` of rule `BT-16`. The retention policy is `RetentionPolicy.none()` or `delete(n)`; TTL fails at build. The asynchronous Bigtable API runs on the calling thread and returns completed futures. No change feed is provided; `BigtableStorageConfig.Builder.changeFeed(true)` fails with a `CONFIGURATION` error. The tables use the same layout as the Rust v5 implementation.
+
+```java
+import com.github.j5ik2o.event.store.adapter.java.bigtable.*;
+import com.google.cloud.bigtable.admin.v2.BigtableTableAdminClient;
+import com.google.cloud.bigtable.data.v2.BigtableDataClient;
+
+BigtableDataClient data = BigtableDataClient.create("project", "instance");
+BigtableTableAdminClient admin = BigtableTableAdminClient.create("project", "instance");
+BigtableStorageConfig settings = BigtableStorageConfig.builder()
+    .journalTableId("esa_journal")
+    .headTableId("esa_head")
+    .retentionPolicy(RetentionPolicy.none())
+    .build();
+BigtableStorage.initialize(data, settings); // once, for new empty tables
+BigtableStorage storage = BigtableStorage.open(data, admin, settings); // verifies the layout only
+EventStore<String, String> bigtableStore = BigtableEventStore.create(storage, config);
+AsyncEventStore<String, String> asyncBigtable = BigtableEventStore.createAsync(storage, config);
+AggregateId bigtableId = AggregateId.of("UserAccount", "bigtable-example");
+bigtableStore.persistEvent(UserAccountExample.event(bigtableId, 1, "Alice"));
+asyncBigtable.persistEventAndSnapshot(
+    UserAccountExample.event(bigtableId, 2, "Bob"), UserAccountExample.snapshot(2, "Bob")).join();
+Optional<String> bigtableName = UserAccountExample.restore(bigtableStore, bigtableId); // Bob
+```
+
 ## Serialization
 
 Domain types only need to be serializable by `PayloadSerializer<T>`. Bind the payload and snapshot types when creating `EventStoreConfig`; read operations do not take a `Class<T>`. The default JSON serializer serializes the payload or aggregate state separately from envelope metadata. The library does not interpret `manifest`.
@@ -201,13 +229,13 @@ Domain types only need to be serializable by `PayloadSerializer<T>`. Bind the pa
 
 ### Retention policy
 
-The default `RetentionPolicy.none()` keeps only the current snapshot. `RetentionPolicy.delete(n)` keeps the newest `n` history snapshots, in addition to the current one. DynamoDB also supports `RetentionPolicy.ttl(n, graceSeconds)`; enable TTL on the snapshot table's `ttl` attribute. Marked history is excluded from the retained count, and its expiry is not extended. Memory and SQLite reject TTL configuration and do not provide a change feed. SQLite supports `RetentionPolicy.none()` and `RetentionPolicy.delete(n)`. Spanner takes its own `SpannerRetentionPolicy` (`none()`, `delete(n)`, `ttl(n, graceDays)`), because its TTL grace is counted in whole days; it provides no change feed.
+The default `RetentionPolicy.none()` keeps only the current snapshot. `RetentionPolicy.delete(n)` keeps the newest `n` history snapshots, in addition to the current one. DynamoDB also supports `RetentionPolicy.ttl(n, graceSeconds)`; enable TTL on the snapshot table's `ttl` attribute. Marked history is excluded from the retained count, and its expiry is not extended. Memory and SQLite reject TTL configuration and do not provide a change feed. SQLite supports `RetentionPolicy.none()` and `RetentionPolicy.delete(n)`. Spanner takes its own `SpannerRetentionPolicy` (`none()`, `delete(n)`, `ttl(n, graceDays)`), because its TTL grace is counted in whole days; it provides no change feed. Bigtable takes the core `RetentionPolicy.none()` or `delete(n)` on `BigtableStorageConfig`; it rejects TTL and provides no change feed.
 
-Set the policy on `MemoryStorage.create(policy)`, `DynamoDbTableConfig`, `SqliteStorageConfig` or `SpannerStorageConfig`. DynamoDB runs retention after a committed snapshot write; SQLite and Spanner run it in separate transactions after the append commits (Spanner in chunks of at most 500 rows); Memory also retries leftover cleanup after event-only appends. Retention does not remove the journal, head or current snapshot.
+Set the policy on `MemoryStorage.create(policy)`, `DynamoDbTableConfig`, `SqliteStorageConfig`, `SpannerStorageConfig` or `BigtableStorageConfig`. DynamoDB runs retention after a committed snapshot write; SQLite and Spanner run it in separate transactions after the append commits (Spanner in chunks of at most 500 rows); Bigtable retires old history rows one conditional update at a time after the append commits; Memory also retries leftover cleanup after event-only appends. Retention does not remove the journal, head or current snapshot.
 
 ### Failures and notifications
 
-A retention failure after commit preserves write success. The final failure is logged at WARN and delivered once to an optional `EventStoreConfig.Builder.retentionFailureListener`, with aggregate ID, mode and original cause. Memory, SQLite and Spanner release their locks and transactions before notifying. Synchronous stores, asynchronous Memory, asynchronous SQLite and asynchronous Spanner notify on the calling thread; asynchronous DynamoDB notifies on the SDK completion thread before the public future completes. Keep listeners non-blocking. Listener failures do not turn a committed write into a failed write.
+A retention failure after commit preserves write success. The final failure is logged at WARN and delivered once to an optional `EventStoreConfig.Builder.retentionFailureListener`, with aggregate ID, mode and original cause. Memory, SQLite and Spanner release their locks and transactions before notifying. Synchronous stores, asynchronous Memory, asynchronous SQLite, asynchronous Spanner and asynchronous Bigtable notify on the calling thread; asynchronous DynamoDB notifies on the SDK completion thread before the public future completes. Keep listeners non-blocking. Listener failures do not turn a committed write into a failed write. Bigtable also reports a failed write-out of the new tail event after the commit, as a WARN on the logger `com.github.j5ik2o.event.store.adapter.java.bigtable.journal`; the listener is not called for it and the append stays committed. A log or listener that throws an `Error` does not change a committed append either.
 
 ## Errors
 
@@ -221,7 +249,7 @@ See [MIGRATION_GUIDE](docs/MIGRATION_GUIDE.md) for API changes and the old-versi
 
 The distributed conformance data (version 1.3.0) is in [conformance/](conformance/README.md).
 
-[Memory usage tests](src/test/java/com/github/j5ik2o/event/store/adapter/java/examples/UserAccountExampleTest.java), [DynamoDB usage tests](src/test/java/com/github/j5ik2o/event/store/adapter/java/dynamodbtest/DynamoDbPublicApiUsageTest.java) [SQLite usage tests](src/test/java/com/github/j5ik2o/event/store/adapter/java/examples/SqliteUserAccountExampleTest.java) and [Spanner usage tests](src/test/java/com/github/j5ik2o/event/store/adapter/java/examples/SpannerUserAccountExampleTest.java) compile and run the example through the public factories. DynamoDB tests use the pinned DynamoDB Local image and Spanner tests use the pinned Cloud Spanner emulator image; Docker is required for both. SQLite tests use temporary local files; Docker is not required.
+[Memory usage tests](src/test/java/com/github/j5ik2o/event/store/adapter/java/examples/UserAccountExampleTest.java), [DynamoDB usage tests](src/test/java/com/github/j5ik2o/event/store/adapter/java/dynamodbtest/DynamoDbPublicApiUsageTest.java) [SQLite usage tests](src/test/java/com/github/j5ik2o/event/store/adapter/java/examples/SqliteUserAccountExampleTest.java) [Spanner usage tests](src/test/java/com/github/j5ik2o/event/store/adapter/java/examples/SpannerUserAccountExampleTest.java) and [Bigtable usage tests](src/test/java/com/github/j5ik2o/event/store/adapter/java/examples/BigtableUserAccountExampleTest.java) compile and run the example through the public factories. DynamoDB tests use the pinned DynamoDB Local image, Spanner tests use the pinned Cloud Spanner emulator image and Bigtable tests use the pinned Cloud Bigtable emulator image; Docker is required for all three. SQLite tests use temporary local files; Docker is not required.
 
 ```sh
 ./gradlew spotlessCheck test
