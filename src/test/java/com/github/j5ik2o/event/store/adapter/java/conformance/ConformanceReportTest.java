@@ -131,16 +131,26 @@ class ConformanceReportTest {
 
   @Test
   void ruleEntriesForUnprovidedBackendsAreReportedNotApplicableWithReasonOnBothBackends() {
-    for (String prefix : List.of("SPN-", "BT-")) {
-      int found = 0;
-      for (JsonNode entry : report.toJson().get("rules")) {
-        if (!entry.get("rule").asText().startsWith(prefix)) continue;
-        found++;
+    int bigtableRules = 0;
+    for (JsonNode entry : report.toJson().get("rules")) {
+      if (!entry.get("rule").asText().startsWith("BT-")) continue;
+      bigtableRules++;
+      assertEquals("not-applicable", entry.get("status").asText(), entry.toString());
+      assertFalse(entry.get("reason").asText().isBlank(), entry.toString());
+    }
+    assertTrue(bigtableRules > 0, "no rule entries with prefix BT-");
+    int spannerRules = 0;
+    for (JsonNode entry : report.toJson().get("rules")) {
+      if (!entry.get("rule").asText().startsWith("SPN-")) continue;
+      if (entry.get("backend").asText().equals("spanner-emulator")) {
+        spannerRules++;
+        assertEquals("passed", entry.get("status").asText(), entry.toString());
+      } else {
         assertEquals("not-applicable", entry.get("status").asText(), entry.toString());
         assertFalse(entry.get("reason").asText().isBlank(), entry.toString());
       }
-      assertTrue(found > 0, "no rule entries with prefix " + prefix);
     }
+    assertTrue(spannerRules > 0, "no SPN- rule entries on spanner-emulator");
     int sqliteRules = 0;
     for (JsonNode entry : report.toJson().get("rules")) {
       if (!entry.get("rule").asText().startsWith("SQ-")) continue;
@@ -164,7 +174,7 @@ class ConformanceReportTest {
         btD6aBackends.add(entry.get("backend").asText());
       }
     }
-    assertEquals(Set.of("memory", "dynamodb-local", "sqlite"), btD6aBackends);
+    assertEquals(Set.of("memory", "dynamodb-local", "sqlite", "spanner-emulator"), btD6aBackends);
   }
 
   @Test
