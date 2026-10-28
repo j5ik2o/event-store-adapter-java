@@ -1,11 +1,13 @@
 # event-store-adapter-java
 
-[![CI](https://github.com/j5ik2o/event-store-adapter-java/actions/workflows/ci.yml/badge.svg)](https://github.com/j5ik2o/event-store-adapter-java/actions/workflows/ci.yml)
-[![Maven Central](https://maven-badges.herokuapp.com/maven-central/io.github.j5ik2o/event-store-adapter-java/badge.svg)](https://maven-badges.herokuapp.com/maven-central/io.github.j5ik2o/event-store-adapter-java)
+[![CI](https://github.com/j5ik2o/event-store-adapter-java/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/j5ik2o/event-store-adapter-java/actions/workflows/ci.yml?query=branch%3Amain)
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.j5ik2o/event-store-adapter-java.svg)](https://central.sonatype.com/artifact/io.github.j5ik2o/event-store-adapter-java)
+[![javadoc](https://img.shields.io/maven-central/v/io.github.j5ik2o/event-store-adapter-java.svg?label=javadoc)](https://javadoc.io/doc/io.github.j5ik2o/event-store-adapter-java)
+[![Java](https://img.shields.io/badge/Java-11%2B-blue.svg)](https://github.com/j5ik2o/event-store-adapter-java/blob/main/build.gradle.kts)
+[![Contract v5](https://img.shields.io/badge/contract-v5-blueviolet.svg)](https://github.com/j5ik2o/event-store-adapter/tree/contract-v5/docs/spec)
+[![Storages](https://img.shields.io/badge/storages-memory%20%7C%20DynamoDB%20%7C%20SQLite%20%7C%20Spanner%20%7C%20Bigtable-informational.svg)](https://github.com/j5ik2o/event-store-adapter/tree/main/docs/spec/storage)
 [![Renovate](https://img.shields.io/badge/renovate-enabled-brightgreen.svg)](https://renovatebot.com)
-[![License](https://img.shields.io/badge/License-APACHE2.0-blue.svg)](https://opensource.org/licenses/apache-2-0)
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![tokei](https://tokei.rs/b1/github/j5ik2o/event-store-adapter-java)](https://github.com/XAMPPRocky/tokei)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](https://github.com/j5ik2o/event-store-adapter-java#license)
 
 An event store for CQRS/Event Sourcing, with Memory, DynamoDB, SQLite, Spanner and Bigtable implementations. Java 11 or later is required.
 
@@ -257,4 +259,4 @@ The distributed conformance data (version 1.3.0) is in [conformance/](conformanc
 
 ## License
 
-MIT License. See [LICENSE-MIT](LICENSE-MIT).
+Dual-licensed under MIT or Apache-2.0 (`MIT OR Apache-2.0`), at your option. See [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE).
