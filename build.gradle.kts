@@ -31,7 +31,7 @@ dependencies {
     testImplementation("com.networknt:json-schema-validator:2.0.8")
 
     api("software.amazon.awssdk:dynamodb:2.57.4")
-    api("com.google.cloud:google-cloud-spanner:6.124.0")
+    api("com.google.cloud:google-cloud-spanner:6.125.0")
     api("com.google.cloud:google-cloud-bigtable:2.86.0")
     api("com.fasterxml.jackson.core:jackson-databind:2.22.4")
     implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.22.4")
