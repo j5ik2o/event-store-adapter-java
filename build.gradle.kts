@@ -36,7 +36,7 @@ dependencies {
     api("com.fasterxml.jackson.core:jackson-databind:2.22.4")
     implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.22.4")
     implementation("org.slf4j:slf4j-api:2.0.20")
-    implementation("org.xerial:sqlite-jdbc:3.53.4.0")
+    implementation("org.xerial:sqlite-jdbc:3.54.1.0")
     implementation("com.google.code.findbugs:jsr305:3.0.2")
 }
 
