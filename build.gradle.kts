@@ -25,7 +25,7 @@ dependencies {
 
     testImplementation("ch.qos.logback:logback-classic:1.6.6")
     testImplementation("org.testcontainers:testcontainers:2.0.5")
-    testImplementation("software.amazon.awssdk:apache5-client:2.57.6")
+    testImplementation("software.amazon.awssdk:apache5-client:2.57.7")
     testImplementation("software.amazon.awssdk:netty-nio-client:2.57.7")
 
     testImplementation("com.networknt:json-schema-validator:2.0.8")
