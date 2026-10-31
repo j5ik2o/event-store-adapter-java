@@ -28,7 +28,7 @@ dependencies {
     testImplementation("software.amazon.awssdk:apache5-client:2.57.8")
     testImplementation("software.amazon.awssdk:netty-nio-client:2.57.8")
 
-    testImplementation("com.networknt:json-schema-validator:2.0.8")
+    testImplementation("com.networknt:json-schema-validator:3.0.8")
 
     api("software.amazon.awssdk:dynamodb:2.57.8")
     api("com.google.cloud:google-cloud-spanner:6.125.0")
