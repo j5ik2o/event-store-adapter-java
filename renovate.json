@@ -20,6 +20,12 @@
       "enabled": false
     },
     {
+      "description": "json-schema-validator 3.x requires Java 17 and Jackson 3. The build still compiles and tests on Java 11 with Jackson 2, so keep major updates blocked while Java 11 verification is required.",
+      "matchPackageNames": ["com.networknt:json-schema-validator"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
       "description": "CI and publication run Gradle 9 on a separate LTS build JDK. Allow current and future LTS releases identified by Adoptium's LTS suffix, excluding short-lived non-LTS runtimes.",
       "matchPackageNames": ["java-jdk"],
       "allowedVersions": "/\\.LTS$/"
