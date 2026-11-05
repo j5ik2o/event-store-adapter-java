@@ -57,28 +57,25 @@ final class DynamoDbConfigurationInitializer {
 
   CompletableFuture<Void> initializeAsync(DynamoDbAsyncClient client) {
     return readAsync(client, new ReadState(), initialRequest(), 0, 50)
-        .thenCompose(
-            found -> {
-              if (!found.isEmpty()) {
-                validate(found);
-                return CompletableFuture.completedFuture(null);
-              }
-              return invoke(() -> client.transactWriteItems(createRequest()))
-                  .handle(
-                      (response, error) -> {
-                        if (error == null) return CompletableFuture.<Void>completedFuture(null);
-                        if (!creationConflict(error))
-                          return CompletableFuture.<Void>failedFuture(classify(error));
-                        return readAsync(client, new ReadState(), initialRequest(), 0, 50)
-                            .thenAccept(this::validateAfterConflict);
-                      })
-                  .thenCompose(future -> future);
-            })
-        .handle(
-            (ignored, error) -> {
-              if (error != null) throw classify(error);
-              return null;
-            });
+        .thenCompose(found -> {
+          if (!found.isEmpty()) {
+            validate(found);
+            return CompletableFuture.completedFuture(null);
+          }
+          return invoke(() -> client.transactWriteItems(createRequest()))
+              .handle((response, error) -> {
+                if (error == null) return CompletableFuture.<Void>completedFuture(null);
+                if (!creationConflict(error))
+                  return CompletableFuture.<Void>failedFuture(classify(error));
+                return readAsync(client, new ReadState(), initialRequest(), 0, 50)
+                    .thenAccept(this::validateAfterConflict);
+              })
+              .thenCompose(future -> future);
+        })
+        .handle((ignored, error) -> {
+          if (error != null) throw classify(error);
+          return null;
+        });
   }
 
   private Map<String, Map<String, AttributeValue>> read(DynamoDbClient client) {
@@ -109,22 +106,20 @@ final class DynamoDbConfigurationInitializer {
       int retries,
       long delay) {
     return invoke(() -> client.batchGetItem(request))
-        .thenCompose(
-            response -> {
-              Map<String, KeysAndAttributes> pending = state.accept(response);
-              if (pending.isEmpty()) return CompletableFuture.completedFuture(state.found);
-              checkLimit(retries);
-              return sleeper
-                  .sleepAsync(delay)
-                  .thenCompose(
-                      ignored ->
-                          readAsync(
-                              client,
-                              state,
-                              BatchGetItemRequest.builder().requestItems(pending).build(),
-                              retries + 1,
-                              Math.min(delay * 2, 1000)));
-            });
+        .thenCompose(response -> {
+          Map<String, KeysAndAttributes> pending = state.accept(response);
+          if (pending.isEmpty()) return CompletableFuture.completedFuture(state.found);
+          checkLimit(retries);
+          return sleeper
+              .sleepAsync(delay)
+              .thenCompose(ignored ->
+                  readAsync(
+                      client,
+                      state,
+                      BatchGetItemRequest.builder().requestItems(pending).build(),
+                      retries + 1,
+                      Math.min(delay * 2, 1000)));
+        });
   }
 
   private void checkLimit(int retries) {
@@ -135,32 +130,29 @@ final class DynamoDbConfigurationInitializer {
 
   private BatchGetItemRequest initialRequest() {
     Map<String, KeysAndAttributes> requests = new LinkedHashMap<>();
-    keys.forEach(
-        (table, key) ->
-            requests.put(
-                table,
-                KeysAndAttributes.builder().keys(List.of(key)).consistentRead(true).build()));
+    keys.forEach((table, key) ->
+        requests.put(
+            table, KeysAndAttributes.builder().keys(List.of(key)).consistentRead(true).build()));
     return BatchGetItemRequest.builder().requestItems(requests).build();
   }
 
   private TransactWriteItemsRequest createRequest() {
     String storeId = UUID.randomUUID().toString();
     List<TransactWriteItem> writes = new ArrayList<>();
-    keys.forEach(
-        (table, key) -> {
-          Map<String, AttributeValue> item = new LinkedHashMap<>(key);
-          item.put("store_id", AttributeValue.fromS(storeId));
-          item.put("layout_version", AttributeValue.fromN("1"));
-          writes.add(
-              TransactWriteItem.builder()
-                  .put(
-                      Put.builder()
-                          .tableName(table)
-                          .item(item)
-                          .conditionExpression("attribute_not_exists(aid)")
-                          .build())
-                  .build());
-        });
+    keys.forEach((table, key) -> {
+      Map<String, AttributeValue> item = new LinkedHashMap<>(key);
+      item.put("store_id", AttributeValue.fromS(storeId));
+      item.put("layout_version", AttributeValue.fromN("1"));
+      writes.add(
+          TransactWriteItem.builder()
+              .put(
+                  Put.builder()
+                      .tableName(table)
+                      .item(item)
+                      .conditionExpression("attribute_not_exists(aid)")
+                      .build())
+              .build());
+    });
     return TransactWriteItemsRequest.builder().transactItems(writes).build();
   }
 
@@ -217,26 +209,23 @@ final class DynamoDbConfigurationInitializer {
     Map<String, KeysAndAttributes> accept(BatchGetItemResponse response) {
       response
           .responses()
-          .forEach(
-              (table, items) ->
-                  items.forEach(
-                      item -> {
-                        if (!matchesKey(table, item))
-                          throw new StorageException("Unexpected configuration response key");
-                        found.put(table, item);
-                      }));
+          .forEach((table, items) ->
+              items.forEach(item -> {
+                if (!matchesKey(table, item))
+                  throw new StorageException("Unexpected configuration response key");
+                found.put(table, item);
+              }));
       Map<String, KeysAndAttributes> pending = new LinkedHashMap<>();
       response
           .unprocessedKeys()
-          .forEach(
-              (table, attributes) -> {
-                if (attributes.keys().isEmpty()) return;
-                for (Map<String, AttributeValue> key : attributes.keys()) {
-                  if (!matchesKey(table, key))
-                    throw new StorageException("Unexpected unprocessed configuration key");
-                }
-                pending.put(table, attributes.toBuilder().consistentRead(true).build());
-              });
+          .forEach((table, attributes) -> {
+            if (attributes.keys().isEmpty()) return;
+            for (Map<String, AttributeValue> key : attributes.keys()) {
+              if (!matchesKey(table, key))
+                throw new StorageException("Unexpected unprocessed configuration key");
+            }
+            pending.put(table, attributes.toBuilder().consistentRead(true).build());
+          });
       return pending;
     }
   }
@@ -246,10 +235,9 @@ final class DynamoDbConfigurationInitializer {
     if (!(cause instanceof TransactionCanceledException)) return false;
     return ((TransactionCanceledException) cause)
         .cancellationReasons().stream()
-            .anyMatch(
-                reason ->
-                    "ConditionalCheckFailed".equals(reason.code())
-                        || "TransactionConflict".equals(reason.code()));
+            .anyMatch(reason ->
+                "ConditionalCheckFailed".equals(reason.code())
+                    || "TransactionConflict".equals(reason.code()));
   }
 
   private static RuntimeException classify(Throwable error) {

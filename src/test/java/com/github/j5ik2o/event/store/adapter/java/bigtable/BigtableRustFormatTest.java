@@ -253,34 +253,32 @@ class BigtableRustFormatTest {
   @Test
   void theHeadSeqNrIsTwentyAsciiDigitsWhateverTheDefaultLocale() {
     BigtableEmulator.Tables t = noneStore();
-    withDefaultLocale(
-        () -> {
-          EventStore<String, String> store = store(open(t, RetentionPolicy.none()));
+    withDefaultLocale(() -> {
+      EventStore<String, String> store = store(open(t, RetentionPolicy.none()));
 
-          store.persistEvent(event(1));
+      store.persistEvent(event(1));
 
-          ByteString cell = EMULATOR.bytes(t.head, prefix("Order-1"), "head", "seq_nr");
-          assertEquals(20, cell.size());
-          assertEquals(ByteString.copyFrom(headSeqNr(1), StandardCharsets.US_ASCII), cell);
-          assertEquals(1, store.getEventsByIdSinceSeqNr(AID, 1).size());
-          store.persistEvent(event(2));
-          assertEquals(
-              ByteString.copyFrom(headSeqNr(2), StandardCharsets.US_ASCII),
-              EMULATOR.bytes(t.head, prefix("Order-1"), "head", "seq_nr"));
-        });
+      ByteString cell = EMULATOR.bytes(t.head, prefix("Order-1"), "head", "seq_nr");
+      assertEquals(20, cell.size());
+      assertEquals(ByteString.copyFrom(headSeqNr(1), StandardCharsets.US_ASCII), cell);
+      assertEquals(1, store.getEventsByIdSinceSeqNr(AID, 1).size());
+      store.persistEvent(event(2));
+      assertEquals(
+          ByteString.copyFrom(headSeqNr(2), StandardCharsets.US_ASCII),
+          EMULATOR.bytes(t.head, prefix("Order-1"), "head", "seq_nr"));
+    });
   }
 
   @Test
   void anAsciiHeadWrittenByAnotherWriterIsUpdatedWhateverTheDefaultLocale() {
     BigtableEmulator.Tables t = noneStore();
     writeHead(t, 1, 0L, false);
-    withDefaultLocale(
-        () -> {
-          store(open(t, RetentionPolicy.none())).persistEvent(event(2));
+    withDefaultLocale(() -> {
+      store(open(t, RetentionPolicy.none())).persistEvent(event(2));
 
-          assertEquals(
-              ByteString.copyFrom(headSeqNr(2), StandardCharsets.US_ASCII),
-              EMULATOR.bytes(t.head, prefix("Order-1"), "head", "seq_nr"));
-        });
+      assertEquals(
+          ByteString.copyFrom(headSeqNr(2), StandardCharsets.US_ASCII),
+          EMULATOR.bytes(t.head, prefix("Order-1"), "head", "seq_nr"));
+    });
   }
 }

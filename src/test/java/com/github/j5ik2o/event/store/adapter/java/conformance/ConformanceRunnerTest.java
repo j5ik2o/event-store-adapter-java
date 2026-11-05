@@ -33,11 +33,10 @@ class ConformanceRunnerTest {
       for (Backend backend : Backend.values()) {
         results.add(
             CaseClassifier.exclusion(c, backend)
-                .orElseGet(
-                    () ->
-                        backend == Backend.DYNAMODB && DynamoDbCaseRunner.supports(c)
-                            ? DynamoDbCaseRunner.run(c, dynamodb)
-                            : CaseClassifier.classify(c, backend)));
+                .orElseGet(() ->
+                    backend == Backend.DYNAMODB && DynamoDbCaseRunner.supports(c)
+                        ? DynamoDbCaseRunner.run(c, dynamodb)
+                        : CaseClassifier.classify(c, backend)));
       }
     }
 

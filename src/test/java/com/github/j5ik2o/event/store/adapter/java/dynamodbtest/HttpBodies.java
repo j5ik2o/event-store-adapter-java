@@ -14,10 +14,9 @@ final class HttpBodies {
   static CompletableFuture<byte[]> collect(Publisher<ByteBuffer> publisher) {
     AtomicReference<Subscription> subscription = new AtomicReference<>();
     CompletableFuture<byte[]> result = new CompletableFuture<>();
-    result.whenComplete(
-        (bytes, error) -> {
-          if (result.isCancelled() && subscription.get() != null) subscription.get().cancel();
-        });
+    result.whenComplete((bytes, error) -> {
+      if (result.isCancelled() && subscription.get() != null) subscription.get().cancel();
+    });
     publisher.subscribe(
         new Subscriber<ByteBuffer>() {
           private final ByteArrayOutputStream bytes = new ByteArrayOutputStream();

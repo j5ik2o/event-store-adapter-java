@@ -74,40 +74,37 @@ final class DynamoDbSnapshotRead {
     try {
       client
           .batchGetItem(request)
-          .whenComplete(
-              (response, failure) -> {
-                if (result.isDone()) return;
-                if (failure != null) {
-                  result.completeExceptionally(classify(failure));
-                  return;
-                }
-                try {
-                  Map<String, KeysAndAttributes> pending = state.accept(response);
-                  if (pending.isEmpty()) {
-                    result.complete(state.restore(serializer));
-                    return;
-                  }
-                  checkLimit(retries);
-                  sleeper
-                      .sleepAsync(delay)
-                      .whenComplete(
-                          (ignored, waitFailure) -> {
-                            if (waitFailure != null)
-                              result.completeExceptionally(classify(waitFailure));
-                            else
-                              readBatch(
-                                  client,
-                                  serializer,
-                                  state,
-                                  BatchGetItemRequest.builder().requestItems(pending).build(),
-                                  retries + 1,
-                                  Math.min(delay * 2, 1000),
-                                  result);
-                          });
-                } catch (RuntimeException invalidResponse) {
-                  result.completeExceptionally(classify(invalidResponse));
-                }
-              });
+          .whenComplete((response, failure) -> {
+            if (result.isDone()) return;
+            if (failure != null) {
+              result.completeExceptionally(classify(failure));
+              return;
+            }
+            try {
+              Map<String, KeysAndAttributes> pending = state.accept(response);
+              if (pending.isEmpty()) {
+                result.complete(state.restore(serializer));
+                return;
+              }
+              checkLimit(retries);
+              sleeper
+                  .sleepAsync(delay)
+                  .whenComplete((ignored, waitFailure) -> {
+                    if (waitFailure != null) result.completeExceptionally(classify(waitFailure));
+                    else
+                      readBatch(
+                          client,
+                          serializer,
+                          state,
+                          BatchGetItemRequest.builder().requestItems(pending).build(),
+                          retries + 1,
+                          Math.min(delay * 2, 1000),
+                          result);
+                  });
+            } catch (RuntimeException invalidResponse) {
+              result.completeExceptionally(classify(invalidResponse));
+            }
+          });
     } catch (RuntimeException failure) {
       result.completeExceptionally(classify(failure));
     }
@@ -115,11 +112,9 @@ final class DynamoDbSnapshotRead {
 
   private BatchGetItemRequest initialRequest() {
     Map<String, KeysAndAttributes> requests = new LinkedHashMap<>();
-    keys.forEach(
-        (table, key) ->
-            requests.put(
-                table,
-                KeysAndAttributes.builder().keys(List.of(key)).consistentRead(true).build()));
+    keys.forEach((table, key) ->
+        requests.put(
+            table, KeysAndAttributes.builder().keys(List.of(key)).consistentRead(true).build()));
     return BatchGetItemRequest.builder().requestItems(requests).build();
   }
 
@@ -146,22 +141,19 @@ final class DynamoDbSnapshotRead {
     Map<String, KeysAndAttributes> accept(BatchGetItemResponse response) {
       response
           .responses()
-          .forEach(
-              (table, items) ->
-                  items.forEach(
-                      item -> {
-                        checkKey(table, item);
-                        found.put(table, item);
-                      }));
+          .forEach((table, items) ->
+              items.forEach(item -> {
+                checkKey(table, item);
+                found.put(table, item);
+              }));
       Map<String, KeysAndAttributes> pending = new LinkedHashMap<>();
       response
           .unprocessedKeys()
-          .forEach(
-              (table, attributes) -> {
-                if (attributes.keys().isEmpty()) return;
-                attributes.keys().forEach(key -> checkKey(table, key));
-                pending.put(table, attributes.toBuilder().consistentRead(true).build());
-              });
+          .forEach((table, attributes) -> {
+            if (attributes.keys().isEmpty()) return;
+            attributes.keys().forEach(key -> checkKey(table, key));
+            pending.put(table, attributes.toBuilder().consistentRead(true).build());
+          });
       return pending;
     }
 

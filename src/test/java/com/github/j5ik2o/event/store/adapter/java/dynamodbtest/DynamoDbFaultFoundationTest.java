@@ -250,9 +250,8 @@ class DynamoDbFaultFoundationTest {
         FaultRegistry.Effect effect =
             injection == FaultRegistry.Injection.REPLACE_REQUEST
                 ? DynamoDbFaultEffects.sdkError("InternalServerError")
-                : DynamoDbFaultEffects.response(
-                    response ->
-                        ((QueryResponse) response).toBuilder().items(List.of()).count(0).build());
+                : DynamoDbFaultEffects.response(response ->
+                    ((QueryResponse) response).toBuilder().items(List.of()).count(0).build());
         FaultRegistry.Fault shortfall =
             context.faults.register(1, "read-events", 2, injection, effect);
         FaultRegistry.Operation one = context.faults.begin(1, false);
@@ -334,10 +333,9 @@ class DynamoDbFaultFoundationTest {
             "commit",
             1,
             FaultRegistry.Injection.REPLACE_RESPONSE,
-            DynamoDbFaultEffects.response(
-                response -> {
-                  throw lost;
-                }));
+            DynamoDbFaultEffects.response(response -> {
+              throw lost;
+            }));
         FaultRegistry.Operation operation = context.faults.begin(1, true);
         byte[] bytes = {1, 2};
         TransactWriteItemsRequest request =
@@ -458,9 +456,8 @@ class DynamoDbFaultFoundationTest {
           "read-events",
           1,
           FaultRegistry.Injection.REPLACE_RESPONSE,
-          DynamoDbFaultEffects.response(
-              response ->
-                  ((QueryResponse) response).toBuilder().items(List.of()).count(0).build()));
+          DynamoDbFaultEffects.response(response ->
+              ((QueryResponse) response).toBuilder().items(List.of()).count(0).build()));
       FaultRegistry.Operation operation = context.faults.begin(1, false);
       assertTrue(query(context, events(context), true).items().isEmpty());
       assertEquals(1, context.admin.query(events(context)).items().size());
@@ -780,12 +777,11 @@ class DynamoDbFaultFoundationTest {
           "read-events",
           -1,
           FaultRegistry.Injection.REPLACE_RESPONSE,
-          DynamoDbFaultEffects.response(
-              response -> {
-                responseReached.countDown();
-                await(release);
-                return ((QueryResponse) response).toBuilder().items(List.of()).count(0).build();
-              }));
+          DynamoDbFaultEffects.response(response -> {
+            responseReached.countDown();
+            await(release);
+            return ((QueryResponse) response).toBuilder().items(List.of()).count(0).build();
+          }));
       FaultRegistry.Operation operation = context.faults.begin(1, false);
       try {
         CompletableFuture<QueryResponse> request = context.async.query(events(context));

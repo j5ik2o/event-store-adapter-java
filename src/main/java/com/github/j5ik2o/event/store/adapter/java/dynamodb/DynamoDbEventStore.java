@@ -57,15 +57,14 @@ public final class DynamoDbEventStore {
       requireSettings(client, tables, config);
       return new DynamoDbConfigurationInitializer(tables, sleeper)
           .initializeAsync(client)
-          .thenApply(
-              ignored ->
-                  new Asynchronous<>(
-                      client,
-                      tables,
-                      config.payloadSerializer(),
-                      config.snapshotSerializer(),
-                      config.retentionFailureListener(),
-                      sleeper));
+          .thenApply(ignored ->
+              new Asynchronous<>(
+                  client,
+                  tables,
+                  config.payloadSerializer(),
+                  config.snapshotSerializer(),
+                  config.retentionFailureListener(),
+                  sleeper));
     } catch (ConfigurationException failure) {
       return CompletableFuture.failedFuture(failure);
     }
@@ -172,11 +171,10 @@ public final class DynamoDbEventStore {
         TransactWriteItemsRequest request = DynamoDbEventWrite.prepare(event, tables, serializer);
         client
             .transactWriteItems(request)
-            .whenComplete(
-                (response, failure) -> {
-                  if (failure == null) result.complete(null);
-                  else result.completeExceptionally(DynamoDbEventWrite.classify(event, failure));
-                });
+            .whenComplete((response, failure) -> {
+              if (failure == null) result.complete(null);
+              else result.completeExceptionally(DynamoDbEventWrite.classify(event, failure));
+            });
       } catch (RuntimeException failure) {
         result.completeExceptionally(DynamoDbEventWrite.classify(event, failure));
       }
@@ -191,26 +189,25 @@ public final class DynamoDbEventStore {
             DynamoDbEventWrite.prepare(event, snapshot, tables, serializer, snapshotSerializer);
         client
             .transactWriteItems(request)
-            .whenComplete(
-                (response, failure) -> {
-                  if (failure != null) {
-                    result.completeExceptionally(DynamoDbEventWrite.classify(event, failure));
-                    return;
-                  }
-                  try {
-                    new DynamoDbSnapshotRetention(
-                            event.aggregateId(),
-                            snapshot.seqNr(),
-                            tables,
-                            retentionFailureListener,
-                            sleeper)
-                        .retainAsync(client)
-                        .whenComplete((ignored, retentionFailure) -> result.complete(null));
-                  } catch (RuntimeException retentionFailure) {
-                    // Retention cannot change the success of the committed write.
-                    result.complete(null);
-                  }
-                });
+            .whenComplete((response, failure) -> {
+              if (failure != null) {
+                result.completeExceptionally(DynamoDbEventWrite.classify(event, failure));
+                return;
+              }
+              try {
+                new DynamoDbSnapshotRetention(
+                        event.aggregateId(),
+                        snapshot.seqNr(),
+                        tables,
+                        retentionFailureListener,
+                        sleeper)
+                    .retainAsync(client)
+                    .whenComplete((ignored, retentionFailure) -> result.complete(null));
+              } catch (RuntimeException retentionFailure) {
+                // Retention cannot change the success of the committed write.
+                result.complete(null);
+              }
+            });
       } catch (RuntimeException failure) {
         result.completeExceptionally(DynamoDbEventWrite.classify(event, failure));
       }
@@ -246,26 +243,23 @@ public final class DynamoDbEventStore {
       try {
         client
             .query(request)
-            .whenComplete(
-                (response, failure) -> {
-                  if (failure != null) {
-                    result.completeExceptionally(DynamoDbEventRead.classify(failure));
-                    return;
-                  }
-                  try {
-                    DynamoDbEventRead.append(response, serializer, events);
-                    if (response.lastEvaluatedKey().isEmpty()) result.complete(List.copyOf(events));
-                    else
-                      readPage(
-                          request.toBuilder()
-                              .exclusiveStartKey(response.lastEvaluatedKey())
-                              .build(),
-                          events,
-                          result);
-                  } catch (RuntimeException invalidResponse) {
-                    result.completeExceptionally(DynamoDbEventRead.classify(invalidResponse));
-                  }
-                });
+            .whenComplete((response, failure) -> {
+              if (failure != null) {
+                result.completeExceptionally(DynamoDbEventRead.classify(failure));
+                return;
+              }
+              try {
+                DynamoDbEventRead.append(response, serializer, events);
+                if (response.lastEvaluatedKey().isEmpty()) result.complete(List.copyOf(events));
+                else
+                  readPage(
+                      request.toBuilder().exclusiveStartKey(response.lastEvaluatedKey()).build(),
+                      events,
+                      result);
+              } catch (RuntimeException invalidResponse) {
+                result.completeExceptionally(DynamoDbEventRead.classify(invalidResponse));
+              }
+            });
       } catch (RuntimeException failure) {
         result.completeExceptionally(DynamoDbEventRead.classify(failure));
       }

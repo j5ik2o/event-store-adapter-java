@@ -22,14 +22,13 @@ class SqliteCaseRunnerTest {
     Set<String> required = RequiredCases.load().get(Backend.SQLITE);
     return ConformanceDataLoader.load(ConformanceTestFiles.REAL_ROOT).cases().stream()
         .filter(c -> required.contains(c.id()))
-        .map(
-            c ->
-                dynamicTest(
-                    c.id(),
-                    () -> {
-                      CaseResult result = CaseClassifier.classify(c, Backend.SQLITE);
-                      assertEquals(ConformanceStatus.PASSED, result.status(), result.reason());
-                    }));
+        .map(c ->
+            dynamicTest(
+                c.id(),
+                () -> {
+                  CaseResult result = CaseClassifier.classify(c, Backend.SQLITE);
+                  assertEquals(ConformanceStatus.PASSED, result.status(), result.reason());
+                }));
   }
 
   @Test

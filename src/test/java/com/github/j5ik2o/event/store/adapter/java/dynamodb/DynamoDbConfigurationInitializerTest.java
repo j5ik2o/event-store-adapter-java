@@ -214,10 +214,9 @@ class DynamoDbConfigurationInitializerTest {
           }
         };
     CompletableFuture<?> result =
-        assertDoesNotThrow(
-            () ->
-                DynamoDbEventStore.createAsync(
-                    client, DynamoDbTableConfigTest.names().build(), config()));
+        assertDoesNotThrow(() ->
+            DynamoDbEventStore.createAsync(
+                client, DynamoDbTableConfigTest.names().build(), config()));
     assertInstanceOf(
         StorageException.class,
         EventStoreExceptions.unwrap(assertThrows(CompletionException.class, result::join)));

@@ -150,24 +150,23 @@ final class DynamoDbTestContext implements AutoCloseable {
       result.completeExceptionally(failure);
       return result;
     }
-    actual.whenComplete(
-        (response, error) -> {
-          Throwable failure = error;
-          try {
-            if (error == null) {
-              // This runs after real creation, even if the caller cancels its result.
-              afterActualCreation.run();
-            }
-          } catch (Throwable acquisitionFailure) {
-            failure = acquisitionFailure;
-          } finally {
-            // Keep the SDK outcome separate from failure/cancellation of the caller's result.
-            acquisition.settled.complete(error);
-          }
-          // Notify callers only after acquisition has reached its independent terminal state.
-          if (failure == null) result.complete(response);
-          else result.completeExceptionally(failure);
-        });
+    actual.whenComplete((response, error) -> {
+      Throwable failure = error;
+      try {
+        if (error == null) {
+          // This runs after real creation, even if the caller cancels its result.
+          afterActualCreation.run();
+        }
+      } catch (Throwable acquisitionFailure) {
+        failure = acquisitionFailure;
+      } finally {
+        // Keep the SDK outcome separate from failure/cancellation of the caller's result.
+        acquisition.settled.complete(error);
+      }
+      // Notify callers only after acquisition has reached its independent terminal state.
+      if (failure == null) result.complete(response);
+      else result.completeExceptionally(failure);
+    });
     return result;
   }
 

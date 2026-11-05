@@ -33,14 +33,13 @@ class MemoryCaseRunnerTest {
     return ConformanceDataLoader.load(ConformanceTestFiles.REAL_ROOT).cases().stream()
         .filter(c -> c.file().startsWith("scenarios/core/"))
         .filter(c -> !c.timePrecision().map("milliseconds"::equals).orElse(false))
-        .map(
-            c ->
-                dynamicTest(
-                    c.id(),
-                    () -> {
-                      CaseResult result = CaseClassifier.classify(c, Backend.MEMORY);
-                      assertEquals(ConformanceStatus.PASSED, result.status(), result.reason());
-                    }));
+        .map(c ->
+            dynamicTest(
+                c.id(),
+                () -> {
+                  CaseResult result = CaseClassifier.classify(c, Backend.MEMORY);
+                  assertEquals(ConformanceStatus.PASSED, result.status(), result.reason());
+                }));
   }
 
   @Test
@@ -114,17 +113,16 @@ class MemoryCaseRunnerTest {
     return ConformanceDataLoader.load(ConformanceTestFiles.REAL_ROOT).cases().stream()
         .filter(c -> c.operation().map("validateOccurredAt"::equals).orElse(false))
         .filter(c -> !c.timePrecision().map("milliseconds"::equals).orElse(false))
-        .map(
-            c ->
-                dynamicTest(
-                    c.id(),
-                    () -> {
-                      CaseResult memory = CaseClassifier.classify(c, Backend.MEMORY);
-                      assertEquals(ConformanceStatus.PASSED, memory.status(), memory.reason());
-                      assertEquals(
-                          ConformanceStatus.UNVERIFIED,
-                          CaseClassifier.classify(c, Backend.DYNAMODB).status());
-                    }));
+        .map(c ->
+            dynamicTest(
+                c.id(),
+                () -> {
+                  CaseResult memory = CaseClassifier.classify(c, Backend.MEMORY);
+                  assertEquals(ConformanceStatus.PASSED, memory.status(), memory.reason());
+                  assertEquals(
+                      ConformanceStatus.UNVERIFIED,
+                      CaseClassifier.classify(c, Backend.DYNAMODB).status());
+                }));
   }
 
   @Test
@@ -141,24 +139,23 @@ class MemoryCaseRunnerTest {
   @TestFactory
   Stream<DynamicTest> unconnectedObservationsAndFaultDetailsRemainUnverified() {
     return Stream.of("requests", "unknown-history", "unknown-fault-detail")
-        .map(
-            field ->
-                dynamicTest(
-                    field,
-                    () -> {
-                      ConformanceCase original = find("core-retention-failure-after-commit");
-                      ObjectNode changed = original.materialized().deepCopy();
-                      if (field.equals("requests"))
-                        ((ObjectNode) changed.at("/steps/1/observe")).putArray(field);
-                      else if (field.equals("unknown-history"))
-                        ((ObjectNode) changed.at("/steps/1/observe/history")).putArray(field);
-                      else ((ObjectNode) changed.at("/faults/0/details")).put(field, true);
-                      CaseResult result =
-                          CaseClassifier.classify(copy(original, changed), Backend.MEMORY);
-                      assertEquals(ConformanceStatus.UNVERIFIED, result.status());
-                      org.junit.jupiter.api.Assertions.assertFalse(
-                          result.actual().has("initialization"));
-                    }));
+        .map(field ->
+            dynamicTest(
+                field,
+                () -> {
+                  ConformanceCase original = find("core-retention-failure-after-commit");
+                  ObjectNode changed = original.materialized().deepCopy();
+                  if (field.equals("requests"))
+                    ((ObjectNode) changed.at("/steps/1/observe")).putArray(field);
+                  else if (field.equals("unknown-history"))
+                    ((ObjectNode) changed.at("/steps/1/observe/history")).putArray(field);
+                  else ((ObjectNode) changed.at("/faults/0/details")).put(field, true);
+                  CaseResult result =
+                      CaseClassifier.classify(copy(original, changed), Backend.MEMORY);
+                  assertEquals(ConformanceStatus.UNVERIFIED, result.status());
+                  org.junit.jupiter.api.Assertions.assertFalse(
+                      result.actual().has("initialization"));
+                }));
   }
 
   @Test
@@ -200,14 +197,13 @@ class MemoryCaseRunnerTest {
   @TestFactory
   Stream<DynamicTest> storeCreationAndPayloadMutationCasesPassOnTheRealMemoryStore() {
     return NEW_MEMORY_CASES.stream()
-        .map(
-            id ->
-                dynamicTest(
-                    id,
-                    () -> {
-                      CaseResult result = MemoryCaseRunner.run(find(id));
-                      assertEquals(ConformanceStatus.PASSED, result.status(), result.reason());
-                    }));
+        .map(id ->
+            dynamicTest(
+                id,
+                () -> {
+                  CaseResult result = MemoryCaseRunner.run(find(id));
+                  assertEquals(ConformanceStatus.PASSED, result.status(), result.reason());
+                }));
   }
 
   @Test

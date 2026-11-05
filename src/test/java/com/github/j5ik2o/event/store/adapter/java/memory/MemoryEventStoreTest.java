@@ -209,26 +209,24 @@ class MemoryEventStoreTest {
     ExecutorService executor = Executors.newFixedThreadPool(2);
     try {
       Future<?> writes =
-          executor.submit(
-              () -> {
-                assertTrue(start.await(5, TimeUnit.SECONDS));
-                for (long seqNr = 2; seqNr <= 101; seqNr++) {
-                  writer.persistEventAndSnapshot(event(seqNr), snapshot(seqNr));
-                }
-                return null;
-              });
+          executor.submit(() -> {
+            assertTrue(start.await(5, TimeUnit.SECONDS));
+            for (long seqNr = 2; seqNr <= 101; seqNr++) {
+              writer.persistEventAndSnapshot(event(seqNr), snapshot(seqNr));
+            }
+            return null;
+          });
       Future<?> reads =
-          executor.submit(
-              () -> {
-                assertTrue(start.await(5, TimeUnit.SECONDS));
-                for (int i = 0; i < 100; i++) {
-                  SnapshotReadResult<String> captured = reader.getLatestSnapshotById(AID).get();
-                  assertEquals(captured.headSeqNr(), captured.snapshot().get().seqNr());
-                  assertEquals(
-                      "snapshot-" + captured.headSeqNr(), captured.snapshot().get().aggregate());
-                }
-                return null;
-              });
+          executor.submit(() -> {
+            assertTrue(start.await(5, TimeUnit.SECONDS));
+            for (int i = 0; i < 100; i++) {
+              SnapshotReadResult<String> captured = reader.getLatestSnapshotById(AID).get();
+              assertEquals(captured.headSeqNr(), captured.snapshot().get().seqNr());
+              assertEquals(
+                  "snapshot-" + captured.headSeqNr(), captured.snapshot().get().aggregate());
+            }
+            return null;
+          });
 
       start.countDown();
       writes.get(5, TimeUnit.SECONDS);

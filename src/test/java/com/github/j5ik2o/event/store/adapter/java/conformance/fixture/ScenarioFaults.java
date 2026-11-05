@@ -26,11 +26,10 @@ public final class ScenarioFaults {
   }
 
   public ScenarioFaults(JsonNode faults) {
-    faults.forEach(
-        fault -> {
-          registered.add(fault);
-          fired.add(0);
-        });
+    faults.forEach(fault -> {
+      registered.add(fault);
+      fired.add(0);
+    });
   }
 
   public boolean supported() {

@@ -52,15 +52,14 @@ class DynamoDbSnapshotWriteBoundaryTest {
 
   private Stream<DynamicTest> both(String name, RetentionPolicy policy, Scenario scenario) {
     return Stream.of(false, true)
-        .map(
-            async ->
-                DynamicTest.dynamicTest(
-                    name + (async ? " async" : " sync"),
-                    () -> {
-                      try (Scene scene = new Scene(name, async, policy)) {
-                        scenario.run(scene);
-                      }
-                    }));
+        .map(async ->
+            DynamicTest.dynamicTest(
+                name + (async ? " async" : " sync"),
+                () -> {
+                  try (Scene scene = new Scene(name, async, policy)) {
+                    scenario.run(scene);
+                  }
+                }));
   }
 
   private static EventEnvelope<byte[]> event(
@@ -150,36 +149,31 @@ class DynamoDbSnapshotWriteBoundaryTest {
   @TestFactory
   Stream<DynamicTest> createAndUpdatePersistAllAttributesAndRestoreJournalThroughTheProduct() {
     return Stream.of(RetentionPolicy.none(), RetentionPolicy.delete(2), RetentionPolicy.ttl(2, 60))
-        .flatMap(
-            policy ->
-                both(
-                    "create-and-update-" + policy.mode().map(Enum::name).orElse("none"),
-                    policy,
-                    s -> {
-                      List<EventEnvelope<byte[]>> events = new ArrayList<>();
-                      for (long seq : List.of(1L, 2L, 3L)) {
-                        EventEnvelope<byte[]> event =
-                            event(
-                                seq,
-                                seq == 1 ? -1 : 123456789L,
-                                "event書式é",
-                                new byte[] {(byte) seq});
-                        SnapshotEnvelope<byte[]> snapshot =
-                            snapshot(seq, "snapshot形式界", new byte[] {(byte) (seq + 10)});
-                        assertNull(s.write(event, snapshot, 1, 1));
-                        s.assertSaved(event, snapshot);
-                        events.add(event);
-                        assertEquals(seq, s.rows(s.c.journal).size());
-                        assertEquals(
-                            policy.mode().orElse(null) == RetentionMode.DELETE
-                                ? Math.min(seq, 2) + 1
-                                : s.history ? seq + 1 : 1,
-                            s.rows(s.c.snapshot).size());
-                      }
-                      assertEquals(3, s.eventSerializations.get());
-                      assertEquals(3, s.snapshotSerializations.get());
-                      s.assertEvents(events);
-                    }));
+        .flatMap(policy ->
+            both(
+                "create-and-update-" + policy.mode().map(Enum::name).orElse("none"),
+                policy,
+                s -> {
+                  List<EventEnvelope<byte[]>> events = new ArrayList<>();
+                  for (long seq : List.of(1L, 2L, 3L)) {
+                    EventEnvelope<byte[]> event =
+                        event(seq, seq == 1 ? -1 : 123456789L, "event書式é", new byte[] {(byte) seq});
+                    SnapshotEnvelope<byte[]> snapshot =
+                        snapshot(seq, "snapshot形式界", new byte[] {(byte) (seq + 10)});
+                    assertNull(s.write(event, snapshot, 1, 1));
+                    s.assertSaved(event, snapshot);
+                    events.add(event);
+                    assertEquals(seq, s.rows(s.c.journal).size());
+                    assertEquals(
+                        policy.mode().orElse(null) == RetentionMode.DELETE
+                            ? Math.min(seq, 2) + 1
+                            : s.history ? seq + 1 : 1,
+                        s.rows(s.c.snapshot).size());
+                  }
+                  assertEquals(3, s.eventSerializations.get());
+                  assertEquals(3, s.snapshotSerializations.get());
+                  s.assertEvents(events);
+                }));
   }
 
   @TestFactory
@@ -260,32 +254,31 @@ class DynamoDbSnapshotWriteBoundaryTest {
   @TestFactory
   Stream<DynamicTest> currentAndHistoryControlTheExactItemLimitForCreateAndUpdate() {
     return Stream.of(RetentionPolicy.none(), RetentionPolicy.delete(2), RetentionPolicy.ttl(2, 60))
-        .flatMap(
-            policy ->
-                both(
-                    "size-boundaries-" + policy.mode().map(Enum::name).orElse("none"),
-                    policy,
-                    s -> {
-                      // Independent AWS counts for A-x, single-digit numbers and empty manifest:
-                      // current = 43 name bytes + 3 aid bytes + 6 number bytes + B = 52 + B.
-                      // history adds active_history_seq_nr(21) + N(2) = 75 + B.
-                      int overhead = s.history ? 75 : 52;
-                      byte[] exact = new byte[409600 - overhead];
-                      Arrays.fill(exact, (byte) 0xa5);
-                      for (long seq : List.of(1L, 2L)) {
-                        EventEnvelope<byte[]> event = event(seq, 1, "", new byte[0]);
-                        violation(
-                            s.write(event, snapshot(seq, "", new byte[exact.length + 1]), 0, 0),
-                            "D-7",
-                            seq);
-                        SnapshotEnvelope<byte[]> snapshot = snapshot(seq, "", exact);
-                        assertNull(s.write(event, snapshot, 1, 1));
-                        s.assertSaved(event, snapshot);
-                      }
-                      s.observation.put(
-                          "limiting_item", s.history ? "history-snapshot" : "current-snapshot");
-                      s.observation.put("independent_overhead_bytes", overhead);
-                    }));
+        .flatMap(policy ->
+            both(
+                "size-boundaries-" + policy.mode().map(Enum::name).orElse("none"),
+                policy,
+                s -> {
+                  // Independent AWS counts for A-x, single-digit numbers and empty manifest:
+                  // current = 43 name bytes + 3 aid bytes + 6 number bytes + B = 52 + B.
+                  // history adds active_history_seq_nr(21) + N(2) = 75 + B.
+                  int overhead = s.history ? 75 : 52;
+                  byte[] exact = new byte[409600 - overhead];
+                  Arrays.fill(exact, (byte) 0xa5);
+                  for (long seq : List.of(1L, 2L)) {
+                    EventEnvelope<byte[]> event = event(seq, 1, "", new byte[0]);
+                    violation(
+                        s.write(event, snapshot(seq, "", new byte[exact.length + 1]), 0, 0),
+                        "D-7",
+                        seq);
+                    SnapshotEnvelope<byte[]> snapshot = snapshot(seq, "", exact);
+                    assertNull(s.write(event, snapshot, 1, 1));
+                    s.assertSaved(event, snapshot);
+                  }
+                  s.observation.put(
+                      "limiting_item", s.history ? "history-snapshot" : "current-snapshot");
+                  s.observation.put("independent_overhead_bytes", overhead);
+                }));
   }
 
   @TestFactory
@@ -411,59 +404,53 @@ class DynamoDbSnapshotWriteBoundaryTest {
   @TestFactory
   Stream<DynamicTest> multipleCancellationReasonsKeepConflictHeadJournalPriority() {
     return Stream.of(RetentionPolicy.none(), RetentionPolicy.delete(2))
-        .flatMap(
-            policy ->
-                both(
-                    "cancellation-priority-"
-                        + (policy.keepCount().isPresent() ? "history" : "current"),
-                    policy,
-                    s -> {
-                      assertNull(s.write(event(1), snapshot(1), 1, 1));
-                      int count = s.history ? 4 : 3;
-                      for (int position = 2; position < count; position++) {
-                        String[][] combinations = {
-                          {
-                            "ConditionalCheckFailed",
-                            "ConditionalCheckFailed",
-                            "TransactionConflict"
-                          },
-                          {"ConditionalCheckFailed", "ConditionalCheckFailed", "ThrottlingError"},
-                          {"ConditionalCheckFailed", "None", "ThrottlingError"},
-                          {"None", "None", "ThrottlingError"},
-                          {"None", "None", "ConditionalCheckFailed"}
-                        };
-                        for (int i = 0; i < combinations.length; i++) {
-                          String[] codes = new String[count];
-                          Arrays.fill(codes, "None");
-                          codes[0] = combinations[i][0];
-                          codes[1] = combinations[i][1];
-                          codes[position] = combinations[i][2];
-                          s.cancel(codes, 1L);
-                          Throwable failure = s.write(event(3), snapshot(3), 1, 0);
-                          if (i == 1) violation(failure, "W-8", 3);
-                          else if (i >= 3) assertInstanceOf(StorageException.class, failure);
-                          else assertInstanceOf(OptimisticLockException.class, failure);
-                        }
-                      }
+        .flatMap(policy ->
+            both(
+                "cancellation-priority-" + (policy.keepCount().isPresent() ? "history" : "current"),
+                policy,
+                s -> {
+                  assertNull(s.write(event(1), snapshot(1), 1, 1));
+                  int count = s.history ? 4 : 3;
+                  for (int position = 2; position < count; position++) {
+                    String[][] combinations = {
+                      {"ConditionalCheckFailed", "ConditionalCheckFailed", "TransactionConflict"},
+                      {"ConditionalCheckFailed", "ConditionalCheckFailed", "ThrottlingError"},
+                      {"ConditionalCheckFailed", "None", "ThrottlingError"},
+                      {"None", "None", "ThrottlingError"},
+                      {"None", "None", "ConditionalCheckFailed"}
+                    };
+                    for (int i = 0; i < combinations.length; i++) {
                       String[] codes = new String[count];
                       Arrays.fill(codes, "None");
-                      codes[1] = "ConditionalCheckFailed";
-                      s.cancel(codes, 3L);
-                      Throwable failure = s.write(event(2), snapshot(2), 1, 0);
-                      assertInstanceOf(OptimisticLockException.class, failure);
-                      assertEquals(
-                          "3",
-                          ((TransactionCanceledException) failure.getCause())
-                              .cancellationReasons()
-                              .get(1)
-                              .item()
-                              .get("seq_nr")
-                              .n());
-                      assertEquals("1", s.item(s.c.head, null, 0).get("seq_nr").n());
-                      s.cancel(codes, null);
-                      violation(s.write(event(2), snapshot(2), 1, 0), "W-8", 2);
-                      assertNull(s.write(event(2), snapshot(2), 1, 1));
-                    }));
+                      codes[0] = combinations[i][0];
+                      codes[1] = combinations[i][1];
+                      codes[position] = combinations[i][2];
+                      s.cancel(codes, 1L);
+                      Throwable failure = s.write(event(3), snapshot(3), 1, 0);
+                      if (i == 1) violation(failure, "W-8", 3);
+                      else if (i >= 3) assertInstanceOf(StorageException.class, failure);
+                      else assertInstanceOf(OptimisticLockException.class, failure);
+                    }
+                  }
+                  String[] codes = new String[count];
+                  Arrays.fill(codes, "None");
+                  codes[1] = "ConditionalCheckFailed";
+                  s.cancel(codes, 3L);
+                  Throwable failure = s.write(event(2), snapshot(2), 1, 0);
+                  assertInstanceOf(OptimisticLockException.class, failure);
+                  assertEquals(
+                      "3",
+                      ((TransactionCanceledException) failure.getCause())
+                          .cancellationReasons()
+                          .get(1)
+                          .item()
+                          .get("seq_nr")
+                          .n());
+                  assertEquals("1", s.item(s.c.head, null, 0).get("seq_nr").n());
+                  s.cancel(codes, null);
+                  violation(s.write(event(2), snapshot(2), 1, 0), "W-8", 2);
+                  assertNull(s.write(event(2), snapshot(2), 1, 1));
+                }));
   }
 
   @TestFactory
@@ -685,78 +672,72 @@ class DynamoDbSnapshotWriteBoundaryTest {
   @TestFactory
   Stream<DynamicTest> pendingAndCancelledFuturesWaitForTheActualSnapshotRequestToTerminate() {
     return Stream.of(false, true)
-        .map(
-            cancel ->
-                DynamicTest.dynamicTest(
-                    cancel ? "snapshot async cancellation" : "snapshot async pending",
-                    () -> {
-                      try (Scene s =
-                          new Scene(
-                              cancel ? "async-cancellation" : "async-pending",
-                              true,
-                              RetentionPolicy.delete(2))) {
-                        CompletableFuture<Void> entered = new CompletableFuture<>();
-                        CompletableFuture<Void> release = new CompletableFuture<>();
-                        CompletableFuture<Void> retentionEntered = new CompletableFuture<>();
-                        Map<String, Object> before = s.stored();
-                        s.register(
-                            "commit",
+        .map(cancel ->
+            DynamicTest.dynamicTest(
+                cancel ? "snapshot async cancellation" : "snapshot async pending",
+                () -> {
+                  try (Scene s =
+                      new Scene(
+                          cancel ? "async-cancellation" : "async-pending",
+                          true,
+                          RetentionPolicy.delete(2))) {
+                    CompletableFuture<Void> entered = new CompletableFuture<>();
+                    CompletableFuture<Void> release = new CompletableFuture<>();
+                    CompletableFuture<Void> retentionEntered = new CompletableFuture<>();
+                    Map<String, Object> before = s.stored();
+                    s.register(
+                        "commit",
+                        FaultRegistry.Injection.REPLACE_RESPONSE,
+                        DynamoDbFaultEffects.response(response -> {
+                          s.observation.set("actual_sdk_response", DynamoDbJson.sdk(response));
+                          entered.complete(null);
+                          release.join();
+                          return response;
+                        }));
+                    FaultRegistry.Fault retention =
+                        s.c.faults.register(
+                            s.nextOperation,
+                            "retention-query",
+                            1,
                             FaultRegistry.Injection.REPLACE_RESPONSE,
-                            DynamoDbFaultEffects.response(
-                                response -> {
-                                  s.observation.set(
-                                      "actual_sdk_response", DynamoDbJson.sdk(response));
-                                  entered.complete(null);
-                                  release.join();
-                                  return response;
-                                }));
-                        FaultRegistry.Fault retention =
-                            s.c.faults.register(
-                                s.nextOperation,
-                                "retention-query",
-                                1,
-                                FaultRegistry.Injection.REPLACE_RESPONSE,
-                                DynamoDbFaultEffects.response(
-                                    response -> {
-                                      retentionEntered.complete(null);
-                                      return response;
-                                    }));
-                        FaultRegistry.Operation operation =
-                            s.c.faults.begin(s.nextOperation++, true);
-                        CompletableFuture<Void> result =
-                            s.asyncStore.persistEventAndSnapshot(event(1), snapshot(1));
-                        try {
-                          entered.get(10, TimeUnit.SECONDS);
-                          assertFalse(result.isDone());
-                          assertEquals(1, s.c.faults.pending(operation));
-                          assertFalse(s.c.recorder.requestsFinished(operation).isDone());
-                          assertFalse(s.c.closed());
-                          s.assertSaved(event(1), snapshot(1));
-                          s.observation.put(
-                              "public_future_pending_before_release", !result.isDone());
-                          s.observation.put(
-                              "request_pending_before_release", s.c.faults.pending(operation));
-                          if (cancel) {
-                            assertTrue(result.cancel(true));
-                            assertTrue(result.isCancelled());
-                            assertFalse(s.c.recorder.requestsFinished(operation).isDone());
-                            assertEquals(1, s.c.faults.pending(operation));
-                          }
-                        } finally {
-                          release.complete(null);
-                          if (!cancel) assertNull(result.get(10, TimeUnit.SECONDS));
-                          retentionEntered.get(10, TimeUnit.SECONDS);
-                          s.complete(operation, null, 1, 1, before);
-                          assertEquals(1, s.c.faults.applications(retention));
-                          assertEquals(0, s.c.faults.reservations(retention));
-                        }
-                        s.observation.put("public_future_cancelled", result.isCancelled());
-                        s.assertRequest(s.requests(operation).get(0), event(1), snapshot(1));
-                        assertFalse(s.c.closed());
-                        s.assertSaved(event(1), snapshot(1));
-                        assertNull(s.write(event(2), snapshot(2), 1, 1));
+                            DynamoDbFaultEffects.response(response -> {
+                              retentionEntered.complete(null);
+                              return response;
+                            }));
+                    FaultRegistry.Operation operation = s.c.faults.begin(s.nextOperation++, true);
+                    CompletableFuture<Void> result =
+                        s.asyncStore.persistEventAndSnapshot(event(1), snapshot(1));
+                    try {
+                      entered.get(10, TimeUnit.SECONDS);
+                      assertFalse(result.isDone());
+                      assertEquals(1, s.c.faults.pending(operation));
+                      assertFalse(s.c.recorder.requestsFinished(operation).isDone());
+                      assertFalse(s.c.closed());
+                      s.assertSaved(event(1), snapshot(1));
+                      s.observation.put("public_future_pending_before_release", !result.isDone());
+                      s.observation.put(
+                          "request_pending_before_release", s.c.faults.pending(operation));
+                      if (cancel) {
+                        assertTrue(result.cancel(true));
+                        assertTrue(result.isCancelled());
+                        assertFalse(s.c.recorder.requestsFinished(operation).isDone());
+                        assertEquals(1, s.c.faults.pending(operation));
                       }
-                    }));
+                    } finally {
+                      release.complete(null);
+                      if (!cancel) assertNull(result.get(10, TimeUnit.SECONDS));
+                      retentionEntered.get(10, TimeUnit.SECONDS);
+                      s.complete(operation, null, 1, 1, before);
+                      assertEquals(1, s.c.faults.applications(retention));
+                      assertEquals(0, s.c.faults.reservations(retention));
+                    }
+                    s.observation.put("public_future_cancelled", result.isCancelled());
+                    s.assertRequest(s.requests(operation).get(0), event(1), snapshot(1));
+                    assertFalse(s.c.closed());
+                    s.assertSaved(event(1), snapshot(1));
+                    assertNull(s.write(event(2), snapshot(2), 1, 1));
+                  }
+                }));
   }
 
   private static final class Scene implements AutoCloseable {
@@ -927,10 +908,9 @@ class DynamoDbSnapshotWriteBoundaryTest {
       assertEquals(transmissions, commits.stream().mapToInt(r -> r.transmissions).sum());
       assertTrue(
           actual.stream()
-              .allMatch(
-                  r ->
-                      Set.of("commit", "retention-query", "retention-delete", "retention-mark")
-                          .contains(r.phase)));
+              .allMatch(r ->
+                  Set.of("commit", "retention-query", "retention-delete", "retention-mark")
+                      .contains(r.phase)));
       for (DynamoDbRequestRecorder.Request request : actual) {
         if (!request.phase.equals("commit")) continue;
         assertEquals("TransactWriteItems", request.api);
@@ -1039,19 +1019,18 @@ class DynamoDbSnapshotWriteBoundaryTest {
           DynamoDbJson.mapper()
               .valueToTree(
                   actual.stream()
-                      .map(
-                          e ->
-                              Map.of(
-                                  "aid",
-                                  e.aggregateId().asString(),
-                                  "seq_nr",
-                                  e.seqNr(),
-                                  "occurred_at",
-                                  e.occurredAt().toString(),
-                                  "manifest",
-                                  e.manifest(),
-                                  "payload",
-                                  e.payload()))
+                      .map(e ->
+                          Map.of(
+                              "aid",
+                              e.aggregateId().asString(),
+                              "seq_nr",
+                              e.seqNr(),
+                              "occurred_at",
+                              e.occurredAt().toString(),
+                              "manifest",
+                              e.manifest(),
+                              "payload",
+                              e.payload()))
                       .toArray()));
       assertEquals(expected.size(), actual.size());
       for (int i = 0; i < expected.size(); i++) {

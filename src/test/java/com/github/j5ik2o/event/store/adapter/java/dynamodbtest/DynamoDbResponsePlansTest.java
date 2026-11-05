@@ -245,30 +245,27 @@ class DynamoDbResponsePlansTest {
                 + status
                 + " failure="
                 + observedFailure);
-        checks.add(
-            () ->
-                assertAll(
-                    () -> assertNull(observedFailure, "pagination failed"),
-                    () -> assertEquals(2, observed.size(), "no extra Query"),
-                    () -> assertEquals(2, responses.size()),
-                    () -> assertTrue(responses.get(0).hasLastEvaluatedKey()),
-                    () ->
-                        assertEquals(
-                            responses.get(0).items().get(0), responses.get(0).lastEvaluatedKey()),
-                    () ->
-                        assertEquals(
-                            DynamoDbJson.sdk(responses.get(0).lastEvaluatedKey()),
-                            observed.get(1).marshalled.path("ExclusiveStartKey")),
-                    () -> assertTrue(responses.get(1).lastEvaluatedKey().isEmpty()),
-                    () ->
-                        assertFalse(
-                            responses.get(1).hasLastEvaluatedKey(), "terminal field absent"),
-                    () -> assertEquals("1", responses.get(1).items().get(0).get("skey").n()),
-                    () -> assertFalse(plan.hasNext()),
-                    () -> assertEquals(1, applications),
-                    () -> assertEquals(0, reservations),
-                    () -> assertEquals(0, pending),
-                    () -> assertEquals("passed", status)));
+        checks.add(() ->
+            assertAll(
+                () -> assertNull(observedFailure, "pagination failed"),
+                () -> assertEquals(2, observed.size(), "no extra Query"),
+                () -> assertEquals(2, responses.size()),
+                () -> assertTrue(responses.get(0).hasLastEvaluatedKey()),
+                () ->
+                    assertEquals(
+                        responses.get(0).items().get(0), responses.get(0).lastEvaluatedKey()),
+                () ->
+                    assertEquals(
+                        DynamoDbJson.sdk(responses.get(0).lastEvaluatedKey()),
+                        observed.get(1).marshalled.path("ExclusiveStartKey")),
+                () -> assertTrue(responses.get(1).lastEvaluatedKey().isEmpty()),
+                () -> assertFalse(responses.get(1).hasLastEvaluatedKey(), "terminal field absent"),
+                () -> assertEquals("1", responses.get(1).items().get(0).get("skey").n()),
+                () -> assertFalse(plan.hasNext()),
+                () -> assertEquals(1, applications),
+                () -> assertEquals(0, reservations),
+                () -> assertEquals(0, pending),
+                () -> assertEquals("passed", status)));
       }
     }
     assertAll(checks);
@@ -1546,9 +1543,8 @@ class DynamoDbResponsePlansTest {
           observed.transmitted.path("RequestItems").path(table);
       assertEquals(DynamoDbJson.sdk(original.requestItems().get(table).keys()), keys.path("Keys"));
       Map<String, String> names = original.requestItems().get(table).expressionAttributeNames();
-      names.forEach(
-          (alias, attribute) ->
-              assertEquals(attribute, keys.path("ExpressionAttributeNames").path(alias).asText()));
+      names.forEach((alias, attribute) ->
+          assertEquals(attribute, keys.path("ExpressionAttributeNames").path(alias).asText()));
       java.util.Set<String> projected = new java.util.HashSet<>();
       for (String term : keys.path("ProjectionExpression").asText().split(","))
         projected.add(keys.path("ExpressionAttributeNames").path(term.trim()).asText());
@@ -2419,13 +2415,10 @@ class DynamoDbResponsePlansTest {
                   .count());
           assertTrue(
               observed.subList(1, observed.size()).stream()
-                  .allMatch(
-                      r ->
-                          r.phase.equals("retention-query")
-                              && r.transmissions
-                                  == (injection == FaultRegistry.Injection.REPLACE_REQUEST
-                                      ? 0
-                                      : 1)));
+                  .allMatch(r ->
+                      r.phase.equals("retention-query")
+                          && r.transmissions
+                              == (injection == FaultRegistry.Injection.REPLACE_REQUEST ? 0 : 1)));
           assertFalse(stored(context, 4).isEmpty());
           assertEquals("passed", context.faults.finish(operation).status);
         }

@@ -119,15 +119,14 @@ class FaultTransportTest {
           wrapper.prepareRequest(
               HttpExecuteRequest.builder()
                   .request(fixture.http)
-                  .contentStreamProvider(
-                      () ->
-                          new java.io.ByteArrayInputStream(fixture.body) {
-                            @Override
-                            public void close() throws IOException {
-                              super.close();
-                              bodyClosed.set(true);
-                            }
-                          })
+                  .contentStreamProvider(() ->
+                      new java.io.ByteArrayInputStream(fixture.body) {
+                        @Override
+                        public void close() throws IOException {
+                          super.close();
+                          bodyClosed.set(true);
+                        }
+                      })
                   .build());
       thrown = assertThrows(RuntimeException.class, request::call);
       fixture.recorder.onExecutionFailure(

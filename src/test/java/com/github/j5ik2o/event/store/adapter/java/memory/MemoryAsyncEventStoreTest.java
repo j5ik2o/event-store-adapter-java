@@ -130,32 +130,28 @@ class MemoryAsyncEventStoreTest {
     ExecutorService executor = Executors.newFixedThreadPool(2);
     try {
       Future<?> writes =
-          executor.submit(
-              () -> {
-                assertTrue(start.await(5, TimeUnit.SECONDS));
-                for (long seqNr = 2; seqNr <= 101; seqNr++) {
-                  writer.persistEventAndSnapshot(event(seqNr), snapshot(seqNr)).join();
-                }
-                return null;
-              });
+          executor.submit(() -> {
+            assertTrue(start.await(5, TimeUnit.SECONDS));
+            for (long seqNr = 2; seqNr <= 101; seqNr++) {
+              writer.persistEventAndSnapshot(event(seqNr), snapshot(seqNr)).join();
+            }
+            return null;
+          });
       Future<?> reads =
-          executor.submit(
-              () -> {
-                assertTrue(start.await(5, TimeUnit.SECONDS));
-                for (int i = 0; i < 100; i++) {
-                  SnapshotReadResult<String> captured =
-                      reader.getLatestSnapshotById(AID).join().get();
-                  assertEquals(captured.headSeqNr(), captured.snapshot().get().seqNr());
-                  assertEquals(
-                      "snapshot-" + captured.headSeqNr(), captured.snapshot().get().aggregate());
-                  List<EventEnvelope<String>> events =
-                      reader.getEventsByIdSinceSeqNr(AID, 0).join();
-                  for (int index = 0; index < events.size(); index++) {
-                    assertEquals(index + 1L, events.get(index).seqNr());
-                  }
-                }
-                return null;
-              });
+          executor.submit(() -> {
+            assertTrue(start.await(5, TimeUnit.SECONDS));
+            for (int i = 0; i < 100; i++) {
+              SnapshotReadResult<String> captured = reader.getLatestSnapshotById(AID).join().get();
+              assertEquals(captured.headSeqNr(), captured.snapshot().get().seqNr());
+              assertEquals(
+                  "snapshot-" + captured.headSeqNr(), captured.snapshot().get().aggregate());
+              List<EventEnvelope<String>> events = reader.getEventsByIdSinceSeqNr(AID, 0).join();
+              for (int index = 0; index < events.size(); index++) {
+                assertEquals(index + 1L, events.get(index).seqNr());
+              }
+            }
+            return null;
+          });
 
       start.countDown();
       writes.get(5, TimeUnit.SECONDS);

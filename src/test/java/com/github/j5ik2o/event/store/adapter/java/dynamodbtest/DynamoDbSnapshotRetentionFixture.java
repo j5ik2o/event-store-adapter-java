@@ -518,19 +518,17 @@ public final class DynamoDbSnapshotRetentionFixture {
     expected
         .path("request_count")
         .fields()
-        .forEachRemaining(
-            entry ->
-                assertEquals(
-                    entry.getValue().longValue(),
-                    requests.stream().filter(r -> r.phase.equals(entry.getKey())).count()));
+        .forEachRemaining(entry ->
+            assertEquals(
+                entry.getValue().longValue(),
+                requests.stream().filter(r -> r.phase.equals(entry.getKey())).count()));
     expected
         .path("minimum_request_count")
         .fields()
-        .forEachRemaining(
-            entry ->
-                assertTrue(
-                    requests.stream().filter(r -> r.phase.equals(entry.getKey())).count()
-                        >= entry.getValue().longValue()));
+        .forEachRemaining(entry ->
+            assertTrue(
+                requests.stream().filter(r -> r.phase.equals(entry.getKey())).count()
+                    >= entry.getValue().longValue()));
     for (JsonNode phase : expected.path("no_requests_in_phases"))
       assertEquals(0, requests.stream().filter(r -> r.phase.equals(phase.asText())).count());
   }
@@ -614,66 +612,62 @@ public final class DynamoDbSnapshotRetentionFixture {
     Map<String, AttributeValue> item = new LinkedHashMap<>();
     types
         .fields()
-        .forEachRemaining(
-            entry -> {
-              String attr = entry.getKey();
-              switch (entry.getValue().asText()) {
-                case "S":
-                  item.put(attr, AttributeValue.fromS(values.path(attr).asText()));
-                  break;
-                case "N":
-                  item.put(attr, AttributeValue.fromN(values.path(attr).asText()));
-                  break;
-                case "B":
-                  item.put(
-                      attr,
-                      AttributeValue.fromB(
-                          SdkBytes.fromByteArray(JSON.serialize(binary.get(attr)))));
-                  break;
-                case "L":
-                  List<AttributeValue> list = new ArrayList<>();
-                  int index = 0;
-                  for (JsonNode member : values.path(attr)) {
-                    Map<String, AttributeValue> nested = new LinkedHashMap<>();
-                    String memberPath = attr + "[" + index++ + "]";
-                    definition
-                        .path("nested_attributes")
-                        .path(memberPath)
-                        .fields()
-                        .forEachRemaining(
-                            field -> {
-                              switch (field.getValue().asText()) {
-                                case "S":
-                                  nested.put(
-                                      field.getKey(),
-                                      AttributeValue.fromS(member.path(field.getKey()).asText()));
-                                  break;
-                                case "N":
-                                  nested.put(
-                                      field.getKey(),
-                                      AttributeValue.fromN(member.path(field.getKey()).asText()));
-                                  break;
-                                case "B":
-                                  nested.put(
-                                      field.getKey(),
-                                      AttributeValue.fromB(
-                                          SdkBytes.fromByteArray(
-                                              JSON.serialize(
-                                                  binary.get(memberPath + "." + field.getKey())))));
-                                  break;
-                                default:
-                                  throw new IllegalArgumentException(
-                                      "Unsupported nested seed type");
-                              }
-                            });
-                    list.add(AttributeValue.fromM(nested));
-                  }
-                  item.put(attr, AttributeValue.fromL(list));
-                  break;
-                default:
-                  throw new IllegalArgumentException("Unsupported seed type");
+        .forEachRemaining(entry -> {
+          String attr = entry.getKey();
+          switch (entry.getValue().asText()) {
+            case "S":
+              item.put(attr, AttributeValue.fromS(values.path(attr).asText()));
+              break;
+            case "N":
+              item.put(attr, AttributeValue.fromN(values.path(attr).asText()));
+              break;
+            case "B":
+              item.put(
+                  attr,
+                  AttributeValue.fromB(SdkBytes.fromByteArray(JSON.serialize(binary.get(attr)))));
+              break;
+            case "L":
+              List<AttributeValue> list = new ArrayList<>();
+              int index = 0;
+              for (JsonNode member : values.path(attr)) {
+                Map<String, AttributeValue> nested = new LinkedHashMap<>();
+                String memberPath = attr + "[" + index++ + "]";
+                definition
+                    .path("nested_attributes")
+                    .path(memberPath)
+                    .fields()
+                    .forEachRemaining(field -> {
+                      switch (field.getValue().asText()) {
+                        case "S":
+                          nested.put(
+                              field.getKey(),
+                              AttributeValue.fromS(member.path(field.getKey()).asText()));
+                          break;
+                        case "N":
+                          nested.put(
+                              field.getKey(),
+                              AttributeValue.fromN(member.path(field.getKey()).asText()));
+                          break;
+                        case "B":
+                          nested.put(
+                              field.getKey(),
+                              AttributeValue.fromB(
+                                  SdkBytes.fromByteArray(
+                                      JSON.serialize(
+                                          binary.get(memberPath + "." + field.getKey())))));
+                          break;
+                        default:
+                          throw new IllegalArgumentException("Unsupported nested seed type");
+                      }
+                    });
+                list.add(AttributeValue.fromM(nested));
               }
-            });
+              item.put(attr, AttributeValue.fromL(list));
+              break;
+            default:
+              throw new IllegalArgumentException("Unsupported seed type");
+          }
+        });
     return item;
   }
 
@@ -755,12 +749,11 @@ public final class DynamoDbSnapshotRetentionFixture {
             EventStoreConfig.<JsonNode, JsonNode>builder()
                 .payloadSerializer(JSON)
                 .snapshotSerializer(JSON)
-                .retentionFailureListener(
-                    failure -> {
-                      failures.add(failure);
-                      notificationThreads.add(Thread.currentThread().getName());
-                      listener.onRetentionFailure(failure);
-                    })
+                .retentionFailureListener(failure -> {
+                  failures.add(failure);
+                  notificationThreads.add(Thread.currentThread().getName());
+                  listener.onRetentionFailure(failure);
+                })
                 .build();
         tables = DynamoDbConfigurationTables.config(c).retentionPolicy(policy).clock(clock).build();
         FaultRegistry.Operation operation = c.faults.begin(0, false);

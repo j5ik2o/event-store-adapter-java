@@ -19,10 +19,9 @@ final class FaultAsyncHttpClient implements SdkAsyncHttpClient {
   public CompletableFuture<Void> execute(AsyncExecuteRequest request) {
     CompletableFuture<Void> result = new CompletableFuture<>();
     AtomicReference<CompletableFuture<?>> pending = new AtomicReference<>();
-    result.whenComplete(
-        (ignored, error) -> {
-          if (result.isCancelled() && pending.get() != null) pending.get().cancel(true);
-        });
+    result.whenComplete((ignored, error) -> {
+      if (result.isCancelled() && pending.get() != null) pending.get().cancel(true);
+    });
     try {
       HttpReply replacement = recorder.replacement(request.request());
       if (replacement != null) {
@@ -33,29 +32,27 @@ final class FaultAsyncHttpClient implements SdkAsyncHttpClient {
       }
       CompletableFuture<byte[]> body = HttpBodies.collect(request.requestContentPublisher());
       pending.set(body);
-      body.whenComplete(
-          (bytes, error) -> {
-            if (result.isDone()) return;
-            if (error != null) {
-              request.responseHandler().onError(error);
-              result.completeExceptionally(error);
-              return;
-            }
-            try {
-              CompletableFuture<Void> actual = delegate.execute(request);
-              recorder.transmitted(request.request(), bytes);
-              pending.set(actual);
-              if (result.isCancelled()) actual.cancel(true);
-              actual.whenComplete(
-                  (ignored, failure) -> {
-                    if (failure == null) result.complete(null);
-                    else result.completeExceptionally(failure);
-                  });
-            } catch (Throwable failure) {
-              request.responseHandler().onError(failure);
-              result.completeExceptionally(failure);
-            }
+      body.whenComplete((bytes, error) -> {
+        if (result.isDone()) return;
+        if (error != null) {
+          request.responseHandler().onError(error);
+          result.completeExceptionally(error);
+          return;
+        }
+        try {
+          CompletableFuture<Void> actual = delegate.execute(request);
+          recorder.transmitted(request.request(), bytes);
+          pending.set(actual);
+          if (result.isCancelled()) actual.cancel(true);
+          actual.whenComplete((ignored, failure) -> {
+            if (failure == null) result.complete(null);
+            else result.completeExceptionally(failure);
           });
+        } catch (Throwable failure) {
+          request.responseHandler().onError(failure);
+          result.completeExceptionally(failure);
+        }
+      });
     } catch (Throwable error) {
       request.responseHandler().onError(error);
       result.completeExceptionally(error);

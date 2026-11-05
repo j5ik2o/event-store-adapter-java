@@ -42,16 +42,15 @@ class DynamoDbEventReadBoundaryTest {
 
   private Stream<DynamicTest> both(String name, Scenario action) {
     return Stream.of(false, true)
-        .map(
-            async ->
-                DynamicTest.dynamicTest(
-                    name + (async ? " async" : " sync"),
-                    () -> {
-                      try (DynamoDbEventReadFixture.Scene<byte[]> scene =
-                          fixture.scene(name, async, BYTES)) {
-                        action.run(scene);
-                      }
-                    }));
+        .map(async ->
+            DynamicTest.dynamicTest(
+                name + (async ? " async" : " sync"),
+                () -> {
+                  try (DynamoDbEventReadFixture.Scene<byte[]> scene =
+                      fixture.scene(name, async, BYTES)) {
+                    action.run(scene);
+                  }
+                }));
   }
 
   private static EventEnvelope<byte[]> event(
@@ -289,15 +288,12 @@ class DynamoDbEventReadBoundaryTest {
               "read-events",
               -1,
               FaultRegistry.Injection.REPLACE_RESPONSE,
-              DynamoDbFaultEffects.response(
-                  response -> {
-                    s.observation
-                        .withArray("responses_before_failure")
-                        .add(DynamoDbJson.sdk(response));
-                    if (pages.incrementAndGet() == 2)
-                      throw SdkClientException.create("page response failure");
-                    return response;
-                  }));
+              DynamoDbFaultEffects.response(response -> {
+                s.observation.withArray("responses_before_failure").add(DynamoDbJson.sdk(response));
+                if (pages.incrementAndGet() == 2)
+                  throw SdkClientException.create("page response failure");
+                return response;
+              }));
           Throwable failure =
               EventStoreExceptions.unwrap(
                   assertThrows(RuntimeException.class, () -> s.read(AID, 0)));
@@ -314,152 +310,143 @@ class DynamoDbEventReadBoundaryTest {
   @TestFactory
   Stream<DynamicTest> deserializeFaultAndJavaNullReturnSerializationAndAllowNextRead() {
     return Stream.of(false, true)
-        .map(
-            async ->
-                DynamicTest.dynamicTest(
-                    "deserialize-failures " + async,
-                    () -> {
-                      AtomicInteger mode = new AtomicInteger();
-                      PayloadSerializer<byte[]> serializer =
-                          new PayloadSerializer<byte[]>() {
-                            public byte[] serialize(byte[] value) {
-                              return value;
-                            }
-
-                            public byte[] deserialize(byte[] value) {
-                              if (mode.get() == 1)
-                                throw new IllegalStateException("restore failure");
-                              if (mode.get() == 2) return null;
-                              return value;
-                            }
-                          };
-                      try (DynamoDbEventReadFixture.Scene<byte[]> s =
-                          fixture.scene("deserialize-failures", async, serializer)) {
-                        s.write(event(1));
-                        SerializationException classified =
-                            new SerializationException("injected deserialize");
-                        s.register(
-                            "deserialize-event",
-                            1,
-                            FaultRegistry.Injection.REPLACE_REQUEST,
-                            DynamoDbFaultEffects.serializationError(classified));
-                        Throwable failure =
-                            EventStoreExceptions.unwrap(
-                                assertThrows(RuntimeException.class, () -> s.read(AID, 0)));
-                        assertSame(classified, failure);
-                        s.assertQuery(AID, 0, 1);
-                        for (int failureMode : List.of(1, 2)) {
-                          mode.set(failureMode);
-                          assertInstanceOf(
-                              SerializationException.class,
-                              EventStoreExceptions.unwrap(
-                                  assertThrows(RuntimeException.class, () -> s.read(AID, 0))));
-                          s.assertQuery(AID, 0, 1);
-                          mode.set(0);
-                          assertEvents(List.of(event(1)), s.read(AID, 0));
-                          s.assertQuery(AID, 0, 1);
+        .map(async ->
+            DynamicTest.dynamicTest(
+                "deserialize-failures " + async,
+                () -> {
+                  AtomicInteger mode = new AtomicInteger();
+                  PayloadSerializer<byte[]> serializer =
+                      new PayloadSerializer<byte[]>() {
+                        public byte[] serialize(byte[] value) {
+                          return value;
                         }
-                      }
-                    }));
+
+                        public byte[] deserialize(byte[] value) {
+                          if (mode.get() == 1) throw new IllegalStateException("restore failure");
+                          if (mode.get() == 2) return null;
+                          return value;
+                        }
+                      };
+                  try (DynamoDbEventReadFixture.Scene<byte[]> s =
+                      fixture.scene("deserialize-failures", async, serializer)) {
+                    s.write(event(1));
+                    SerializationException classified =
+                        new SerializationException("injected deserialize");
+                    s.register(
+                        "deserialize-event",
+                        1,
+                        FaultRegistry.Injection.REPLACE_REQUEST,
+                        DynamoDbFaultEffects.serializationError(classified));
+                    Throwable failure =
+                        EventStoreExceptions.unwrap(
+                            assertThrows(RuntimeException.class, () -> s.read(AID, 0)));
+                    assertSame(classified, failure);
+                    s.assertQuery(AID, 0, 1);
+                    for (int failureMode : List.of(1, 2)) {
+                      mode.set(failureMode);
+                      assertInstanceOf(
+                          SerializationException.class,
+                          EventStoreExceptions.unwrap(
+                              assertThrows(RuntimeException.class, () -> s.read(AID, 0))));
+                      s.assertQuery(AID, 0, 1);
+                      mode.set(0);
+                      assertEvents(List.of(event(1)), s.read(AID, 0));
+                      s.assertQuery(AID, 0, 1);
+                    }
+                  }
+                }));
   }
 
   @TestFactory
   Stream<DynamicTest> malformedJsonBinaryFailsInRealDeserializeOnBothPaths() {
     return Stream.of(false, true)
-        .map(
-            async ->
-                DynamicTest.dynamicTest(
-                    "malformed-json " + async,
-                    () -> {
-                      try (DynamoDbEventReadFixture.Scene<JsonNode> s =
-                          fixture.scene(
-                              "malformed-json", async, JsonPayloadSerializer.of(JsonNode.class))) {
-                        EventEnvelope<JsonNode> event =
-                            EventEnvelope.<JsonNode>builder()
-                                .aggregateId(AID)
-                                .seqNr(1)
-                                .occurredAt(Instant.EPOCH)
-                                .payload(DynamoDbJson.object())
-                                .build();
-                        s.write(event);
-                        Map<String, AttributeValue> key =
-                            Map.of(
-                                "aid",
-                                AttributeValue.fromS(AID.asString()),
-                                "seq_nr",
-                                AttributeValue.fromN("1"));
-                        s.c.admin.updateItem(
-                            UpdateItemRequest.builder()
-                                .tableName(s.c.journal)
-                                .key(key)
-                                .updateExpression("SET payload = :payload")
-                                .expressionAttributeValues(
-                                    Map.of(
-                                        ":payload",
-                                        AttributeValue.fromB(SdkBytes.fromUtf8String("{"))))
-                                .build());
-                        assertInstanceOf(
-                            SerializationException.class,
-                            EventStoreExceptions.unwrap(
-                                assertThrows(RuntimeException.class, () -> s.read(AID, 0))));
-                        s.assertQuery(AID, 0, 1);
-                      }
-                    }));
+        .map(async ->
+            DynamicTest.dynamicTest(
+                "malformed-json " + async,
+                () -> {
+                  try (DynamoDbEventReadFixture.Scene<JsonNode> s =
+                      fixture.scene(
+                          "malformed-json", async, JsonPayloadSerializer.of(JsonNode.class))) {
+                    EventEnvelope<JsonNode> event =
+                        EventEnvelope.<JsonNode>builder()
+                            .aggregateId(AID)
+                            .seqNr(1)
+                            .occurredAt(Instant.EPOCH)
+                            .payload(DynamoDbJson.object())
+                            .build();
+                    s.write(event);
+                    Map<String, AttributeValue> key =
+                        Map.of(
+                            "aid",
+                            AttributeValue.fromS(AID.asString()),
+                            "seq_nr",
+                            AttributeValue.fromN("1"));
+                    s.c.admin.updateItem(
+                        UpdateItemRequest.builder()
+                            .tableName(s.c.journal)
+                            .key(key)
+                            .updateExpression("SET payload = :payload")
+                            .expressionAttributeValues(
+                                Map.of(
+                                    ":payload", AttributeValue.fromB(SdkBytes.fromUtf8String("{"))))
+                            .build());
+                    assertInstanceOf(
+                        SerializationException.class,
+                        EventStoreExceptions.unwrap(
+                            assertThrows(RuntimeException.class, () -> s.read(AID, 0))));
+                    s.assertQuery(AID, 0, 1);
+                  }
+                }));
   }
 
   @TestFactory
   Stream<DynamicTest> asynchronousPendingAndCancellationKeepRequestAliveUntilRealTermination() {
     return Stream.of(false, true)
-        .map(
-            cancel ->
-                DynamicTest.dynamicTest(
-                    "pending " + cancel,
-                    () -> {
-                      try (DynamoDbEventReadFixture.Scene<byte[]> s =
-                          fixture.scene(
-                              cancel ? "async-cancellation" : "async-pending", true, BYTES)) {
-                        s.write(event(1));
-                        CompletableFuture<Void> entered = new CompletableFuture<>(),
-                            release = new CompletableFuture<>();
-                        s.register(
-                            "read-events",
-                            1,
-                            FaultRegistry.Injection.REPLACE_RESPONSE,
-                            DynamoDbFaultEffects.response(
-                                response -> {
-                                  s.observation.set(
-                                      "actual_pending_response", DynamoDbJson.sdk(response));
-                                  entered.complete(null);
-                                  release.join();
-                                  return response;
-                                }));
-                        FaultRegistry.Operation operation =
-                            s.c.faults.begin(s.nextOperation++, false);
-                        CompletableFuture<List<EventEnvelope<byte[]>>> result =
-                            s.asyncStore.getEventsByIdSinceSeqNr(AID, 0);
-                        try {
-                          entered.get(10, TimeUnit.SECONDS);
-                          assertFalse(result.isDone());
-                          assertEquals(1, s.c.faults.pending(operation));
-                          assertFalse(s.c.recorder.requestsFinished(operation).isDone());
-                          assertFalse(s.c.closed());
-                          s.observation
-                              .put("future_pending_before_release", !result.isDone())
-                              .put("request_pending_before_release", s.c.faults.pending(operation));
-                          if (cancel) {
-                            assertTrue(result.cancel(true));
-                            assertFalse(s.c.recorder.requestsFinished(operation).isDone());
-                          }
-                        } finally {
-                          release.complete(null);
-                          if (!cancel)
-                            assertEvents(List.of(event(1)), result.get(10, TimeUnit.SECONDS));
-                          s.finish(operation, null, null);
-                        }
-                        s.observation.put("future_cancelled", result.isCancelled());
-                        assertEvents(List.of(event(1)), s.read(AID, 0));
-                        s.assertQuery(AID, 0, 1);
+        .map(cancel ->
+            DynamicTest.dynamicTest(
+                "pending " + cancel,
+                () -> {
+                  try (DynamoDbEventReadFixture.Scene<byte[]> s =
+                      fixture.scene(cancel ? "async-cancellation" : "async-pending", true, BYTES)) {
+                    s.write(event(1));
+                    CompletableFuture<Void> entered = new CompletableFuture<>(),
+                        release = new CompletableFuture<>();
+                    s.register(
+                        "read-events",
+                        1,
+                        FaultRegistry.Injection.REPLACE_RESPONSE,
+                        DynamoDbFaultEffects.response(response -> {
+                          s.observation.set("actual_pending_response", DynamoDbJson.sdk(response));
+                          entered.complete(null);
+                          release.join();
+                          return response;
+                        }));
+                    FaultRegistry.Operation operation = s.c.faults.begin(s.nextOperation++, false);
+                    CompletableFuture<List<EventEnvelope<byte[]>>> result =
+                        s.asyncStore.getEventsByIdSinceSeqNr(AID, 0);
+                    try {
+                      entered.get(10, TimeUnit.SECONDS);
+                      assertFalse(result.isDone());
+                      assertEquals(1, s.c.faults.pending(operation));
+                      assertFalse(s.c.recorder.requestsFinished(operation).isDone());
+                      assertFalse(s.c.closed());
+                      s.observation
+                          .put("future_pending_before_release", !result.isDone())
+                          .put("request_pending_before_release", s.c.faults.pending(operation));
+                      if (cancel) {
+                        assertTrue(result.cancel(true));
+                        assertFalse(s.c.recorder.requestsFinished(operation).isDone());
                       }
-                    }));
+                    } finally {
+                      release.complete(null);
+                      if (!cancel)
+                        assertEvents(List.of(event(1)), result.get(10, TimeUnit.SECONDS));
+                      s.finish(operation, null, null);
+                    }
+                    s.observation.put("future_cancelled", result.isCancelled());
+                    assertEvents(List.of(event(1)), s.read(AID, 0));
+                    s.assertQuery(AID, 0, 1);
+                  }
+                }));
   }
 }

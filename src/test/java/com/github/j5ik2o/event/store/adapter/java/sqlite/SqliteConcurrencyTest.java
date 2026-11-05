@@ -188,13 +188,12 @@ class SqliteConcurrencyTest {
         SqliteStorage storage = storages.get(i);
         AggregateId id = AggregateId.of("Order", "w" + i);
         results.add(
-            executor.submit(
-                () -> {
-                  EventStore<String, String> store = store(storage);
-                  for (long seq = 1; seq <= 5; seq++) {
-                    store.persistEvent(event(id, seq));
-                  }
-                }));
+            executor.submit(() -> {
+              EventStore<String, String> store = store(storage);
+              for (long seq = 1; seq <= 5; seq++) {
+                store.persistEvent(event(id, seq));
+              }
+            }));
       }
       for (Future<?> result : results) {
         try {

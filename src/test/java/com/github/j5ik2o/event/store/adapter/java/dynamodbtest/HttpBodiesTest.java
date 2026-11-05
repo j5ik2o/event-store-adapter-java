@@ -18,19 +18,18 @@ class HttpBodiesTest {
     ByteBuffer buffer = ByteBuffer.wrap(new byte[] {0, 1, 2});
     buffer.position(1);
     CompletableFuture<byte[]> copied =
-        HttpBodies.collect(
-            subscriber ->
-                subscriber.onSubscribe(
-                    new Subscription() {
-                      @Override
-                      public void request(long demand) {
-                        subscriber.onNext(buffer);
-                        subscriber.onComplete();
-                      }
+        HttpBodies.collect(subscriber ->
+            subscriber.onSubscribe(
+                new Subscription() {
+                  @Override
+                  public void request(long demand) {
+                    subscriber.onNext(buffer);
+                    subscriber.onComplete();
+                  }
 
-                      @Override
-                      public void cancel() {}
-                    }));
+                  @Override
+                  public void cancel() {}
+                }));
     assertArrayEquals(new byte[] {1, 2}, copied.join());
     assertEquals(1, buffer.position());
     RuntimeException failure = new IllegalStateException("stream failure");
