@@ -45,27 +45,25 @@ public final class UserAccountExample {
   public static Optional<String> restore(EventStore<String, String> store, AggregateId id) {
     return store
         .getLatestSnapshotById(id)
-        .map(
-            result -> {
-              long start = result.snapshot().map(snapshot -> snapshot.seqNr() + 1).orElse(1L);
-              return replay(result, store.getEventsByIdSinceSeqNr(id, start));
-            });
+        .map(result -> {
+          long start = result.snapshot().map(snapshot -> snapshot.seqNr() + 1).orElse(1L);
+          return replay(result, store.getEventsByIdSinceSeqNr(id, start));
+        });
   }
 
   public static CompletableFuture<Optional<String>> restoreAsync(
       AsyncEventStore<String, String> store, AggregateId id) {
     return store
         .getLatestSnapshotById(id)
-        .thenCompose(
-            result -> {
-              if (result.isEmpty()) {
-                return CompletableFuture.completedFuture(Optional.empty());
-              }
-              long start = result.get().snapshot().map(snapshot -> snapshot.seqNr() + 1).orElse(1L);
-              return store
-                  .getEventsByIdSinceSeqNr(id, start)
-                  .thenApply(events -> Optional.of(replay(result.get(), events)));
-            });
+        .thenCompose(result -> {
+          if (result.isEmpty()) {
+            return CompletableFuture.completedFuture(Optional.empty());
+          }
+          long start = result.get().snapshot().map(snapshot -> snapshot.seqNr() + 1).orElse(1L);
+          return store
+              .getEventsByIdSinceSeqNr(id, start)
+              .thenApply(events -> Optional.of(replay(result.get(), events)));
+        });
   }
 
   private static String replay(

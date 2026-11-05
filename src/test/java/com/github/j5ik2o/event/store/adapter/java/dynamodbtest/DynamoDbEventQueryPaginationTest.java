@@ -172,11 +172,10 @@ class DynamoDbEventQueryPaginationTest {
               raw,
               writing,
               FaultRegistry.Injection.REPLACE_RESPONSE,
-              DynamoDbFaultEffects.response(
-                  page -> {
-                    captured.add(page);
-                    return page;
-                  }));
+              DynamoDbFaultEffects.response(page -> {
+                captured.add(page);
+                return page;
+              }));
       assertEquals(4, recorded.originalResponse.path("Items").size());
       assertEquals(3, recorded.effectiveResponse.path("Items").size());
       assertEquals(

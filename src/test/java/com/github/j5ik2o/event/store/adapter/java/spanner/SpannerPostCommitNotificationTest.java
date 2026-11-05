@@ -85,11 +85,10 @@ class SpannerPostCommitNotificationTest {
     EventStore<String, String> store =
         SpannerEventStore.create(
             open(prefix, SpannerRetentionPolicy.delete(1), hooks),
-            configuration(
-                failure -> {
-                  listenerCalls[0]++;
-                  throw new AssertionError("listener failed");
-                }));
+            configuration(failure -> {
+              listenerCalls[0]++;
+              throw new AssertionError("listener failed");
+            }));
     assertDoesNotThrow(() -> store.persistEventAndSnapshot(event(1), snapshot(1)));
     int before = hooks.calls;
     int listenerBefore = listenerCalls[0];
@@ -139,11 +138,10 @@ class SpannerPostCommitNotificationTest {
     AsyncEventStore<String, String> async =
         SpannerEventStore.createAsync(
             open(prefix, SpannerRetentionPolicy.delete(1), hooks),
-            configuration(
-                failure -> {
-                  listenerCalls[0]++;
-                  throw new AssertionError("listener failed");
-                }));
+            configuration(failure -> {
+              listenerCalls[0]++;
+              throw new AssertionError("listener failed");
+            }));
     assertDoesNotThrow(() -> async.persistEventAndSnapshot(event(1), snapshot(1)).join());
     int before = listenerCalls[0];
 

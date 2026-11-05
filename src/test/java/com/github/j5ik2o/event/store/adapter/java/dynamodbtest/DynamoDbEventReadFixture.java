@@ -269,81 +269,76 @@ public final class DynamoDbEventReadFixture {
       constraint
           .path("constraints")
           .fields()
-          .forEachRemaining(
-              entry -> {
-                JsonNode value = entry.getValue();
-                switch (entry.getKey()) {
-                  case "table":
-                    assertEquals(
-                        DynamoDbConfigurationFixture.table(scene.c, value.asText()),
-                        actual.transmitted.path("TableName").asText());
-                    break;
-                  case "key_condition":
-                    ArrayNode terms = DynamoDbJson.mapper().createArrayNode();
-                    for (JsonNode term : value.path("all")) {
-                      ObjectNode bound = term.deepCopy();
-                      if (term.path("argument").asText().equals("aggregate_id"))
-                        bound.set(
-                            "argument",
-                            DynamoDbJson.sdk(
-                                AttributeValue.fromS(
-                                    aid(arguments.path("aggregate_id")).asString())));
-                      else if (term.path("argument").asText().equals("seq_nr"))
-                        bound.set(
-                            "argument",
-                            DynamoDbJson.sdk(
-                                AttributeValue.fromN(
-                                    arguments.path("seq_nr").bigIntegerValue().toString())));
-                      else fail("Unconnected key-condition argument");
-                      terms.add(bound);
-                    }
-                    assertEquals(
-                        new HashSet<>(jsonList(terms)),
-                        new HashSet<>(jsonList(actual.structure.at("/key_condition/all"))));
-                    break;
-                  case "consistent_read":
-                    assertEquals(
-                        value.booleanValue(),
-                        actual.transmitted.path("ConsistentRead").booleanValue());
-                    break;
-                  case "scan_index_forward":
-                    assertEquals(
-                        value.booleanValue(),
-                        actual.transmitted.path("ScanIndexForward").booleanValue());
-                    break;
-                  case "follow_last_evaluated_key":
-                    assertTrue(value.booleanValue());
-                    scene.assertPages();
-                    break;
-                  default:
-                    fail("Unconnected request constraint");
+          .forEachRemaining(entry -> {
+            JsonNode value = entry.getValue();
+            switch (entry.getKey()) {
+              case "table":
+                assertEquals(
+                    DynamoDbConfigurationFixture.table(scene.c, value.asText()),
+                    actual.transmitted.path("TableName").asText());
+                break;
+              case "key_condition":
+                ArrayNode terms = DynamoDbJson.mapper().createArrayNode();
+                for (JsonNode term : value.path("all")) {
+                  ObjectNode bound = term.deepCopy();
+                  if (term.path("argument").asText().equals("aggregate_id"))
+                    bound.set(
+                        "argument",
+                        DynamoDbJson.sdk(
+                            AttributeValue.fromS(aid(arguments.path("aggregate_id")).asString())));
+                  else if (term.path("argument").asText().equals("seq_nr"))
+                    bound.set(
+                        "argument",
+                        DynamoDbJson.sdk(
+                            AttributeValue.fromN(
+                                arguments.path("seq_nr").bigIntegerValue().toString())));
+                  else fail("Unconnected key-condition argument");
+                  terms.add(bound);
                 }
-              });
+                assertEquals(
+                    new HashSet<>(jsonList(terms)),
+                    new HashSet<>(jsonList(actual.structure.at("/key_condition/all"))));
+                break;
+              case "consistent_read":
+                assertEquals(
+                    value.booleanValue(), actual.transmitted.path("ConsistentRead").booleanValue());
+                break;
+              case "scan_index_forward":
+                assertEquals(
+                    value.booleanValue(),
+                    actual.transmitted.path("ScanIndexForward").booleanValue());
+                break;
+              case "follow_last_evaluated_key":
+                assertTrue(value.booleanValue());
+                scene.assertPages();
+                break;
+              default:
+                fail("Unconnected request constraint");
+            }
+          });
     }
     expected
         .path("minimum_request_count")
         .fields()
-        .forEachRemaining(
-            entry -> {
-              long count = requests.stream().filter(r -> r.phase.equals(entry.getKey())).count();
-              if (count < entry.getValue().longValue()) {
-                scene.observation.put(
-                    "comparison_position",
-                    scene.observation.path("comparison_position").asText()
-                        + "/minimum_request_count/"
-                        + entry.getKey());
-                throw new org.opentest4j.AssertionFailedError(
-                    "Minimum request count was not reached", entry.getValue().longValue(), count);
-              }
-            });
+        .forEachRemaining(entry -> {
+          long count = requests.stream().filter(r -> r.phase.equals(entry.getKey())).count();
+          if (count < entry.getValue().longValue()) {
+            scene.observation.put(
+                "comparison_position",
+                scene.observation.path("comparison_position").asText()
+                    + "/minimum_request_count/"
+                    + entry.getKey());
+            throw new org.opentest4j.AssertionFailedError(
+                "Minimum request count was not reached", entry.getValue().longValue(), count);
+          }
+        });
     expected
         .path("request_count")
         .fields()
-        .forEachRemaining(
-            entry ->
-                assertEquals(
-                    entry.getValue().longValue(),
-                    requests.stream().filter(r -> r.phase.equals(entry.getKey())).count()));
+        .forEachRemaining(entry ->
+            assertEquals(
+                entry.getValue().longValue(),
+                requests.stream().filter(r -> r.phase.equals(entry.getKey())).count()));
     ArrayNode notifications = DynamoDbJson.mapper().createArrayNode();
     scene.notifications.forEach(failure -> notifications.add("retention-failure"));
     scene.last().set("notifications", notifications);
@@ -447,11 +442,10 @@ public final class DynamoDbEventReadFixture {
           "read-events",
           -1,
           FaultRegistry.Injection.REPLACE_RESPONSE,
-          DynamoDbFaultEffects.response(
-              response -> {
-                pages.add((QueryResponse) response);
-                return response;
-              }));
+          DynamoDbFaultEffects.response(response -> {
+            pages.add((QueryResponse) response);
+            return response;
+          }));
     }
 
     void write(EventEnvelope<P> event) {

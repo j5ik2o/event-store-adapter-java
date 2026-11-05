@@ -22,14 +22,13 @@ class SpannerCaseRunnerTest {
     Set<String> required = RequiredCases.load().get(Backend.SPANNER);
     return ConformanceDataLoader.load(ConformanceTestFiles.REAL_ROOT).cases().stream()
         .filter(c -> required.contains(c.id()))
-        .map(
-            c ->
-                dynamicTest(
-                    c.id(),
-                    () -> {
-                      CaseResult result = CaseClassifier.classify(c, Backend.SPANNER);
-                      assertEquals(ConformanceStatus.PASSED, result.status(), result.reason());
-                    }));
+        .map(c ->
+            dynamicTest(
+                c.id(),
+                () -> {
+                  CaseResult result = CaseClassifier.classify(c, Backend.SPANNER);
+                  assertEquals(ConformanceStatus.PASSED, result.status(), result.reason());
+                }));
   }
 
   @Test

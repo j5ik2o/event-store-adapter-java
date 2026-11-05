@@ -90,11 +90,10 @@ class BigtableConcurrencyTest {
         EventStore<String, String> store = store(open(t, RetentionPolicy.none()));
         results.add(
             pool.submit(
-                outcome(
-                    () -> {
-                      go.await();
-                      store.persistEvent(eventWithPayload(1, payload));
-                    })));
+                outcome(() -> {
+                  go.await();
+                  store.persistEvent(eventWithPayload(1, payload));
+                })));
       }
       go.countDown();
       int wins = 0;

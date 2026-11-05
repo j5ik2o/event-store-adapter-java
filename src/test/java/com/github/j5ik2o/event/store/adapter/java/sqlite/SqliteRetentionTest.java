@@ -130,11 +130,10 @@ class SqliteRetentionTest {
       EventStore<String, String> store =
           SqliteEventStore.create(
               storage,
-              configuration(
-                  failure -> {
-                    listenerCalls[0]++;
-                    throw new IllegalStateException("listener failure");
-                  }));
+              configuration(failure -> {
+                listenerCalls[0]++;
+                throw new IllegalStateException("listener failure");
+              }));
       store.persistEventAndSnapshot(event(1), snapshot(1));
 
       assertDoesNotThrow(() -> store.persistEventAndSnapshot(event(2), snapshot(2)));

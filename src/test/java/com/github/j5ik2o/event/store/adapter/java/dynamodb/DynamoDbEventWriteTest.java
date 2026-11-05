@@ -433,9 +433,8 @@ class DynamoDbEventWriteTest {
   @Test
   void headBoundaryAcceptsExactlyTheLimitAndRejectsOneMoreForPutAndUpdate() {
     for (long seq : List.of(1L, 2L)) {
-      assertDoesNotThrow(
-          () ->
-              DynamoDbEventWrite.prepare(event(seq, 1), TABLES, serializer(new byte[409600 - 77])));
+      assertDoesNotThrow(() ->
+          DynamoDbEventWrite.prepare(event(seq, 1), TABLES, serializer(new byte[409600 - 77])));
       for (int bytes : List.of(409601 - 77, 409600 - 42, 409601 - 42)) {
         assertEquals(
             "D-7",

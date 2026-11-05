@@ -206,20 +206,18 @@ public final class BigtableEventStore {
     }
 
     public CompletableFuture<Void> persistEvent(EventEnvelope<P> event) {
-      return complete(
-          () -> {
-            sync.persistEvent(event);
-            return null;
-          });
+      return complete(() -> {
+        sync.persistEvent(event);
+        return null;
+      });
     }
 
     public CompletableFuture<Void> persistEventAndSnapshot(
         EventEnvelope<P> event, SnapshotEnvelope<A> snapshot) {
-      return complete(
-          () -> {
-            sync.persistEventAndSnapshot(event, snapshot);
-            return null;
-          });
+      return complete(() -> {
+        sync.persistEventAndSnapshot(event, snapshot);
+        return null;
+      });
     }
 
     public CompletableFuture<Optional<SnapshotReadResult<A>>> getLatestSnapshotById(

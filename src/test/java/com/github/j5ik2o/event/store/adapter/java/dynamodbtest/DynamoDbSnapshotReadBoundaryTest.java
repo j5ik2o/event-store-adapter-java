@@ -53,16 +53,15 @@ class DynamoDbSnapshotReadBoundaryTest {
 
   private Stream<DynamicTest> both(String name, Scenario action) {
     return Stream.of(false, true)
-        .map(
-            async ->
-                DynamicTest.dynamicTest(
-                    name + (async ? " async" : " sync"),
-                    () -> {
-                      try (DynamoDbSnapshotReadFixture.Scene<byte[], byte[]> s =
-                          fixture.scene(name, async, BYTES, SNAPSHOTS)) {
-                        action.run(s);
-                      }
-                    }));
+        .map(async ->
+            DynamicTest.dynamicTest(
+                name + (async ? " async" : " sync"),
+                () -> {
+                  try (DynamoDbSnapshotReadFixture.Scene<byte[], byte[]> s =
+                      fixture.scene(name, async, BYTES, SNAPSHOTS)) {
+                    action.run(s);
+                  }
+                }));
   }
 
   private static EventEnvelope<byte[]> event(long seq) {
@@ -206,65 +205,56 @@ class DynamoDbSnapshotReadBoundaryTest {
   Stream<DynamicTest>
       partialResponsesAndRetryExhaustionHaveSymmetricRequestsTransmissionsAndApplications() {
     return Stream.of("head", "snapshot")
-        .flatMap(
-            pending ->
-                Stream.of(false, true)
-                    .flatMap(
-                        exhausted ->
-                            both(
-                                "partial-" + pending + (exhausted ? "-exhausted" : "-success"),
-                                s -> {
-                                  s.write(event(1), snapshot(1));
-                                  String table = DynamoDbConfigurationFixture.table(s.c, pending);
-                                  s.register(
-                                      "read-snapshot",
-                                      exhausted ? -1 : 1,
-                                      FaultRegistry.Injection.REPLACE_RESPONSE,
-                                      DynamoDbFaultEffects.partialBatchGet(
-                                          s.c.admin,
-                                          Map.of(
-                                              table,
-                                              List.of(
-                                                  DynamoDbSnapshotReadFixture.dataKey(
-                                                      pending, ID.asString())))));
-                                  if (exhausted) {
-                                    assertInstanceOf(
-                                        StorageException.class,
-                                        EventStoreExceptions.unwrap(
-                                            assertThrows(
-                                                RuntimeException.class, () -> s.read(ID))));
-                                  } else {
-                                    SnapshotReadResult<byte[]> result = s.read(ID).orElseThrow();
-                                    assertEquals(1, result.headSeqNr());
-                                    assertSnapshot(snapshot(1), result.snapshot().orElseThrow());
-                                    assertStored(s, result);
-                                  }
-                                  int count = exhausted ? 4 : 2;
-                                  s.assertBatch(ID, count);
-                                  for (int i = 1; i < count; i++) {
-                                    JsonNode remaining =
-                                        s.lastRequests().get(i).transmitted.path("RequestItems");
-                                    assertEquals(
-                                        Set.of(table),
-                                        DynamoDbConfigurationFixture.stringsFromFields(remaining));
-                                  }
-                                  assertEquals(
-                                      exhausted ? List.of(50L, 100L, 200L) : List.of(50L), s.waits);
-                                  assertEquals(
-                                      exhausted ? 4 : 1,
-                                      s.last().at("/faults/0/applications").intValue());
-                                  assertEquals(0, s.last().at("/faults/0/reservations").intValue());
-                                  assertEquals(
-                                      count,
-                                      s.lastRequests().stream()
-                                          .mapToInt(r -> r.transmissions)
-                                          .sum());
-                                  assertEquals(
-                                      count,
-                                      s.lastRequests().stream()
-                                          .mapToInt(r -> r.httpAttempts)
-                                          .sum());
-                                })));
+        .flatMap(pending ->
+            Stream.of(false, true)
+                .flatMap(exhausted ->
+                    both(
+                        "partial-" + pending + (exhausted ? "-exhausted" : "-success"),
+                        s -> {
+                          s.write(event(1), snapshot(1));
+                          String table = DynamoDbConfigurationFixture.table(s.c, pending);
+                          s.register(
+                              "read-snapshot",
+                              exhausted ? -1 : 1,
+                              FaultRegistry.Injection.REPLACE_RESPONSE,
+                              DynamoDbFaultEffects.partialBatchGet(
+                                  s.c.admin,
+                                  Map.of(
+                                      table,
+                                      List.of(
+                                          DynamoDbSnapshotReadFixture.dataKey(
+                                              pending, ID.asString())))));
+                          if (exhausted) {
+                            assertInstanceOf(
+                                StorageException.class,
+                                EventStoreExceptions.unwrap(
+                                    assertThrows(RuntimeException.class, () -> s.read(ID))));
+                          } else {
+                            SnapshotReadResult<byte[]> result = s.read(ID).orElseThrow();
+                            assertEquals(1, result.headSeqNr());
+                            assertSnapshot(snapshot(1), result.snapshot().orElseThrow());
+                            assertStored(s, result);
+                          }
+                          int count = exhausted ? 4 : 2;
+                          s.assertBatch(ID, count);
+                          for (int i = 1; i < count; i++) {
+                            JsonNode remaining =
+                                s.lastRequests().get(i).transmitted.path("RequestItems");
+                            assertEquals(
+                                Set.of(table),
+                                DynamoDbConfigurationFixture.stringsFromFields(remaining));
+                          }
+                          assertEquals(
+                              exhausted ? List.of(50L, 100L, 200L) : List.of(50L), s.waits);
+                          assertEquals(
+                              exhausted ? 4 : 1, s.last().at("/faults/0/applications").intValue());
+                          assertEquals(0, s.last().at("/faults/0/reservations").intValue());
+                          assertEquals(
+                              count,
+                              s.lastRequests().stream().mapToInt(r -> r.transmissions).sum());
+                          assertEquals(
+                              count, s.lastRequests().stream().mapToInt(r -> r.httpAttempts).sum());
+                        })));
   }
 
   @TestFactory
@@ -282,138 +272,129 @@ class DynamoDbSnapshotReadBoundaryTest {
     mutations.put("type-payload", item -> item.put("payload", AttributeValue.fromS("bytes")));
     mutations.put("snapshot-negative-seq", item -> item.put("seq_nr", AttributeValue.fromN("-1")));
     return mutations.entrySet().stream()
-        .flatMap(
-            mutation ->
-                both(
-                    "stored-" + mutation.getKey(),
-                    s -> {
-                      s.write(event(1), snapshot(1));
-                      String role =
-                          mutation.getKey().contains("seq")
-                                  && !mutation.getKey().startsWith("snapshot-")
-                              ? "head"
-                              : "snapshot";
-                      Map<String, AttributeValue> corrupt = new LinkedHashMap<>(s.stored(role, ID));
-                      mutation.getValue().accept(corrupt);
-                      s.c.admin.putItem(
-                          PutItemRequest.builder()
-                              .tableName(DynamoDbConfigurationFixture.table(s.c, role))
-                              .item(corrupt)
-                              .build());
-                      s.observation.set(
-                          "corrupted_saved_item", DynamoDbJson.sdk(s.stored(role, ID)));
-                      assertInstanceOf(
-                          StorageException.class,
-                          EventStoreExceptions.unwrap(
-                              assertThrows(RuntimeException.class, () -> s.read(ID))));
-                      s.assertBatch(ID, 1);
-                    }));
+        .flatMap(mutation ->
+            both(
+                "stored-" + mutation.getKey(),
+                s -> {
+                  s.write(event(1), snapshot(1));
+                  String role =
+                      mutation.getKey().contains("seq")
+                              && !mutation.getKey().startsWith("snapshot-")
+                          ? "head"
+                          : "snapshot";
+                  Map<String, AttributeValue> corrupt = new LinkedHashMap<>(s.stored(role, ID));
+                  mutation.getValue().accept(corrupt);
+                  s.c.admin.putItem(
+                      PutItemRequest.builder()
+                          .tableName(DynamoDbConfigurationFixture.table(s.c, role))
+                          .item(corrupt)
+                          .build());
+                  s.observation.set("corrupted_saved_item", DynamoDbJson.sdk(s.stored(role, ID)));
+                  assertInstanceOf(
+                      StorageException.class,
+                      EventStoreExceptions.unwrap(
+                          assertThrows(RuntimeException.class, () -> s.read(ID))));
+                  s.assertBatch(ID, 1);
+                }));
   }
 
   @TestFactory
   Stream<DynamicTest>
       deserializeFailureAndSdkFailureHaveDirectClassificationsAndRealRequestCounts() {
     return Stream.of("deserialize-snapshot", "read-snapshot")
-        .flatMap(
-            phase ->
-                both(
-                    "failure-" + phase,
-                    s -> {
-                      s.write(event(1), snapshot(1));
-                      s.register(
-                          phase,
-                          1,
-                          FaultRegistry.Injection.REPLACE_REQUEST,
-                          phase.equals("deserialize-snapshot")
-                              ? DynamoDbFaultEffects.serializationError(
-                                  new SerializationException("decode"))
-                              : DynamoDbFaultEffects.sdkError("InternalServerError"));
-                      Throwable failure;
-                      if (s.asynchronous) {
-                        FaultRegistry.Operation operation =
-                            s.c.faults.begin(s.nextOperation++, false);
-                        failure =
-                            s.asyncStore
-                                .getLatestSnapshotById(ID)
-                                .handle((value, error) -> error)
-                                .join();
-                        s.finish(operation, failure, null);
-                      } else failure = assertThrows(RuntimeException.class, () -> s.read(ID));
-                      if (phase.equals("deserialize-snapshot"))
-                        assertInstanceOf(SerializationException.class, failure);
-                      else assertInstanceOf(StorageException.class, failure);
-                      s.assertBatch(ID, 1);
-                      assertEquals(
-                          phase.equals("deserialize-snapshot") ? 1 : 0,
-                          s.lastRequests().get(0).transmissions);
-                      assertEquals(1, s.last().at("/faults/0/applications").intValue());
-                    }));
+        .flatMap(phase ->
+            both(
+                "failure-" + phase,
+                s -> {
+                  s.write(event(1), snapshot(1));
+                  s.register(
+                      phase,
+                      1,
+                      FaultRegistry.Injection.REPLACE_REQUEST,
+                      phase.equals("deserialize-snapshot")
+                          ? DynamoDbFaultEffects.serializationError(
+                              new SerializationException("decode"))
+                          : DynamoDbFaultEffects.sdkError("InternalServerError"));
+                  Throwable failure;
+                  if (s.asynchronous) {
+                    FaultRegistry.Operation operation = s.c.faults.begin(s.nextOperation++, false);
+                    failure =
+                        s.asyncStore
+                            .getLatestSnapshotById(ID)
+                            .handle((value, error) -> error)
+                            .join();
+                    s.finish(operation, failure, null);
+                  } else failure = assertThrows(RuntimeException.class, () -> s.read(ID));
+                  if (phase.equals("deserialize-snapshot"))
+                    assertInstanceOf(SerializationException.class, failure);
+                  else assertInstanceOf(StorageException.class, failure);
+                  s.assertBatch(ID, 1);
+                  assertEquals(
+                      phase.equals("deserialize-snapshot") ? 1 : 0,
+                      s.lastRequests().get(0).transmissions);
+                  assertEquals(1, s.last().at("/faults/0/applications").intValue());
+                }));
   }
 
   @TestFactory
   Stream<DynamicTest>
       asynchronousPendingAndCancellationWaitForActualRequestTerminationBeforeClosingResources() {
     return Stream.of(false, true)
-        .map(
-            cancel ->
-                DynamicTest.dynamicTest(
-                    "pending cancellation " + cancel,
-                    () -> {
-                      try (DynamoDbSnapshotReadFixture.Scene<byte[], byte[]> s =
-                          fixture.scene(
-                              cancel ? "async-cancellation" : "async-pending",
-                              true,
-                              BYTES,
-                              SNAPSHOTS)) {
-                        s.write(event(1), snapshot(1));
-                        CompletableFuture<Void> entered = new CompletableFuture<>(),
-                            release = new CompletableFuture<>();
-                        s.register(
-                            "read-snapshot",
-                            1,
-                            FaultRegistry.Injection.REPLACE_RESPONSE,
-                            DynamoDbFaultEffects.response(
-                                response -> {
-                                  s.observation.set(
-                                      "actual_pending_response", DynamoDbJson.sdk(response));
-                                  entered.complete(null);
-                                  release.join();
-                                  return response;
-                                }));
-                        FaultRegistry.Operation operation =
-                            s.c.faults.begin(s.nextOperation++, false);
-                        CompletableFuture<Optional<SnapshotReadResult<byte[]>>> result =
-                            s.asyncStore.getLatestSnapshotById(ID);
-                        try {
-                          entered.get(10, TimeUnit.SECONDS);
-                          assertFalse(result.isDone());
-                          assertEquals(1, s.c.faults.pending(operation));
-                          assertFalse(s.c.recorder.requestsFinished(operation).isDone());
-                          assertFalse(s.c.closed());
-                          s.observation
-                              .put("future_pending_before_release", !result.isDone())
-                              .put("request_pending_before_release", s.c.faults.pending(operation));
-                          if (cancel) {
-                            assertTrue(result.cancel(true));
-                            assertFalse(s.c.recorder.requestsFinished(operation).isDone());
-                          }
-                        } finally {
-                          release.complete(null);
-                          if (!cancel)
-                            assertSnapshot(
-                                snapshot(1),
-                                result
-                                    .get(10, TimeUnit.SECONDS)
-                                    .orElseThrow()
-                                    .snapshot()
-                                    .orElseThrow());
-                          s.finish(operation, null, null);
-                        }
-                        s.observation.put("future_cancelled", result.isCancelled());
-                        assertSnapshot(
-                            snapshot(1), s.read(ID).orElseThrow().snapshot().orElseThrow());
-                        s.assertBatch(ID, 1);
+        .map(cancel ->
+            DynamicTest.dynamicTest(
+                "pending cancellation " + cancel,
+                () -> {
+                  try (DynamoDbSnapshotReadFixture.Scene<byte[], byte[]> s =
+                      fixture.scene(
+                          cancel ? "async-cancellation" : "async-pending",
+                          true,
+                          BYTES,
+                          SNAPSHOTS)) {
+                    s.write(event(1), snapshot(1));
+                    CompletableFuture<Void> entered = new CompletableFuture<>(),
+                        release = new CompletableFuture<>();
+                    s.register(
+                        "read-snapshot",
+                        1,
+                        FaultRegistry.Injection.REPLACE_RESPONSE,
+                        DynamoDbFaultEffects.response(response -> {
+                          s.observation.set("actual_pending_response", DynamoDbJson.sdk(response));
+                          entered.complete(null);
+                          release.join();
+                          return response;
+                        }));
+                    FaultRegistry.Operation operation = s.c.faults.begin(s.nextOperation++, false);
+                    CompletableFuture<Optional<SnapshotReadResult<byte[]>>> result =
+                        s.asyncStore.getLatestSnapshotById(ID);
+                    try {
+                      entered.get(10, TimeUnit.SECONDS);
+                      assertFalse(result.isDone());
+                      assertEquals(1, s.c.faults.pending(operation));
+                      assertFalse(s.c.recorder.requestsFinished(operation).isDone());
+                      assertFalse(s.c.closed());
+                      s.observation
+                          .put("future_pending_before_release", !result.isDone())
+                          .put("request_pending_before_release", s.c.faults.pending(operation));
+                      if (cancel) {
+                        assertTrue(result.cancel(true));
+                        assertFalse(s.c.recorder.requestsFinished(operation).isDone());
                       }
-                    }));
+                    } finally {
+                      release.complete(null);
+                      if (!cancel)
+                        assertSnapshot(
+                            snapshot(1),
+                            result
+                                .get(10, TimeUnit.SECONDS)
+                                .orElseThrow()
+                                .snapshot()
+                                .orElseThrow());
+                      s.finish(operation, null, null);
+                    }
+                    s.observation.put("future_cancelled", result.isCancelled());
+                    assertSnapshot(snapshot(1), s.read(ID).orElseThrow().snapshot().orElseThrow());
+                    s.assertBatch(ID, 1);
+                  }
+                }));
   }
 }

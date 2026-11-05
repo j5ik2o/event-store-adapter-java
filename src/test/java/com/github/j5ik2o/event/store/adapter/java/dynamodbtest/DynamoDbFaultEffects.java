@@ -185,9 +185,8 @@ final class DynamoDbFaultEffects {
       batch
           .unprocessedItems()
           .forEach((table, writes) -> combined.put(table, new ArrayList<>(writes)));
-      excluded.forEach(
-          (table, writes) ->
-              combined.computeIfAbsent(table, key -> new ArrayList<>()).addAll(writes));
+      excluded.forEach((table, writes) ->
+          combined.computeIfAbsent(table, key -> new ArrayList<>()).addAll(writes));
       // For an entirely skipped batch the HTTP reply already contains the excluded writes.
       return empty ? response : batch.toBuilder().unprocessedItems(combined).build();
     }
@@ -203,12 +202,11 @@ final class DynamoDbFaultEffects {
       Map<String, List<Map<String, AttributeValue>>> unprocessed,
       Set<String> responseTables) {
     Map<String, List<Map<String, AttributeValue>>> plan = new LinkedHashMap<>();
-    unprocessed.forEach(
-        (table, keys) -> {
-          List<Map<String, AttributeValue>> copy = new ArrayList<>();
-          keys.forEach(key -> copy.add(Map.copyOf(key)));
-          plan.put(table, List.copyOf(copy));
-        });
+    unprocessed.forEach((table, keys) -> {
+      List<Map<String, AttributeValue>> copy = new ArrayList<>();
+      keys.forEach(key -> copy.add(Map.copyOf(key)));
+      plan.put(table, List.copyOf(copy));
+    });
     return new PartialBatchGet(admin, Map.copyOf(plan), responseTables);
   }
 
@@ -249,45 +247,43 @@ final class DynamoDbFaultEffects {
       }
       if (injection == FaultRegistry.Injection.REPLACE_REQUEST) return request;
       Map<String, KeysAndAttributes> supplemented = new LinkedHashMap<>(original.requestItems());
-      plan.forEach(
-          (table, omitted) -> {
-            KeysAndAttributes keys = original.requestItems().get(table);
-            if (omitted.isEmpty() || keys.projectionExpression() == null) return;
-            Set<String> projected = new LinkedHashSet<>();
-            for (String term : keys.projectionExpression().split(",", -1)) {
-              String attribute = term.trim();
-              if (attribute.matches("#[A-Za-z0-9_]+")) {
-                String bound = keys.expressionAttributeNames().get(attribute);
-                if (bound == null)
-                  throw new IllegalArgumentException("Unbound projection attribute");
-                attribute = bound;
-              }
-              projected.add(attribute);
-            }
-            List<String> added = new ArrayList<>();
-            Map<String, String> names = new LinkedHashMap<>(keys.expressionAttributeNames());
-            String projection = keys.projectionExpression();
-            int aliasNumber = 0;
-            for (String attribute : keys.keys().get(0).keySet()) {
-              if (projected.contains(attribute)) continue;
-              String alias;
-              do {
-                alias = "#partialKey" + aliasNumber++;
-              } while (names.containsKey(alias));
-              names.put(alias, attribute);
-              projection += ", " + alias;
-              added.add(attribute);
-            }
-            if (!added.isEmpty()) {
-              addedAttributes.put(table, List.copyOf(added));
-              supplemented.put(
-                  table,
-                  keys.toBuilder()
-                      .projectionExpression(projection)
-                      .expressionAttributeNames(names)
-                      .build());
-            }
-          });
+      plan.forEach((table, omitted) -> {
+        KeysAndAttributes keys = original.requestItems().get(table);
+        if (omitted.isEmpty() || keys.projectionExpression() == null) return;
+        Set<String> projected = new LinkedHashSet<>();
+        for (String term : keys.projectionExpression().split(",", -1)) {
+          String attribute = term.trim();
+          if (attribute.matches("#[A-Za-z0-9_]+")) {
+            String bound = keys.expressionAttributeNames().get(attribute);
+            if (bound == null) throw new IllegalArgumentException("Unbound projection attribute");
+            attribute = bound;
+          }
+          projected.add(attribute);
+        }
+        List<String> added = new ArrayList<>();
+        Map<String, String> names = new LinkedHashMap<>(keys.expressionAttributeNames());
+        String projection = keys.projectionExpression();
+        int aliasNumber = 0;
+        for (String attribute : keys.keys().get(0).keySet()) {
+          if (projected.contains(attribute)) continue;
+          String alias;
+          do {
+            alias = "#partialKey" + aliasNumber++;
+          } while (names.containsKey(alias));
+          names.put(alias, attribute);
+          projection += ", " + alias;
+          added.add(attribute);
+        }
+        if (!added.isEmpty()) {
+          addedAttributes.put(table, List.copyOf(added));
+          supplemented.put(
+              table,
+              keys.toBuilder()
+                  .projectionExpression(projection)
+                  .expressionAttributeNames(names)
+                  .build());
+        }
+      });
       return original.toBuilder().requestItems(supplemented).build();
     }
 
@@ -297,36 +293,33 @@ final class DynamoDbFaultEffects {
       Map<String, List<Map<String, AttributeValue>>> responses =
           new LinkedHashMap<>(batch.responses());
       Map<String, KeysAndAttributes> pending = new LinkedHashMap<>(batch.unprocessedKeys());
-      plan.forEach(
-          (table, omitted) -> {
-            if (omitted.isEmpty()) return;
-            KeysAndAttributes originalKeys = original.requestItems().get(table);
-            responses.computeIfPresent(
-                table,
-                (name, items) -> {
-                  List<Map<String, AttributeValue>> processed = new ArrayList<>();
-                  for (Map<String, AttributeValue> item : items) {
-                    Map<String, AttributeValue> itemKey =
-                        originalKeys.keys().stream()
-                            .filter(key -> item.entrySet().containsAll(key.entrySet()))
-                            .findFirst()
-                            .orElseThrow(
-                                () ->
-                                    new IllegalStateException(
-                                        "Cannot identify BatchGet response item"));
-                    if (omitted.contains(itemKey)) continue;
-                    Map<String, AttributeValue> projected = new LinkedHashMap<>(item);
-                    addedAttributes.getOrDefault(table, List.of()).forEach(projected::remove);
-                    processed.add(projected);
-                  }
-                  return processed;
-                });
-            KeysAndAttributes servicePending = pending.get(table);
-            List<Map<String, AttributeValue>> keys =
-                servicePending == null ? new ArrayList<>() : new ArrayList<>(servicePending.keys());
-            for (Map<String, AttributeValue> key : omitted) if (!keys.contains(key)) keys.add(key);
-            pending.put(table, originalKeys.toBuilder().keys(keys).build());
-          });
+      plan.forEach((table, omitted) -> {
+        if (omitted.isEmpty()) return;
+        KeysAndAttributes originalKeys = original.requestItems().get(table);
+        responses.computeIfPresent(
+            table,
+            (name, items) -> {
+              List<Map<String, AttributeValue>> processed = new ArrayList<>();
+              for (Map<String, AttributeValue> item : items) {
+                Map<String, AttributeValue> itemKey =
+                    originalKeys.keys().stream()
+                        .filter(key -> item.entrySet().containsAll(key.entrySet()))
+                        .findFirst()
+                        .orElseThrow(() ->
+                            new IllegalStateException("Cannot identify BatchGet response item"));
+                if (omitted.contains(itemKey)) continue;
+                Map<String, AttributeValue> projected = new LinkedHashMap<>(item);
+                addedAttributes.getOrDefault(table, List.of()).forEach(projected::remove);
+                processed.add(projected);
+              }
+              return processed;
+            });
+        KeysAndAttributes servicePending = pending.get(table);
+        List<Map<String, AttributeValue>> keys =
+            servicePending == null ? new ArrayList<>() : new ArrayList<>(servicePending.keys());
+        for (Map<String, AttributeValue> key : omitted) if (!keys.contains(key)) keys.add(key);
+        pending.put(table, originalKeys.toBuilder().keys(keys).build());
+      });
       return checkResponses(
           batch.toBuilder().responses(responses).unprocessedKeys(pending).build());
     }
@@ -336,10 +329,9 @@ final class DynamoDbFaultEffects {
         Set<String> actual = new LinkedHashSet<>();
         response
             .responses()
-            .forEach(
-                (table, items) -> {
-                  if (!items.isEmpty()) actual.add(table);
-                });
+            .forEach((table, items) -> {
+              if (!items.isEmpty()) actual.add(table);
+            });
         if (!responseTables.equals(actual))
           throw new IllegalStateException(
               "Declared BatchGet response tables differ from real stored items: " + actual);
@@ -353,28 +345,27 @@ final class DynamoDbFaultEffects {
       Map<String, KeysAndAttributes> pending = new LinkedHashMap<>();
       original
           .requestItems()
-          .forEach(
-              (table, keys) -> {
-                List<Map<String, AttributeValue>> items = new ArrayList<>();
-                List<Map<String, AttributeValue>> omitted = plan.getOrDefault(table, List.of());
-                for (Map<String, AttributeValue> key : keys.keys()) {
-                  if (omitted.contains(key)) continue;
-                  Map<String, AttributeValue> stored =
-                      admin
-                          .getItem(
-                              GetItemRequest.builder()
-                                  .tableName(table)
-                                  .key(key)
-                                  .consistentRead(true)
-                                  .projectionExpression(keys.projectionExpression())
-                                  .expressionAttributeNames(keys.expressionAttributeNames())
-                                  .build())
-                          .item();
-                  if (!stored.isEmpty()) items.add(stored);
-                }
-                responses.put(table, items);
-                if (!omitted.isEmpty()) pending.put(table, keys.toBuilder().keys(omitted).build());
-              });
+          .forEach((table, keys) -> {
+            List<Map<String, AttributeValue>> items = new ArrayList<>();
+            List<Map<String, AttributeValue>> omitted = plan.getOrDefault(table, List.of());
+            for (Map<String, AttributeValue> key : keys.keys()) {
+              if (omitted.contains(key)) continue;
+              Map<String, AttributeValue> stored =
+                  admin
+                      .getItem(
+                          GetItemRequest.builder()
+                              .tableName(table)
+                              .key(key)
+                              .consistentRead(true)
+                              .projectionExpression(keys.projectionExpression())
+                              .expressionAttributeNames(keys.expressionAttributeNames())
+                              .build())
+                      .item();
+              if (!stored.isEmpty()) items.add(stored);
+            }
+            responses.put(table, items);
+            if (!omitted.isEmpty()) pending.put(table, keys.toBuilder().keys(omitted).build());
+          });
       return new HttpReply(
           200,
           DynamoDbJson.sdk(

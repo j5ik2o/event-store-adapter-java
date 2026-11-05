@@ -87,30 +87,27 @@ final class DynamoDbSnapshotRetention {
   CompletableFuture<Void> retainAsync(DynamoDbAsyncClient client) {
     if (!enabled()) return CompletableFuture.completedFuture(null);
     return readPage(client, query())
-        .thenCompose(
-            success ->
-                !success
-                    ? CompletableFuture.completedFuture(false)
-                    : tables.retentionPolicy().mode().orElseThrow() == RetentionMode.TTL
-                        ? markHistory(client, candidates(), 0)
-                        : deleteBatches(client, batches(), 0))
-        .handle(
-            (ignored, failure) -> {
-              // SDK terminal failures and invalid responses have already been notified.
-              // Only request startup and asynchronous wait failures reach this handler.
-              if (failure != null) notifyFailure(failure);
-              return null;
-            });
+        .thenCompose(success ->
+            !success
+                ? CompletableFuture.completedFuture(false)
+                : tables.retentionPolicy().mode().orElseThrow() == RetentionMode.TTL
+                    ? markHistory(client, candidates(), 0)
+                    : deleteBatches(client, batches(), 0))
+        .handle((ignored, failure) -> {
+          // SDK terminal failures and invalid responses have already been notified.
+          // Only request startup and asynchronous wait failures reach this handler.
+          if (failure != null) notifyFailure(failure);
+          return null;
+        });
   }
 
   private CompletableFuture<Boolean> readPage(DynamoDbAsyncClient client, QueryRequest request) {
     AsyncCompletion<QueryResponse> completion =
-        new AsyncCompletion<>(
-            response -> {
-              QueryResponse page = (QueryResponse) response;
-              accept(page);
-              return page;
-            });
+        new AsyncCompletion<>(response -> {
+          QueryResponse page = (QueryResponse) response;
+          accept(page);
+          return page;
+        });
     try {
       return client
           .query(
@@ -118,16 +115,15 @@ final class DynamoDbSnapshotRetention {
                   .overrideConfiguration(overrides -> overrides.addPlugin(completion))
                   .build())
           .handle((ignored, failure) -> completion.result(failure))
-          .thenCompose(
-              outcome -> {
-                if (outcome.isEmpty()) return CompletableFuture.completedFuture(false);
-                QueryResponse response = outcome.get();
-                return response.lastEvaluatedKey().isEmpty()
-                    ? CompletableFuture.completedFuture(true)
-                    : readPage(
-                        client,
-                        request.toBuilder().exclusiveStartKey(response.lastEvaluatedKey()).build());
-              });
+          .thenCompose(outcome -> {
+            if (outcome.isEmpty()) return CompletableFuture.completedFuture(false);
+            QueryResponse response = outcome.get();
+            return response.lastEvaluatedKey().isEmpty()
+                ? CompletableFuture.completedFuture(true)
+                : readPage(
+                    client,
+                    request.toBuilder().exclusiveStartKey(response.lastEvaluatedKey()).build());
+          });
     } catch (RuntimeException failure) {
       return completion.failure == null
           ? CompletableFuture.failedFuture(failure)
@@ -139,11 +135,10 @@ final class DynamoDbSnapshotRetention {
       DynamoDbAsyncClient client, List<List<WriteRequest>> batches, int index) {
     if (index == batches.size()) return CompletableFuture.completedFuture(true);
     return deleteBatch(client, deletion(batches.get(index)), 0, 50)
-        .thenCompose(
-            success ->
-                success
-                    ? deleteBatches(client, batches, index + 1)
-                    : CompletableFuture.completedFuture(false));
+        .thenCompose(success ->
+            success
+                ? deleteBatches(client, batches, index + 1)
+                : CompletableFuture.completedFuture(false));
   }
 
   private CompletableFuture<Boolean> markHistory(
@@ -156,14 +151,12 @@ final class DynamoDbSnapshotRetention {
               mark(candidates.get(index)).toBuilder()
                   .overrideConfiguration(overrides -> overrides.addPlugin(completion))
                   .build())
-          .handle(
-              (ignored, failure) ->
-                  completion.alreadyMarked || completion.result(failure).orElse(false))
-          .thenCompose(
-              success ->
-                  success
-                      ? markHistory(client, candidates, index + 1)
-                      : CompletableFuture.completedFuture(false));
+          .handle((ignored, failure) ->
+              completion.alreadyMarked || completion.result(failure).orElse(false))
+          .thenCompose(success ->
+              success
+                  ? markHistory(client, candidates, index + 1)
+                  : CompletableFuture.completedFuture(false));
     } catch (RuntimeException failure) {
       if (alreadyMarked(failure)) return markHistory(client, candidates, index + 1);
       return completion.failure == null
@@ -175,12 +168,11 @@ final class DynamoDbSnapshotRetention {
   private CompletableFuture<Boolean> deleteBatch(
       DynamoDbAsyncClient client, BatchWriteItemRequest request, int retries, long delay) {
     AsyncCompletion<List<WriteRequest>> completion =
-        new AsyncCompletion<>(
-            response -> {
-              List<WriteRequest> remaining = pending((BatchWriteItemResponse) response, request);
-              if (!remaining.isEmpty()) checkLimit(retries);
-              return remaining;
-            });
+        new AsyncCompletion<>(response -> {
+          List<WriteRequest> remaining = pending((BatchWriteItemResponse) response, request);
+          if (!remaining.isEmpty()) checkLimit(retries);
+          return remaining;
+        });
     try {
       return client
           .batchWriteItem(
@@ -188,18 +180,15 @@ final class DynamoDbSnapshotRetention {
                   .overrideConfiguration(overrides -> overrides.addPlugin(completion))
                   .build())
           .handle((ignored, failure) -> completion.result(failure))
-          .thenCompose(
-              outcome -> {
-                if (outcome.isEmpty()) return CompletableFuture.completedFuture(false);
-                List<WriteRequest> pending = outcome.get();
-                if (pending.isEmpty()) return CompletableFuture.completedFuture(true);
-                return sleeper
-                    .sleepAsync(delay)
-                    .thenCompose(
-                        ignored ->
-                            deleteBatch(
-                                client, deletion(pending), retries + 1, Math.min(delay * 2, 1000)));
-              });
+          .thenCompose(outcome -> {
+            if (outcome.isEmpty()) return CompletableFuture.completedFuture(false);
+            List<WriteRequest> pending = outcome.get();
+            if (pending.isEmpty()) return CompletableFuture.completedFuture(true);
+            return sleeper
+                .sleepAsync(delay)
+                .thenCompose(ignored ->
+                    deleteBatch(client, deletion(pending), retries + 1, Math.min(delay * 2, 1000)));
+          });
     } catch (RuntimeException failure) {
       return completion.failure == null
           ? CompletableFuture.failedFuture(failure)
@@ -298,18 +287,17 @@ final class DynamoDbSnapshotRetention {
   private List<List<WriteRequest>> batches() {
     List<WriteRequest> candidates = new ArrayList<>();
     candidates().stream()
-        .forEach(
-            seqNr ->
-                candidates.add(
-                    WriteRequest.builder()
-                        .deleteRequest(
-                            DeleteRequest.builder()
-                                .key(
-                                    Map.of(
-                                        "aid", AttributeValue.fromS(id.asString()),
-                                        "skey", AttributeValue.fromN(Long.toString(seqNr))))
-                                .build())
-                        .build()));
+        .forEach(seqNr ->
+            candidates.add(
+                WriteRequest.builder()
+                    .deleteRequest(
+                        DeleteRequest.builder()
+                            .key(
+                                Map.of(
+                                    "aid", AttributeValue.fromS(id.asString()),
+                                    "skey", AttributeValue.fromN(Long.toString(seqNr))))
+                            .build())
+                    .build()));
     List<List<WriteRequest>> batches = new ArrayList<>();
     for (int start = 0; start < candidates.size(); start += 25)
       batches.add(List.copyOf(candidates.subList(start, Math.min(start + 25, candidates.size()))));

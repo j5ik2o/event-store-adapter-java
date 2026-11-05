@@ -64,14 +64,13 @@ final class SqliteCaseRunner {
     try (Stream<Path> paths = Files.walk(directory)) {
       paths
           .sorted(Comparator.reverseOrder())
-          .forEach(
-              path -> {
-                try {
-                  Files.deleteIfExists(path);
-                } catch (IOException ignored) {
-                  // 一時ディレクトリの後始末の失敗は、結果に影響させない。
-                }
-              });
+          .forEach(path -> {
+            try {
+              Files.deleteIfExists(path);
+            } catch (IOException ignored) {
+              // 一時ディレクトリの後始末の失敗は、結果に影響させない。
+            }
+          });
     } catch (IOException ignored) {
       // 一時ディレクトリの後始末の失敗は、結果に影響させない。
     }
