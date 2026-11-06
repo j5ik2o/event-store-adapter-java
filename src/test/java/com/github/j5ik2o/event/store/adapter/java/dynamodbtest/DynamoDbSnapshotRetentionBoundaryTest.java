@@ -1177,6 +1177,11 @@ class DynamoDbSnapshotRetentionBoundaryTest {
                                   }
                                 });
                     AsyncEventStore<JsonNode, JsonNode> store = asyncStore(s, observed);
+                    // The listener runs on the per-store notifier, after the SDK future and the
+                    // request accounting. Wait for it explicitly instead of inferring it from
+                    // those completions.
+                    CompletableFuture<Void> notified = new CompletableFuture<>();
+                    s.listener = failure -> notified.complete(null);
                     s.register(
                         "retention-mark",
                         1,
@@ -1199,9 +1204,11 @@ class DynamoDbSnapshotRetentionBoundaryTest {
                       release.complete(null);
                       assertNotNull(update.get());
                       // Request reservations are released before the retention interceptor.
-                      // Await the real SDK future so notification has finished as well.
+                      // The SDK future and request accounting can finish before the dedicated
+                      // notifier runs the listener, so wait for the listener itself.
                       update.get().handle((response, failure) -> null).get(10, TimeUnit.SECONDS);
                       s.c.recorder.requestsFinished(operation).get(10, TimeUnit.SECONDS);
+                      if (failing) notified.get(10, TimeUnit.SECONDS);
                       s.finish(operation, null);
                     }
                     assertTrue(result.isCancelled());
