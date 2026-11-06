@@ -155,6 +155,13 @@ class DynamoDbSnapshotRetentionBoundaryTest {
       return logs.list.stream().filter(log -> log.getLevel() == Level.WARN).count();
     }
 
+    List<String> warnThreadNames() {
+      return logs.list.stream()
+          .filter(log -> log.getLevel() == Level.WARN)
+          .map(ILoggingEvent::getThreadName)
+          .collect(Collectors.toList());
+    }
+
     @Override
     public void close() {
       logger.detachAppender(logs);
@@ -176,6 +183,19 @@ class DynamoDbSnapshotRetentionBoundaryTest {
                       return CompletableFuture.completedFuture(null);
                     })
                 .join());
+  }
+
+  private static final String NOTIFIER_THREAD_PREFIX = "eswa-retention-notify-";
+
+  private static void assertDedicatedNotifierThread(Thread notification, Thread caller) {
+    assertNotNull(notification);
+    assertDedicatedNotifierThreadName(notification.getName(), caller.getName());
+    assertNotSame(caller, notification);
+  }
+
+  private static void assertDedicatedNotifierThreadName(String name, String callerName) {
+    assertTrue(name.startsWith(NOTIFIER_THREAD_PREFIX), name);
+    assertNotEquals(callerName, name);
   }
 
   @TestFactory
@@ -219,14 +239,9 @@ class DynamoDbSnapshotRetentionBoundaryTest {
                           assertTrue(phase(s, "retention-delete").isEmpty());
                           assertEquals(2, s.lastRequests().size());
                           assertEquals(1, s.failures.size());
-                          if (s.asynchronous) {
-                            assertNotSame(caller, notificationThread.get());
-                            assertTrue(
-                                notificationThread
-                                    .get()
-                                    .getName()
-                                    .startsWith("sdk-async-response"));
-                          } else assertSame(caller, notificationThread.get());
+                          if (s.asynchronous)
+                            assertDedicatedNotifierThread(notificationThread.get(), caller);
+                          else assertSame(caller, notificationThread.get());
                           Throwable cause = s.failures.get(0).cause();
                           s.observation
                               .put("notification_cause", cause.getClass().getName())
@@ -268,7 +283,7 @@ class DynamoDbSnapshotRetentionBoundaryTest {
               failure -> {
                 assertSame(cause, failure.cause());
                 if (s.asynchronous) {
-                  assertTrue(Thread.currentThread().getName().startsWith("sdk-async-response"));
+                  assertDedicatedNotifierThread(Thread.currentThread(), caller);
                   s.observation.put(
                       "public_future_pending_at_notification", !publicResult.get().isDone());
                   notificationEntered.complete(null);
@@ -440,7 +455,8 @@ class DynamoDbSnapshotRetentionBoundaryTest {
                         });
                     assertCommitted(s, 2);
                     assertEquals(1, s.failures.size());
-                    assertTrue(s.notificationThreads.get(0).startsWith("sdk-async-response"));
+                    assertDedicatedNotifierThreadName(
+                        s.notificationThreads.get(0), Thread.currentThread().getName());
                     if (phase.equals("invalid-query"))
                       assertInstanceOf(StorageException.class, s.failures.get(0).cause());
                     else assertSame(phase(s, phase).get(0).failure, s.failures.get(0).cause());
@@ -454,6 +470,250 @@ class DynamoDbSnapshotRetentionBoundaryTest {
                     assertHistory(s, List.of(3L));
                   }
                 }));
+  }
+
+  @TestFactory
+  Stream<DynamicTest> retentionWarningRunsOnTheDedicatedNotifierThread() {
+    return Stream.of("retention-query", "retention-delete", "invalid-query")
+        .map(phase ->
+            DynamicTest.dynamicTest(
+                "retention WARN " + phase,
+                () -> {
+                  try (DynamoDbSnapshotRetentionFixture.Scene s =
+                          fixture.scene("warn-thread-" + phase, true, RetentionPolicy.delete(1));
+                      WarningLogs logs = new WarningLogs()) {
+                    backlog(s, 1);
+                    AsyncEventStore<JsonNode, JsonNode> store = asyncStore(s, s.c.async);
+                    Thread caller = Thread.currentThread();
+                    s.register(
+                        phase.equals("invalid-query") ? "retention-query" : phase,
+                        1,
+                        FaultRegistry.Injection.REPLACE_REQUEST,
+                        phase.equals("invalid-query")
+                            ? invalidHistoryResponse()
+                            : DynamoDbFaultEffects.sdkError("InternalServerError"));
+                    s.operate(
+                        true,
+                        () -> {
+                          store.persistEventAndSnapshot(event(ID, 2), snapshot(2)).join();
+                          return null;
+                        });
+                    assertEquals(1, s.failures.size());
+                    assertEquals(1, logs.count());
+                    String warningThread = logs.warnThreadNames().get(0);
+                    assertTrue(warningThread.startsWith(NOTIFIER_THREAD_PREFIX), warningThread);
+                    assertNotEquals(caller.getName(), warningThread);
+                    s.observation.put("warning_thread", warningThread);
+                  }
+                }));
+  }
+
+  @TestFactory
+  Stream<DynamicTest>
+      alreadyCompletedLibraryFuturesNotifyOnTheDedicatedThreadBeforeThePublicFuture() {
+    return Stream.of("completed failed future", "synchronous throw")
+        .map(kind ->
+            DynamicTest.dynamicTest(
+                "already-completed library boundary future " + kind,
+                () -> {
+                  // The stubs stand in for an SDK future that was already complete when the
+                  // retention code attached its continuation.
+                  try (DynamoDbSnapshotRetentionFixture.Scene s =
+                      fixture.scene(
+                          "library-boundary-inline-" + kind.replace(' ', '-'),
+                          true,
+                          RetentionPolicy.delete(1))) {
+                    backlog(s, 1);
+                    AtomicReference<Thread> queryObserver = new AtomicReference<>();
+                    DynamoDbAsyncClient client =
+                        (DynamoDbAsyncClient)
+                            Proxy.newProxyInstance(
+                                DynamoDbAsyncClient.class.getClassLoader(),
+                                new Class<?>[] {DynamoDbAsyncClient.class},
+                                (proxy, method, args) -> {
+                                  if (method.getName().equals("query")
+                                      && args[0] instanceof QueryRequest
+                                      && ((QueryRequest) args[0]).indexName() != null) {
+                                    queryObserver.set(Thread.currentThread());
+                                    if (kind.equals("synchronous throw"))
+                                      throw new IllegalStateException("synchronous query failure");
+                                    return CompletableFuture.failedFuture(
+                                        new IllegalStateException("completed query failure"));
+                                  }
+                                  try {
+                                    Object result = method.invoke(s.c.async, args);
+                                    if (method.getName().equals("transactWriteItems"))
+                                      return CompletableFuture.completedFuture(
+                                          ((CompletableFuture<?>) result).join());
+                                    return result;
+                                  } catch (InvocationTargetException failure) {
+                                    throw failure.getCause();
+                                  }
+                                });
+                    AsyncEventStore<JsonNode, JsonNode> store = asyncStore(s, client);
+                    Thread caller = Thread.currentThread();
+                    AtomicReference<Thread> notification = new AtomicReference<>();
+                    AtomicReference<CompletableFuture<Void>> publicResult = new AtomicReference<>();
+                    AtomicReference<Boolean> pending = new AtomicReference<>(false);
+                    s.listener =
+                        failure -> {
+                          notification.set(Thread.currentThread());
+                          CompletableFuture<Void> result = publicResult.get();
+                          pending.set(result == null || !result.isDone());
+                        };
+                    s.operate(
+                        true,
+                        () -> {
+                          CompletableFuture<Void> result =
+                              store.persistEventAndSnapshot(event(ID, 2), snapshot(2));
+                          publicResult.set(result);
+                          try {
+                            assertNull(result.get(3, TimeUnit.SECONDS));
+                          } catch (Exception failure) {
+                            throw new CompletionException(failure);
+                          }
+                          return null;
+                        });
+                    assertCommitted(s, 2);
+                    assertEquals(1, s.failures.size());
+                    assertSame(caller, queryObserver.get());
+                    assertDedicatedNotifierThread(notification.get(), caller);
+                    assertTrue(pending.get());
+                    s.observation
+                        .put("terminal_observed_thread", queryObserver.get().getName())
+                        .put("notification_thread", notification.get().getName())
+                        .put("public_future_pending_at_notification", pending.get());
+                  }
+                }));
+  }
+
+  @TestFactory
+  Stream<DynamicTest> directExecutorTerminalContinuationsNotifyOnTheDedicatedThread() {
+    return Stream.of("retention-query", "retention-delete", "invalid-query")
+        .map(phase ->
+            DynamicTest.dynamicTest(
+                "direct executor SDK terminal " + phase,
+                () -> {
+                  // A real SDK client whose future completion executor runs inline. The
+                  // replaced error response completes the SDK pipeline on the thread that
+                  // called query/batchWriteItem, so the SDK's terminal continuations observe
+                  // an already-completed future.
+                  try (DynamoDbSnapshotRetentionFixture.Scene s =
+                          fixture.scene(
+                              "sdk-direct-executor-" + phase, true, RetentionPolicy.delete(1));
+                      FaultAsyncHttpClient http =
+                          new FaultAsyncHttpClient(
+                              DynamoDbTestClients.asyncHttp(configuration.eventLoop()).build(),
+                              s.c.recorder);
+                      DynamoDbAsyncClient direct =
+                          DynamoDbAsyncClient.builder()
+                              .endpointOverride(configuration.endpoint())
+                              .region(DynamoDbTestClients.REGION)
+                              .credentialsProvider(
+                                  software.amazon.awssdk.auth.credentials.StaticCredentialsProvider
+                                      .create(
+                                          software.amazon.awssdk.auth.credentials
+                                              .AwsBasicCredentials.create(
+                                              DynamoDbTestClients.ACCESS_KEY,
+                                              "DynamoDbLocalDummySecret")))
+                              .overrideConfiguration(
+                                  DynamoDbTestClients.overrides()
+                                      .addExecutionInterceptor(s.c.recorder)
+                                      .build())
+                              .asyncConfiguration(
+                                  software.amazon.awssdk.core.client.config.ClientAsyncConfiguration
+                                      .builder()
+                                      .advancedOption(
+                                          software.amazon.awssdk.core.client.config
+                                              .SdkAdvancedAsyncClientOption
+                                              .FUTURE_COMPLETION_EXECUTOR,
+                                          Runnable::run)
+                                      .build())
+                              .httpClient(http)
+                              .build()) {
+                    backlog(s, 1);
+                    // The commit future is already complete when the store attaches its
+                    // continuation; this is the library-boundary part of the trigger.
+                    DynamoDbAsyncClient completedCommit =
+                        (DynamoDbAsyncClient)
+                            Proxy.newProxyInstance(
+                                DynamoDbAsyncClient.class.getClassLoader(),
+                                new Class<?>[] {DynamoDbAsyncClient.class},
+                                (proxy, method, args) -> {
+                                  try {
+                                    Object result = method.invoke(direct, args);
+                                    if (method.getName().equals("transactWriteItems"))
+                                      return CompletableFuture.completedFuture(
+                                          ((CompletableFuture<?>) result).join());
+                                    return result;
+                                  } catch (InvocationTargetException failure) {
+                                    throw failure.getCause();
+                                  }
+                                });
+                    AsyncEventStore<JsonNode, JsonNode> store = asyncStore(s, completedCommit);
+                    Thread caller = Thread.currentThread();
+                    AtomicReference<Thread> notification = new AtomicReference<>();
+                    AtomicReference<CompletableFuture<Void>> publicResult = new AtomicReference<>();
+                    AtomicReference<Boolean> pending = new AtomicReference<>(false);
+                    s.listener =
+                        failure -> {
+                          notification.set(Thread.currentThread());
+                          CompletableFuture<Void> result = publicResult.get();
+                          pending.set(result == null || !result.isDone());
+                        };
+                    String faultPhase = phase.equals("invalid-query") ? "retention-query" : phase;
+                    s.register(
+                        faultPhase,
+                        1,
+                        FaultRegistry.Injection.REPLACE_REQUEST,
+                        phase.equals("invalid-query")
+                            ? invalidHistoryResponse()
+                            : DynamoDbFaultEffects.sdkError("InternalServerError"));
+                    s.operate(
+                        true,
+                        () -> {
+                          CompletableFuture<Void> result =
+                              store.persistEventAndSnapshot(event(ID, 2), snapshot(2));
+                          publicResult.set(result);
+                          try {
+                            assertNull(result.get(3, TimeUnit.SECONDS));
+                          } catch (Exception failure) {
+                            throw new CompletionException(failure);
+                          }
+                          return null;
+                        });
+                    assertCommitted(s, 2);
+                    assertEquals(1, s.failures.size());
+                    if (phase.equals("invalid-query"))
+                      assertInstanceOf(StorageException.class, s.failures.get(0).cause());
+                    assertDedicatedNotifierThread(notification.get(), caller);
+                    assertTrue(pending.get());
+                    s.observation
+                        .put("notification_thread", notification.get().getName())
+                        .put("public_future_pending_at_notification", pending.get());
+                  }
+                }));
+  }
+
+  /** A synchronous successful response with an invalid history item, for afterExecution cases. */
+  private static FaultRegistry.Effect invalidHistoryResponse() {
+    return new FaultRegistry.Effect() {
+      @Override
+      public boolean supports(FaultRegistry.Injection injection) {
+        return injection == FaultRegistry.Injection.REPLACE_REQUEST;
+      }
+
+      @Override
+      public HttpReply reply(DynamoDbRequestRecorder.Request request) {
+        ObjectNode body = DynamoDbJson.object();
+        var item = body.putArray("Items").addObject();
+        item.putObject("aid").put("S", ID.asString());
+        item.putObject("skey").put("N", "9007199254740992");
+        item.putObject("active_history_seq_nr").put("N", "9007199254740992");
+        body.put("Count", 1).put("ScannedCount", 1);
+        return new HttpReply(200, body);
+      }
+    };
   }
 
   @org.junit.jupiter.api.Test
@@ -917,6 +1177,11 @@ class DynamoDbSnapshotRetentionBoundaryTest {
                                   }
                                 });
                     AsyncEventStore<JsonNode, JsonNode> store = asyncStore(s, observed);
+                    // The listener runs on the per-store notifier, after the SDK future and the
+                    // request accounting. Wait for it explicitly instead of inferring it from
+                    // those completions.
+                    CompletableFuture<Void> notified = new CompletableFuture<>();
+                    s.listener = failure -> notified.complete(null);
                     s.register(
                         "retention-mark",
                         1,
@@ -939,9 +1204,11 @@ class DynamoDbSnapshotRetentionBoundaryTest {
                       release.complete(null);
                       assertNotNull(update.get());
                       // Request reservations are released before the retention interceptor.
-                      // Await the real SDK future so notification has finished as well.
+                      // The SDK future and request accounting can finish before the dedicated
+                      // notifier runs the listener, so wait for the listener itself.
                       update.get().handle((response, failure) -> null).get(10, TimeUnit.SECONDS);
                       s.c.recorder.requestsFinished(operation).get(10, TimeUnit.SECONDS);
+                      if (failing) notified.get(10, TimeUnit.SECONDS);
                       s.finish(operation, null);
                     }
                     assertTrue(result.isCancelled());
@@ -1162,7 +1429,8 @@ class DynamoDbSnapshotRetentionBoundaryTest {
                         assertEquals(ID, failure.aggregateId());
                         assertEquals(RetentionMode.DELETE, failure.mode());
                         if (s.asynchronous) {
-                          assertSame(sdkThread.get(), Thread.currentThread());
+                          assertDedicatedNotifierThread(Thread.currentThread(), caller);
+                          assertNotSame(sdkThread.get(), Thread.currentThread());
                           try {
                             assertFalse(published.get(10, TimeUnit.SECONDS).isDone());
                           } catch (Exception error) {
@@ -1207,9 +1475,10 @@ class DynamoDbSnapshotRetentionBoundaryTest {
                       assertInstanceOf(StorageException.class, s.failures.get(0).cause());
                       assertEquals(1, logs.count());
                       if (s.asynchronous) {
-                        assertSame(sdkThread.get(), notifiedThread.get());
+                        assertDedicatedNotifierThreadName(
+                            notifiedThread.get().getName(), caller.getName());
+                        assertNotSame(sdkThread.get(), notifiedThread.get());
                         assertEquals(11, completions.size());
-                        s.observation.put("same_response_notification_thread", true);
                       }
                       List<Long> expected = new ArrayList<>(range(1, 5));
                       expected.addAll(List.of(29L, 30L, 31L));
@@ -1257,13 +1526,9 @@ class DynamoDbSnapshotRetentionBoundaryTest {
                                 assertEquals(
                                     s.tables.retentionPolicy().mode().orElseThrow(),
                                     failure.mode());
-                                if (s.asynchronous)
-                                  assertTrue(
-                                      Thread.currentThread()
-                                          .getName()
-                                          .startsWith("sdk-async-response"),
-                                      Thread.currentThread().getName());
-                                else assertSame(caller, Thread.currentThread());
+                                if (s.asynchronous) {
+                                  assertDedicatedNotifierThread(Thread.currentThread(), caller);
+                                } else assertSame(caller, Thread.currentThread());
                                 if (callbackThrows)
                                   throw new IllegalStateException("listener failure");
                               };
@@ -1291,7 +1556,7 @@ class DynamoDbSnapshotRetentionBoundaryTest {
   }
 
   @TestFactory
-  Stream<DynamicTest> realSdkCompletedAndPendingFuturesKeepNotificationOnResponseThread() {
+  Stream<DynamicTest> realSdkCompletedAndPendingFuturesKeepNotificationOnDedicatedThread() {
     return Stream.of("retention-query", "retention-delete", "retention-mark")
         .flatMap(phase ->
             Stream.of(false, true)
@@ -1380,8 +1645,8 @@ class DynamoDbSnapshotRetentionBoundaryTest {
                                                     // The commit gate additionally
                                                     // makes the public future available
                                                     // while completed retention
-                                                    // requests are handled on a
-                                                    // different SDK completion thread.
+                                                    // requests are handled on the
+                                                    // dedicated notification thread.
                                                     if (completed
                                                         && !(gateCommit
                                                             && method
@@ -1490,7 +1755,7 @@ class DynamoDbSnapshotRetentionBoundaryTest {
                                             "notification_thread",
                                             notificationThread.get().getName())
                                         .put(
-                                            "same_response_notification_thread",
+                                            "notification_on_sdk_response_thread",
                                             sdkThread.get() == notificationThread.get())
                                         .put("public_result", "success")
                                         .put("warn_count", logs.count());
@@ -1501,8 +1766,8 @@ class DynamoDbSnapshotRetentionBoundaryTest {
                                     assertEquals(
                                         s.tables.retentionPolicy().mode().orElseThrow(),
                                         s.failures.get(0).mode());
-                                    assertSame(sdkThread.get(), notificationThread.get());
-                                    assertNotSame(caller, notificationThread.get());
+                                    assertDedicatedNotifierThread(notificationThread.get(), caller);
+                                    assertNotSame(sdkThread.get(), notificationThread.get());
                                     Map<String, AttributeValue> head = s.stored("head", ID, 0),
                                         current = s.stored("snapshot", ID, 0),
                                         journal = s.stored("journal", ID, 2);

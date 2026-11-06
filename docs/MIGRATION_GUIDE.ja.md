@@ -76,7 +76,7 @@ Memoryはsnapshotとheadを原子的に読みます。DynamoDBは各項目を強
 
 DynamoDBはsnapshot書込み確定後だけ保持を行い、Memoryはイベントだけの追記でも取り残しを再試行します。TTLの印付き履歴は保持件数外で、期限を延長しません。保持はjournal・head・現在snapshotを削除しません。
 
-確定後の保持失敗は書込み成功を変えず、最終失敗をWARNと任意の `retentionFailureListener` へ1回通知します。通知には集約ID・方式・元原因があります。Memoryはロック解除後、同期実装とMemory非同期は呼出しスレッド、DynamoDB非同期は公開future完了前のSDK完了スレッドで通知します。通知先をブロックさせず、通知先の例外でも確定済み書込みの成功を維持します。
+確定後の保持失敗は書込み成功を変えず、最終失敗をWARNと任意の `retentionFailureListener` へ1回通知します。通知には集約ID・方式・元原因があります。Memoryはロック解除後、同期実装とMemory非同期は呼出しスレッドで通知します。DynamoDB非同期は、ストアごとに1つの専用通知executorで1回通知します。そのdaemonスレッド名は `eswa-retention-notify-N` で、呼出しスレッドでもSDKのスレッドでもなく、公開futureはlistenerが戻ってから完了します。executorの待ち行列は無制限なので、listenerがブロックすると、そのストアの後続の通知とそれを待つ公開futureが遅れます。通知先をブロックさせないでください。通知先の例外でも確定済み書込みの成功を維持します。DynamoDB非同期では `Error` も同様ですが、同期実装ではlistenerの `Error` は確定後に呼出し側へ伝播します。
 
 ## データの移行
 

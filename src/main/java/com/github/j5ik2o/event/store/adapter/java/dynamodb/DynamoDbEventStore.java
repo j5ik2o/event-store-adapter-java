@@ -149,6 +149,7 @@ public final class DynamoDbEventStore {
     private final PayloadSerializer<A> snapshotSerializer;
     private final Optional<RetentionFailureListener> retentionFailureListener;
     private final Sleeper sleeper;
+    private final DynamoDbRetentionNotifier retentionNotifier;
 
     Asynchronous(
         DynamoDbAsyncClient client,
@@ -163,6 +164,7 @@ public final class DynamoDbEventStore {
       this.snapshotSerializer = snapshotSerializer;
       this.retentionFailureListener = retentionFailureListener;
       this.sleeper = sleeper;
+      this.retentionNotifier = new DynamoDbRetentionNotifier();
     }
 
     public CompletableFuture<Void> persistEvent(EventEnvelope<P> event) {
@@ -200,7 +202,8 @@ public final class DynamoDbEventStore {
                         snapshot.seqNr(),
                         tables,
                         retentionFailureListener,
-                        sleeper)
+                        sleeper,
+                        retentionNotifier)
                     .retainAsync(client)
                     .whenComplete((ignored, retentionFailure) -> result.complete(null));
               } catch (RuntimeException retentionFailure) {

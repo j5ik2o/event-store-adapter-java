@@ -239,7 +239,7 @@ Optional<String> bigtableName = UserAccountExample.restore(bigtableStore, bigtab
 
 ### 失敗と通知
 
-確定後の保持失敗でも書込みは成功します。最終失敗はWARNログと、任意の `EventStoreConfig.Builder.retentionFailureListener` に1回通知します。通知には集約ID・方式・元原因があり、Memory・SQLite・Spannerはロックやトランザクションの解放後に通知します。同期実装、Memory非同期、SQLite非同期、Spanner非同期、Bigtable非同期は呼出しスレッド、DynamoDB非同期は公開future完了前のSDK完了スレッドで通知します。通知先はブロックしない実装にします。通知先の失敗でも、確定済み書込みを失敗にしません。Bigtableは、確定後に新しい末尾のイベントをjournalへ書き出せなかった失敗も、ロガー `com.github.j5ik2o.event.store.adapter.java.bigtable.journal` にWARNで記録します。この失敗ではリスナーを呼ばず、追記は確定したままです。ログやリスナーが `Error` を投げても、確定済みの追記は変わりません。
+確定後の保持失敗でも書込みは成功します。最終失敗はWARNログと、任意の `EventStoreConfig.Builder.retentionFailureListener` に1回通知します。通知には集約ID・方式・元原因があり、Memory・SQLite・Spannerはロックやトランザクションの解放後に通知します。同期実装、Memory非同期、SQLite非同期、Spanner非同期、Bigtable非同期は呼出しスレッドで通知します。DynamoDB非同期は、ストアごとに1つの専用通知executorで1回通知します。そのdaemonスレッド名は `eswa-retention-notify-N` で、呼出しスレッドでもSDKのスレッドでもなく、listenerが戻ってから公開futureを完了します。executorの待ち行列は無制限なので、listenerはブロックしない実装にします。listenerがブロックすると、そのストアの後続の通知とそれを待つ公開futureが遅れます。通知先の失敗でも、確定済み書込みを失敗にしません。DynamoDB非同期では `Error` も同様です。同期実装では、listenerの `Error` は確定後に呼出し側へ伝播します。Bigtableは、確定後に新しい末尾のイベントをjournalへ書き出せなかった失敗も、ロガー `com.github.j5ik2o.event.store.adapter.java.bigtable.journal` にWARNで記録します。この失敗ではリスナーを呼ばず、追記は確定したままです。ログやリスナーが `Error` を投げても、確定済みの追記は変わりません。
 
 ## エラー
 
