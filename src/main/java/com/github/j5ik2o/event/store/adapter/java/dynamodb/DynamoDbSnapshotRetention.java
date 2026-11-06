@@ -5,6 +5,7 @@ import java.math.BigDecimal;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -27,18 +28,33 @@ final class DynamoDbSnapshotRetention {
   private final DynamoDbTableConfig tables;
   private final Optional<RetentionFailureListener> listener;
   private final Sleeper sleeper;
+  private final DynamoDbRetentionNotifier retentionNotifier;
   private final NavigableSet<Long> history = new TreeSet<>(Comparator.reverseOrder());
+  private final AtomicBoolean notificationScheduled = new AtomicBoolean();
+  private final CompletableFuture<Void> asyncDelivery = new CompletableFuture<>();
 
+  /** Synchronous retention notifies on the calling thread and does not need a notifier. */
   DynamoDbSnapshotRetention(
       AggregateId id,
       long committedSeqNr,
       DynamoDbTableConfig tables,
       Optional<RetentionFailureListener> listener,
       Sleeper sleeper) {
+    this(id, committedSeqNr, tables, listener, sleeper, null);
+  }
+
+  DynamoDbSnapshotRetention(
+      AggregateId id,
+      long committedSeqNr,
+      DynamoDbTableConfig tables,
+      Optional<RetentionFailureListener> listener,
+      Sleeper sleeper,
+      DynamoDbRetentionNotifier retentionNotifier) {
     this.id = id;
     this.tables = tables;
     this.listener = listener;
     this.sleeper = sleeper;
+    this.retentionNotifier = retentionNotifier;
     history.add(committedSeqNr);
   }
 
@@ -85,7 +101,15 @@ final class DynamoDbSnapshotRetention {
   }
 
   CompletableFuture<Void> retainAsync(DynamoDbAsyncClient client) {
+    if (retentionNotifier == null)
+      throw new IllegalStateException(
+          "DynamoDbSnapshotRetention created for synchronous retention cannot retain"
+              + " asynchronously without a notifier");
     if (!enabled()) return CompletableFuture.completedFuture(null);
+    // A terminal failure can already have been notified by AsyncCompletion.fail before this
+    // handler runs, so the handle returns the notification future whether the failure was
+    // observed here or earlier. Nothing can schedule a notification after the chain completes,
+    // which is why the no-failure branch is a completed future rather than a pending one.
     return readPage(client, query())
         .thenCompose(success ->
             !success
@@ -96,9 +120,12 @@ final class DynamoDbSnapshotRetention {
         .handle((ignored, failure) -> {
           // SDK terminal failures and invalid responses have already been notified.
           // Only request startup and asynchronous wait failures reach this handler.
-          if (failure != null) notifyFailure(failure);
-          return null;
-        });
+          if (failure != null) notifyFailureAsync(failure);
+          return notificationScheduled.get()
+              ? asyncDelivery
+              : CompletableFuture.<Void>completedFuture(null);
+        })
+        .thenCompose(delivery -> delivery);
   }
 
   private CompletableFuture<Boolean> readPage(DynamoDbAsyncClient client, QueryRequest request) {
@@ -235,7 +262,7 @@ final class DynamoDbSnapshotRetention {
     private void fail(Throwable cause) {
       if (failure != null) return;
       failure = cause;
-      notifyFailure(cause);
+      notifyFailureAsync(cause);
     }
 
     Optional<T> result(Throwable sdkFailure) {
@@ -365,6 +392,21 @@ final class DynamoDbSnapshotRetention {
   }
 
   private void notifyFailure(Throwable failure) {
+    invokeListener(notification(failure));
+  }
+
+  private CompletableFuture<Void> notifyFailureAsync(Throwable failure) {
+    if (notificationScheduled.compareAndSet(false, true)) {
+      // Build the notification, log WARN and invoke the listener in the same notifier task, so
+      // none of them runs on the thread that observed the retention result.
+      retentionNotifier
+          .deliver(() -> invokeListener(notification(failure)))
+          .whenComplete((ignored, deliveryFailure) -> asyncDelivery.complete(null));
+    }
+    return asyncDelivery;
+  }
+
+  private RetentionFailure notification(Throwable failure) {
     RetentionFailure notification =
         new RetentionFailure(
             id,
@@ -378,10 +420,15 @@ final class DynamoDbSnapshotRetention {
     } catch (Exception loggingFailure) {
       // Logging cannot change the success of a committed write.
     }
+    return notification;
+  }
+
+  private void invokeListener(RetentionFailure notification) {
     try {
       listener.ifPresent(callback -> callback.onRetentionFailure(notification));
     } catch (Exception listenerFailure) {
-      // The callback cannot change the success of a committed write.
+      // The callback cannot change the success of a committed write. The notifier also contains
+      // Errors from an asynchronous callback.
     }
   }
 }

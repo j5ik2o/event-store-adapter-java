@@ -57,6 +57,18 @@ class DynamoDbSnapshotRetentionTest {
   }
 
   @Test
+  void asynchronousRetentionWithoutANotifierFailsBeforeTouchingTheClient() {
+    DynamoDbTableConfig tables =
+        DynamoDbTableConfigTest.names().retentionPolicy(RetentionPolicy.delete(1)).build();
+    DynamoDbSnapshotRetention retention =
+        new DynamoDbSnapshotRetention(
+            ID, 2, tables, Optional.<RetentionFailureListener>empty(), Sleeper.SYSTEM);
+    IllegalStateException failure =
+        assertThrows(IllegalStateException.class, () -> retention.retainAsync(null));
+    assertTrue(failure.getMessage().contains("notifier"));
+  }
+
+  @Test
   void bothFactoriesOnlyStartRetentionAfterSuccessfulSnapshotCommit() {
     for (boolean async : List.of(false, true)) {
       for (RetentionPolicy policy :
