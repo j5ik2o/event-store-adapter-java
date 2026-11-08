@@ -17,6 +17,7 @@
 ## ローカルの準備
 
 - コードは Java 11 向けにコンパイルします（`build.gradle.kts` の Gradle toolchain と `options.release`）。テストは `-PtestJavaVersion`（既定 11）で選んだ JDK で実行します。
+- ビルドは `core`（Memory を含む）・`dynamodb`・`spanner`・`bigtable`・`sqlite` のモジュールに分かれます。ルートプロジェクトはまとめ用の成果物 `event-store-adapter-java` で、クラスを含まず 5 モジュールに依存します。各保存先の SDK は、その保存先のモジュールだけの `api` 依存です。
 - Gradle wrapper（`./gradlew`、Gradle 9.8.2）を使います。CI は Gradle 自体を JDK 25 で動かします。
 - DynamoDB のテストは、digest で固定した DynamoDB Local のイメージを Testcontainers で起動するので、Docker が必要です。Spanner のテストは、digest で固定した Cloud Spanner エミュレーターのイメージ `gcr.io/cloud-spanner-emulator/emulator:1.5.58` を Testcontainers で起動するので、Docker が必要です。実行されない必須の Spanner 適合ケースがあるとビルドが失敗します。SQLite のテストは同梱の JDBC ドライバーと一時的なローカルファイルを使うので、Docker は不要です。Bigtable のテストは、digest で固定した Cloud Bigtable エミュレーターのイメージ `gcr.io/google.com/cloudsdktool/google-cloud-cli` を Testcontainers で起動するので、Docker が必要です。実行されない必須の Bigtable 適合ケースがあるとビルドが失敗します。初回の実行はイメージを取得するので時間がかかります。
 - リリース用の道具の検査には Python 3 を使います。CI は Python 3.15 を使います。 `tools/user-docs/check.py` は Python 3.10 以上が必要です。

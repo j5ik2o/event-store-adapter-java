@@ -19,20 +19,20 @@ Developers changing this repository: see [CONTRIBUTING](CONTRIBUTING.md).
 
 ### Versions
 
-The current artifact version is `5.0.1`, published to Maven Central. This library follows [common contract v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md); its major version 5 matches the contract revision. The distributed conformance data has version **1.3.0**, a separate number.
+The current artifact version is `5.2.0`, published to Maven Central. Version 5.2.0 splits the library into one artifact for the core (with Memory) and one for each storage driver. The package and class names do not change. This library follows [common contract v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md); its major version 5 matches the contract revision. The distributed conformance data has version **1.3.0**, a separate number.
 
-Version 2.0.0 was released before the decision to align versions, and its contents are the same as 5.0.0. Use 5.0.1 or later.
+Version 2.0.0 was released before the decision to align versions, and its contents are the same as 5.0.0. Use 5.2.0 or later.
 
 ### Public packages
 
-| Package | Public types |
-|---------|--------------|
-| `com.github.j5ik2o.event.store.adapter.java.core` | IDs, envelopes, serializers, configuration, exceptions, `EventStore<P,A>`, `AsyncEventStore<P,A>` |
-| `com.github.j5ik2o.event.store.adapter.java.memory` | `MemoryStorage`, `MemoryEventStore` |
-| `com.github.j5ik2o.event.store.adapter.java.dynamodb` | `DynamoDbTableConfig`, `DynamoDbEventStore` |
-| `com.github.j5ik2o.event.store.adapter.java.sqlite` | `SqliteStorageConfig`, `SqliteStorage`, `SqliteEventStore` |
-| `com.github.j5ik2o.event.store.adapter.java.spanner` | `SpannerStorageConfig`, `SpannerRetentionPolicy`, `SpannerStorage`, `SpannerEventStore` |
-| `com.github.j5ik2o.event.store.adapter.java.bigtable` | `BigtableStorageConfig`, `BigtableStorage`, `BigtableEventStore` |
+| Package | Artifact | Public types |
+|---------|----------|--------------|
+| `com.github.j5ik2o.event.store.adapter.java.core` | `event-store-adapter-java-core` | IDs, envelopes, serializers, configuration, exceptions, `EventStore<P,A>`, `AsyncEventStore<P,A>` |
+| `com.github.j5ik2o.event.store.adapter.java.memory` | `event-store-adapter-java-core` | `MemoryStorage`, `MemoryEventStore` |
+| `com.github.j5ik2o.event.store.adapter.java.dynamodb` | `event-store-adapter-java-dynamodb` | `DynamoDbTableConfig`, `DynamoDbEventStore` |
+| `com.github.j5ik2o.event.store.adapter.java.sqlite` | `event-store-adapter-java-sqlite` | `SqliteStorageConfig`, `SqliteStorage`, `SqliteEventStore` |
+| `com.github.j5ik2o.event.store.adapter.java.spanner` | `event-store-adapter-java-spanner` | `SpannerStorageConfig`, `SpannerRetentionPolicy`, `SpannerStorage`, `SpannerEventStore` |
+| `com.github.j5ik2o.event.store.adapter.java.bigtable` | `event-store-adapter-java-bigtable` | `BigtableStorageConfig`, `BigtableStorage`, `BigtableEventStore` |
 
 ### Links
 
@@ -48,12 +48,34 @@ Version 2.0.0 was released before the decision to align versions, and its conten
 
 ## Installation
 
+`event-store-adapter-java` remains as an aggregate artifact: it contains no classes and depends on the five modules, so an existing dependency keeps working. To keep only the SDK of the storage you use, depend on the driver artifact directly. `event-store-adapter-java-core` contains the core types and Memory; every driver artifact depends on it.
+
+| Artifact | Contents |
+|----------|----------|
+| `event-store-adapter-java` | All five modules (aggregate, no classes) |
+| `event-store-adapter-java-core` | Core types and Memory |
+| `event-store-adapter-java-dynamodb` | DynamoDB |
+| `event-store-adapter-java-spanner` | Spanner |
+| `event-store-adapter-java-bigtable` | Bigtable |
+| `event-store-adapter-java-sqlite` | SQLite |
+
 ```kotlin
 repositories {
     mavenCentral()
 }
 dependencies {
-    implementation("io.github.j5ik2o:event-store-adapter-java:5.0.1")
+    // Core types and Memory.
+    implementation("io.github.j5ik2o:event-store-adapter-java-core:5.2.0")
+    // Add only the drivers you use. The DynamoDB SDK comes only with this artifact.
+    implementation("io.github.j5ik2o:event-store-adapter-java-dynamodb:5.2.0")
+}
+```
+
+To depend on everything at once, use the aggregate artifact:
+
+```kotlin
+dependencies {
+    implementation("io.github.j5ik2o:event-store-adapter-java:5.2.0")
 }
 ```
 
@@ -148,7 +170,7 @@ DynamoDB asynchronous creation returns a future because configuration validation
 
 ### SQLite
 
-SQLite stores events in one local file on the same host. It is not available in 5.0.1; use the next release. Initialize a new or empty file once with `SqliteStorage.initialize`, then open it with `SqliteStorage.open`. Opening never initializes a file. It fails with a `STORAGE` error when the file is missing, and with a `CONFIGURATION` error when the file is uninitialized or does not match the settings. Each `SqliteStorage` owns one JDBC connection and must be closed. Several `SqliteStorage` objects, in one process or in several processes on the same host, can use the same file; each object serializes its own operations. A write that cannot get the write lock within `lockWait` (default 5 seconds) fails with a `STORAGE` error and commits nothing. The asynchronous SQLite API runs on the calling thread, including the lock wait, and returns completed futures. Do not place the file on a network file system. See [SQLITE_DATABASE_SCHEMA](docs/SQLITE_DATABASE_SCHEMA.md) for the file format and operations.
+SQLite stores events in one local file on the same host. It is available from 5.2.0. Initialize a new or empty file once with `SqliteStorage.initialize`, then open it with `SqliteStorage.open`. Opening never initializes a file. It fails with a `STORAGE` error when the file is missing, and with a `CONFIGURATION` error when the file is uninitialized or does not match the settings. Each `SqliteStorage` owns one JDBC connection and must be closed. Several `SqliteStorage` objects, in one process or in several processes on the same host, can use the same file; each object serializes its own operations. A write that cannot get the write lock within `lockWait` (default 5 seconds) fails with a `STORAGE` error and commits nothing. The asynchronous SQLite API runs on the calling thread, including the lock wait, and returns completed futures. Do not place the file on a network file system. See [SQLITE_DATABASE_SCHEMA](docs/SQLITE_DATABASE_SCHEMA.md) for the file format and operations.
 
 ```java
 import com.github.j5ik2o.event.store.adapter.java.sqlite.*;
@@ -174,7 +196,7 @@ try (SqliteStorage sqlite = SqliteStorage.open(file, settings)) {
 
 ### Spanner
 
-Spanner stores events in five tables of one Cloud Spanner database that use the GoogleSQL dialect. It is not available in 5.0.1; use the next release. You create the tables and one configuration row yourself with the DDL in [SPANNER_DATABASE_SCHEMA](docs/SPANNER_DATABASE_SCHEMA.md); the library never runs DDL. `SpannerStorage.open(DatabaseClient, SpannerStorageConfig)` only verifies the layout. It fails with a `CONFIGURATION` error when a table, a column, a primary key, the configuration row or the row deletion policy is missing or does not match, and with a `STORAGE` error when the database cannot be read. You build and own the `DatabaseClient`, including credentials and the emulator host; the library never closes it. Writes run in a SERIALIZABLE read-write transaction. An aborted transaction is retried with the same envelope up to `transactionRetryLimit` times (default 5, the first attempt is not counted), then fails with a `STORAGE` error. When the commit response is lost, the append fails with a `STORAGE` error whose outcome is unknown; sending the same envelope again then fails with an `OPTIMISTIC_LOCK` error if the first commit went through. Reads use one strong read-only transaction. The retention policy is `SpannerRetentionPolicy.none()`, `delete(n)` or `ttl(n, graceDays)`; the grace period is counted in days and must equal `ttl_grace_days` in the configuration row and the `INTERVAL n DAY` of the row deletion policy. The asynchronous Spanner API runs on the calling thread and returns completed futures. No change feed is provided; `SpannerStorageConfig.Builder.changeFeed(true)` fails with a `CONFIGURATION` error. The tables use the same layout as the JavaScript v5 implementation.
+Spanner stores events in five tables of one Cloud Spanner database that use the GoogleSQL dialect. It is available from 5.2.0. You create the tables and one configuration row yourself with the DDL in [SPANNER_DATABASE_SCHEMA](docs/SPANNER_DATABASE_SCHEMA.md); the library never runs DDL. `SpannerStorage.open(DatabaseClient, SpannerStorageConfig)` only verifies the layout. It fails with a `CONFIGURATION` error when a table, a column, a primary key, the configuration row or the row deletion policy is missing or does not match, and with a `STORAGE` error when the database cannot be read. You build and own the `DatabaseClient`, including credentials and the emulator host; the library never closes it. Writes run in a SERIALIZABLE read-write transaction. An aborted transaction is retried with the same envelope up to `transactionRetryLimit` times (default 5, the first attempt is not counted), then fails with a `STORAGE` error. When the commit response is lost, the append fails with a `STORAGE` error whose outcome is unknown; sending the same envelope again then fails with an `OPTIMISTIC_LOCK` error if the first commit went through. Reads use one strong read-only transaction. The retention policy is `SpannerRetentionPolicy.none()`, `delete(n)` or `ttl(n, graceDays)`; the grace period is counted in days and must equal `ttl_grace_days` in the configuration row and the `INTERVAL n DAY` of the row deletion policy. The asynchronous Spanner API runs on the calling thread and returns completed futures. No change feed is provided; `SpannerStorageConfig.Builder.changeFeed(true)` fails with a `CONFIGURATION` error. The tables use the same layout as the JavaScript v5 implementation.
 
 ```java
 import com.github.j5ik2o.event.store.adapter.java.spanner.*;
@@ -198,7 +220,7 @@ Optional<String> spannerName = UserAccountExample.restore(spannerStore, spannerI
 
 ### Bigtable
 
-Bigtable stores events in two tables of one Cloud Bigtable instance: a journal table and a head table. It is not available in 5.0.1; use the next release. You create the two tables, their column families and garbage-collection rules with the commands in [BIGTABLE_DATABASE_SCHEMA](docs/BIGTABLE_DATABASE_SCHEMA.md), then call `BigtableStorage.initialize(BigtableDataClient, BigtableStorageConfig)` once to write the same configuration row into both tables; the library never creates a table. `BigtableStorage.open(BigtableDataClient, BigtableTableAdminClient, BigtableStorageConfig)` only verifies the layout. It fails with a `CONFIGURATION` error when a table, a column family, a garbage-collection rule or a configuration row is missing or does not match, and with a `STORAGE` error when Bigtable cannot be reached. You build and own both clients, including the credentials, the app profile pinned to one cluster and the emulator host; the library never closes them. A single conditional update of the head row commits an append; the previous event is written to the journal before it, and the new event after it. A mismatch of that update is an `OPTIMISTIC_LOCK` error, and the update is never retried: when its response is lost, the append fails with a `STORAGE` error whose outcome is unknown, and sending the same envelope again then fails with an `OPTIMISTIC_LOCK` error if the first update went through. A serialized envelope larger than `envelopeLimitBytes` (default 1 MiB, at most 8 MiB, and equal to the value in both configuration rows) is rejected before anything is written as a `CONTRACT_VIOLATION` of rule `BT-16`. The retention policy is `RetentionPolicy.none()` or `delete(n)`; TTL fails at build. The asynchronous Bigtable API runs on the calling thread and returns completed futures. No change feed is provided; `BigtableStorageConfig.Builder.changeFeed(true)` fails with a `CONFIGURATION` error. The tables use the same layout as the Rust v5 implementation.
+Bigtable stores events in two tables of one Cloud Bigtable instance: a journal table and a head table. It is available from 5.2.0. You create the two tables, their column families and garbage-collection rules with the commands in [BIGTABLE_DATABASE_SCHEMA](docs/BIGTABLE_DATABASE_SCHEMA.md), then call `BigtableStorage.initialize(BigtableDataClient, BigtableStorageConfig)` once to write the same configuration row into both tables; the library never creates a table. `BigtableStorage.open(BigtableDataClient, BigtableTableAdminClient, BigtableStorageConfig)` only verifies the layout. It fails with a `CONFIGURATION` error when a table, a column family, a garbage-collection rule or a configuration row is missing or does not match, and with a `STORAGE` error when Bigtable cannot be reached. You build and own both clients, including the credentials, the app profile pinned to one cluster and the emulator host; the library never closes them. A single conditional update of the head row commits an append; the previous event is written to the journal before it, and the new event after it. A mismatch of that update is an `OPTIMISTIC_LOCK` error, and the update is never retried: when its response is lost, the append fails with a `STORAGE` error whose outcome is unknown, and sending the same envelope again then fails with an `OPTIMISTIC_LOCK` error if the first update went through. A serialized envelope larger than `envelopeLimitBytes` (default 1 MiB, at most 8 MiB, and equal to the value in both configuration rows) is rejected before anything is written as a `CONTRACT_VIOLATION` of rule `BT-16`. The retention policy is `RetentionPolicy.none()` or `delete(n)`; TTL fails at build. The asynchronous Bigtable API runs on the calling thread and returns completed futures. No change feed is provided; `BigtableStorageConfig.Builder.changeFeed(true)` fails with a `CONFIGURATION` error. The tables use the same layout as the Rust v5 implementation.
 
 ```java
 import com.github.j5ik2o.event.store.adapter.java.bigtable.*;

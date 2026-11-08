@@ -15,6 +15,7 @@ Some files are fixed copies from the hub, and CI checks them with SHA-256: `conf
 ## Local setup
 
 - The code is compiled for Java 11 (the Gradle toolchain and `options.release` in `build.gradle.kts`). Tests run on the JDK selected by `-PtestJavaVersion` (default 11).
+- The build is split into `core` (with Memory), `dynamodb`, `spanner`, `bigtable` and `sqlite` modules. The root project is the aggregate artifact `event-store-adapter-java`; it contains no classes and depends on the five modules. Each storage SDK is an `api` dependency of its own module only.
 - Use the Gradle wrapper (`./gradlew`, Gradle 9.8.2). CI runs Gradle itself on JDK 25.
 - The DynamoDB tests start a DynamoDB Local image pinned by digest through Testcontainers, so Docker is required. The Spanner tests start the Cloud Spanner emulator image `gcr.io/cloud-spanner-emulator/emulator:1.5.58`, pinned by digest, through Testcontainers, so Docker is required; a required Spanner conformance case that is not executed fails the build. The SQLite tests use the bundled JDBC driver and temporary local files, so they do not need Docker. The Bigtable tests start the Cloud Bigtable emulator image `gcr.io/google.com/cloudsdktool/google-cloud-cli`, pinned by digest, through Testcontainers, so Docker is required; a required Bigtable conformance case that is not executed fails the build. The first run pulls the image, which takes some time.
 - The release tooling checks use Python 3. CI uses Python 3.15. `tools/user-docs/check.py` requires Python 3.10 or later.

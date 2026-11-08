@@ -69,6 +69,12 @@ jobs:
         env:
           TEST_JAVA_VERSION: ${{ matrix.java }}
         run: ./gradlew test -PtestJavaVersion="$TEST_JAVA_VERSION" --info
+      - name: Run core + DynamoDB only test
+        # Only core and dynamodb are on the classpath. This checks that the split artifacts work
+        # together without the other driver modules before Kotlin and Scala depend on them.
+        env:
+          TEST_JAVA_VERSION: ${{ matrix.java }}
+        run: ./gradlew coreDynamoDbOnlyTest -PtestJavaVersion="$TEST_JAVA_VERSION" --info
       - name: Write conformance summary
         if: always()
         run: |
