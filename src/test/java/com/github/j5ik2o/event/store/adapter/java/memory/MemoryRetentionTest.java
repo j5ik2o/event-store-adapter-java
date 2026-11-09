@@ -142,19 +142,17 @@ class MemoryRetentionTest {
     AsyncEventStore<String, String> writer =
         MemoryEventStore.createAsync(
             storage,
-            configuration(
-                failure -> {
-                  try {
-                    observedHeads.add(
-                        executor
-                            .submit(() -> reader.getLatestSnapshotById(AID).get().headSeqNr())
-                            .get(5, TimeUnit.SECONDS));
-                  } catch (Exception e) {
-                    throw new AssertionError(
-                        "listener must run after the storage lock is released", e);
-                  }
-                  throw new IllegalStateException("listener failure");
-                }));
+            configuration(failure -> {
+              try {
+                observedHeads.add(
+                    executor
+                        .submit(() -> reader.getLatestSnapshotById(AID).get().headSeqNr())
+                        .get(5, TimeUnit.SECONDS));
+              } catch (Exception e) {
+                throw new AssertionError("listener must run after the storage lock is released", e);
+              }
+              throw new IllegalStateException("listener failure");
+            }));
     hooks.fail = true;
     try {
       CompletableFuture<Void> result = writer.persistEventAndSnapshot(event(2), snapshot(2));

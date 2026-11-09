@@ -45,10 +45,6 @@ import software.amazon.awssdk.services.dynamodb.model.StreamSpecification;
 import software.amazon.awssdk.services.dynamodb.model.StreamViewType;
 import software.amazon.awssdk.services.dynamodb.model.TableStatus;
 
-/**
- * The public DynamoDB entry point must initialize and read/write with only the core and dynamodb
- * modules on the classpath. This source set deliberately excludes the other driver modules.
- */
 final class DynamoDbCoreOnlyTest {
 
   private static final String IMAGE =
@@ -112,28 +108,28 @@ final class DynamoDbCoreOnlyTest {
   }
 
   @Test
-  void exposesCoreAndDynamoDbButNotTheOtherDriverModules() {
+  void exposesCoreAndDynamoDbButNotTheOtherDriversOrTheirSdks() {
     ClassLoader loader = DynamoDbCoreOnlyTest.class.getClassLoader();
-    assertDoesNotThrow(
-        () ->
-            Class.forName(
-                "com.github.j5ik2o.event.store.adapter.java.core.EventStore", false, loader));
-    assertDoesNotThrow(
-        () ->
-            Class.forName(
-                "com.github.j5ik2o.event.store.adapter.java.memory.MemoryStorage", false, loader));
-    assertDoesNotThrow(
-        () ->
-            Class.forName(
-                "com.github.j5ik2o.event.store.adapter.java.dynamodb.DynamoDbEventStore",
-                false,
-                loader));
-    for (String otherDriver :
+    assertDoesNotThrow(() ->
+        Class.forName("com.github.j5ik2o.event.store.adapter.java.core.EventStore", false, loader));
+    assertDoesNotThrow(() ->
+        Class.forName(
+            "com.github.j5ik2o.event.store.adapter.java.memory.MemoryStorage", false, loader));
+    assertDoesNotThrow(() ->
+        Class.forName(
+            "com.github.j5ik2o.event.store.adapter.java.dynamodb.DynamoDbEventStore",
+            false,
+            loader));
+    for (String unavailableClass :
         List.of(
             "com.github.j5ik2o.event.store.adapter.java.spanner.SpannerStorage",
             "com.github.j5ik2o.event.store.adapter.java.bigtable.BigtableStorage",
-            "com.github.j5ik2o.event.store.adapter.java.sqlite.SqliteStorage")) {
-      assertThrows(ClassNotFoundException.class, () -> Class.forName(otherDriver, false, loader));
+            "com.github.j5ik2o.event.store.adapter.java.sqlite.SqliteStorage",
+            "com.google.cloud.spanner.Spanner",
+            "com.google.cloud.bigtable.data.v2.BigtableDataClient",
+            "org.sqlite.JDBC")) {
+      assertThrows(
+          ClassNotFoundException.class, () -> Class.forName(unavailableClass, false, loader));
     }
   }
 

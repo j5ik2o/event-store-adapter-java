@@ -119,21 +119,19 @@ class DynamoDbEventReadTest {
       invalid.put("aid-" + aid.length(), stored);
     }
     return invalid.entrySet().stream()
-        .map(
-            entry ->
-                DynamicTest.dynamicTest(
-                    entry.getKey(),
-                    () -> {
-                      for (boolean async : List.of(false, true)) {
-                        Stub stub = new Stub(BYTES);
-                        stub.reply =
-                            request -> QueryResponse.builder().items(entry.getValue()).build();
-                        Throwable failure = stub.failure(async);
-                        assertInstanceOf(StorageException.class, failure);
-                        assertNotNull(failure.getCause());
-                        assertEquals(1, stub.requests.size());
-                      }
-                    }));
+        .map(entry ->
+            DynamicTest.dynamicTest(
+                entry.getKey(),
+                () -> {
+                  for (boolean async : List.of(false, true)) {
+                    Stub stub = new Stub(BYTES);
+                    stub.reply = request -> QueryResponse.builder().items(entry.getValue()).build();
+                    Throwable failure = stub.failure(async);
+                    assertInstanceOf(StorageException.class, failure);
+                    assertNotNull(failure.getCause());
+                    assertEquals(1, stub.requests.size());
+                  }
+                }));
   }
 
   @Test

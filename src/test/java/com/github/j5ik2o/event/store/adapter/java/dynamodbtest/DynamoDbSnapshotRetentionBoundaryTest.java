@@ -52,16 +52,15 @@ class DynamoDbSnapshotRetentionBoundaryTest {
 
   private Stream<DynamicTest> both(String name, RetentionPolicy policy, Scenario action) {
     return Stream.of(false, true)
-        .map(
-            async ->
-                DynamicTest.dynamicTest(
-                    name + (async ? " async" : " sync"),
-                    () -> {
-                      try (DynamoDbSnapshotRetentionFixture.Scene scene =
-                          fixture.scene(name, async, policy)) {
-                        action.run(scene);
-                      }
-                    }));
+        .map(async ->
+            DynamicTest.dynamicTest(
+                name + (async ? " async" : " sync"),
+                () -> {
+                  try (DynamoDbSnapshotRetentionFixture.Scene scene =
+                      fixture.scene(name, async, policy)) {
+                    action.run(scene);
+                  }
+                }));
   }
 
   private static EventEnvelope<JsonNode> event(AggregateId id, long seq) {
@@ -94,12 +93,11 @@ class DynamoDbSnapshotRetentionBoundaryTest {
     return EventStoreConfig.<JsonNode, JsonNode>builder()
         .payloadSerializer(JSON)
         .snapshotSerializer(JSON)
-        .retentionFailureListener(
-            failure -> {
-              s.failures.add(failure);
-              s.notificationThreads.add(Thread.currentThread().getName());
-              s.listener.onRetentionFailure(failure);
-            })
+        .retentionFailureListener(failure -> {
+          s.failures.add(failure);
+          s.notificationThreads.add(Thread.currentThread().getName());
+          s.listener.onRetentionFailure(failure);
+        })
         .build();
   }
 
@@ -157,6 +155,13 @@ class DynamoDbSnapshotRetentionBoundaryTest {
       return logs.list.stream().filter(log -> log.getLevel() == Level.WARN).count();
     }
 
+    List<String> warnThreadNames() {
+      return logs.list.stream()
+          .filter(log -> log.getLevel() == Level.WARN)
+          .map(ILoggingEvent::getThreadName)
+          .collect(Collectors.toList());
+    }
+
     @Override
     public void close() {
       logger.detachAppender(logs);
@@ -180,75 +185,75 @@ class DynamoDbSnapshotRetentionBoundaryTest {
                 .join());
   }
 
+  private static final String NOTIFIER_THREAD_PREFIX = "eswa-retention-notify-";
+
+  private static void assertDedicatedNotifierThread(Thread notification, Thread caller) {
+    assertNotNull(notification);
+    assertDedicatedNotifierThreadName(notification.getName(), caller.getName());
+    assertNotSame(caller, notification);
+  }
+
+  private static void assertDedicatedNotifierThreadName(String name, String callerName) {
+    assertTrue(name.startsWith(NOTIFIER_THREAD_PREFIX), name);
+    assertNotEquals(callerName, name);
+  }
+
   @TestFactory
   Stream<DynamicTest> invalidStoredHistoryNumbersAreStorageFailures() {
     return Stream.of("skey", "active_history_seq_nr")
-        .flatMap(
-            field ->
-                Stream.of("9007199254740992", "1.5", "9223372036854775808")
-                    .flatMap(
-                        number ->
-                            both(
-                                "invalid-stored-" + field + "-" + number,
-                                RetentionPolicy.delete(1),
-                                s -> {
-                                  backlog(s, 1);
-                                  Map<String, AttributeValue> invalid =
-                                      new LinkedHashMap<>(s.stored("snapshot", ID, 1));
-                                  invalid.put(field, AttributeValue.fromN(number));
-                                  if (field.equals("skey"))
-                                    invalid.put(
-                                        "active_history_seq_nr", AttributeValue.fromN(number));
-                                  s.c.admin.putItem(
-                                      PutItemRequest.builder()
-                                          .tableName(s.c.snapshot)
-                                          .item(invalid)
-                                          .build());
-                                  Map<String, AttributeValue> actualInvalid =
-                                      s.rows(ID).stream()
-                                          .filter(
-                                              row -> row.get("skey").equals(invalid.get("skey")))
-                                          .findFirst()
-                                          .orElseThrow();
-                                  assertEquals(invalid, actualInvalid);
-                                  s.observation
-                                      .put("invalid_field", field)
-                                      .put("invalid_number", number)
-                                      .set(
-                                          "actual_invalid_stored_item",
-                                          DynamoDbJson.sdk(actualInvalid));
-                                  Thread caller = Thread.currentThread();
-                                  AtomicReference<Thread> notificationThread =
-                                      new AtomicReference<>();
-                                  s.listener =
-                                      failure -> notificationThread.set(Thread.currentThread());
-                                  s.write(event(ID, 2), snapshot(2));
-                                  assertCommitted(s, 2);
-                                  assertTrue(s.rows(ID).contains(invalid));
-                                  assertEquals(1, phase(s, "retention-query").size());
-                                  assertTrue(phase(s, "retention-delete").isEmpty());
-                                  assertEquals(2, s.lastRequests().size());
-                                  assertEquals(1, s.failures.size());
-                                  if (s.asynchronous) {
-                                    assertNotSame(caller, notificationThread.get());
-                                    assertTrue(
-                                        notificationThread
-                                            .get()
-                                            .getName()
-                                            .startsWith("sdk-async-response"));
-                                  } else assertSame(caller, notificationThread.get());
-                                  Throwable cause = s.failures.get(0).cause();
-                                  s.observation
-                                      .put("notification_cause", cause.getClass().getName())
-                                      .put(
-                                          "notification_error_category",
-                                          cause instanceof EventStoreException
-                                              ? ((EventStoreException) cause).category().name()
-                                              : null);
-                                  StorageException storage =
-                                      assertInstanceOf(StorageException.class, cause);
-                                  assertEquals(ErrorCategory.STORAGE, storage.category());
-                                })));
+        .flatMap(field ->
+            Stream.of("9007199254740992", "1.5", "9223372036854775808")
+                .flatMap(number ->
+                    both(
+                        "invalid-stored-" + field + "-" + number,
+                        RetentionPolicy.delete(1),
+                        s -> {
+                          backlog(s, 1);
+                          Map<String, AttributeValue> invalid =
+                              new LinkedHashMap<>(s.stored("snapshot", ID, 1));
+                          invalid.put(field, AttributeValue.fromN(number));
+                          if (field.equals("skey"))
+                            invalid.put("active_history_seq_nr", AttributeValue.fromN(number));
+                          s.c.admin.putItem(
+                              PutItemRequest.builder()
+                                  .tableName(s.c.snapshot)
+                                  .item(invalid)
+                                  .build());
+                          Map<String, AttributeValue> actualInvalid =
+                              s.rows(ID).stream()
+                                  .filter(row -> row.get("skey").equals(invalid.get("skey")))
+                                  .findFirst()
+                                  .orElseThrow();
+                          assertEquals(invalid, actualInvalid);
+                          s.observation
+                              .put("invalid_field", field)
+                              .put("invalid_number", number)
+                              .set("actual_invalid_stored_item", DynamoDbJson.sdk(actualInvalid));
+                          Thread caller = Thread.currentThread();
+                          AtomicReference<Thread> notificationThread = new AtomicReference<>();
+                          s.listener = failure -> notificationThread.set(Thread.currentThread());
+                          s.write(event(ID, 2), snapshot(2));
+                          assertCommitted(s, 2);
+                          assertTrue(s.rows(ID).contains(invalid));
+                          assertEquals(1, phase(s, "retention-query").size());
+                          assertTrue(phase(s, "retention-delete").isEmpty());
+                          assertEquals(2, s.lastRequests().size());
+                          assertEquals(1, s.failures.size());
+                          if (s.asynchronous)
+                            assertDedicatedNotifierThread(notificationThread.get(), caller);
+                          else assertSame(caller, notificationThread.get());
+                          Throwable cause = s.failures.get(0).cause();
+                          s.observation
+                              .put("notification_cause", cause.getClass().getName())
+                              .put(
+                                  "notification_error_category",
+                                  cause instanceof EventStoreException
+                                      ? ((EventStoreException) cause).category().name()
+                                      : null);
+                          StorageException storage =
+                              assertInstanceOf(StorageException.class, cause);
+                          assertEquals(ErrorCategory.STORAGE, storage.category());
+                        })));
   }
 
   private static void assertCommitted(DynamoDbSnapshotRetentionFixture.Scene s, long seq) {
@@ -278,7 +283,7 @@ class DynamoDbSnapshotRetentionBoundaryTest {
               failure -> {
                 assertSame(cause, failure.cause());
                 if (s.asynchronous) {
-                  assertTrue(Thread.currentThread().getName().startsWith("sdk-async-response"));
+                  assertDedicatedNotifierThread(Thread.currentThread(), caller);
                   s.observation.put(
                       "public_future_pending_at_notification", !publicResult.get().isDone());
                   notificationEntered.complete(null);
@@ -325,13 +330,12 @@ class DynamoDbSnapshotRetentionBoundaryTest {
                 "commit",
                 1,
                 FaultRegistry.Injection.REPLACE_RESPONSE,
-                DynamoDbFaultEffects.response(
-                    response -> {
-                      s.observation.set("actual_commit_response", DynamoDbJson.sdk(response));
-                      commitEntered.complete(null);
-                      commitRelease.join();
-                      return response;
-                    }));
+                DynamoDbFaultEffects.response(response -> {
+                  s.observation.set("actual_commit_response", DynamoDbJson.sdk(response));
+                  commitEntered.complete(null);
+                  commitRelease.join();
+                  return response;
+                }));
           s.register(
               "retention-delete",
               1,
@@ -402,73 +406,314 @@ class DynamoDbSnapshotRetentionBoundaryTest {
   @TestFactory
   Stream<DynamicTest> sdkTerminalListenerAssertionErrorCannotStrandCommittedWrite() {
     return Stream.of("retention-query", "retention-delete", "invalid-query")
-        .map(
-            phase ->
-                DynamicTest.dynamicTest(
-                    "SDK listener AssertionError " + phase,
-                    () -> {
-                      try (DynamoDbSnapshotRetentionFixture.Scene s =
+        .map(phase ->
+            DynamicTest.dynamicTest(
+                "SDK listener AssertionError " + phase,
+                () -> {
+                  try (DynamoDbSnapshotRetentionFixture.Scene s =
+                      fixture.scene(
+                          "sdk-listener-error-" + phase, true, RetentionPolicy.delete(1))) {
+                    backlog(s, 1);
+                    AsyncEventStore<JsonNode, JsonNode> store = asyncStore(s, s.c.async);
+                    s.listener =
+                        failure -> {
+                          s.observation
+                              .put("listener_assertion_error_sent", true)
+                              .put("notification_cause", failure.cause().getClass().getName())
+                              .put("notification_thread", Thread.currentThread().getName());
+                          throw new AssertionError("listener failure");
+                        };
+                    s.register(
+                        phase.equals("invalid-query") ? "retention-query" : phase,
+                        1,
+                        phase.equals("invalid-query")
+                            ? FaultRegistry.Injection.REPLACE_RESPONSE
+                            : FaultRegistry.Injection.REPLACE_REQUEST,
+                        phase.equals("invalid-query")
+                            ? DynamoDbFaultEffects.response(response -> {
+                              Map<String, AttributeValue> invalid =
+                                  new LinkedHashMap<>(((QueryResponse) response).items().get(0));
+                              invalid.put("skey", AttributeValue.fromN("9007199254740992"));
+                              invalid.put(
+                                  "active_history_seq_nr",
+                                  AttributeValue.fromN("9007199254740992"));
+                              return ((QueryResponse) response).toBuilder().items(invalid).build();
+                            })
+                            : DynamoDbFaultEffects.sdkError("InternalServerError"));
+                    s.operate(
+                        true,
+                        () -> {
+                          CompletableFuture<Void> result =
+                              store.persistEventAndSnapshot(event(ID, 2), snapshot(2));
+                          try {
+                            assertNull(result.get(3, TimeUnit.SECONDS));
+                            s.observation.put("public_future_result", "success");
+                            return null;
+                          } catch (Exception failure) {
+                            throw new CompletionException(failure);
+                          }
+                        });
+                    assertCommitted(s, 2);
+                    assertEquals(1, s.failures.size());
+                    assertDedicatedNotifierThreadName(
+                        s.notificationThreads.get(0), Thread.currentThread().getName());
+                    if (phase.equals("invalid-query"))
+                      assertInstanceOf(StorageException.class, s.failures.get(0).cause());
+                    else assertSame(phase(s, phase).get(0).failure, s.failures.get(0).cause());
+                    s.operate(
+                        true,
+                        () -> {
+                          store.persistEventAndSnapshot(event(ID, 3), snapshot(3)).join();
+                          return null;
+                        });
+                    assertTrue(s.failures.isEmpty());
+                    assertHistory(s, List.of(3L));
+                  }
+                }));
+  }
+
+  @TestFactory
+  Stream<DynamicTest> retentionWarningRunsOnTheDedicatedNotifierThread() {
+    return Stream.of("retention-query", "retention-delete", "invalid-query")
+        .map(phase ->
+            DynamicTest.dynamicTest(
+                "retention WARN " + phase,
+                () -> {
+                  try (DynamoDbSnapshotRetentionFixture.Scene s =
+                          fixture.scene("warn-thread-" + phase, true, RetentionPolicy.delete(1));
+                      WarningLogs logs = new WarningLogs()) {
+                    backlog(s, 1);
+                    AsyncEventStore<JsonNode, JsonNode> store = asyncStore(s, s.c.async);
+                    Thread caller = Thread.currentThread();
+                    s.register(
+                        phase.equals("invalid-query") ? "retention-query" : phase,
+                        1,
+                        FaultRegistry.Injection.REPLACE_REQUEST,
+                        phase.equals("invalid-query")
+                            ? invalidHistoryResponse()
+                            : DynamoDbFaultEffects.sdkError("InternalServerError"));
+                    s.operate(
+                        true,
+                        () -> {
+                          store.persistEventAndSnapshot(event(ID, 2), snapshot(2)).join();
+                          return null;
+                        });
+                    assertEquals(1, s.failures.size());
+                    assertEquals(1, logs.count());
+                    String warningThread = logs.warnThreadNames().get(0);
+                    assertTrue(warningThread.startsWith(NOTIFIER_THREAD_PREFIX), warningThread);
+                    assertNotEquals(caller.getName(), warningThread);
+                    s.observation.put("warning_thread", warningThread);
+                  }
+                }));
+  }
+
+  @TestFactory
+  Stream<DynamicTest>
+      alreadyCompletedLibraryFuturesNotifyOnTheDedicatedThreadBeforeThePublicFuture() {
+    return Stream.of("completed failed future", "synchronous throw")
+        .map(kind ->
+            DynamicTest.dynamicTest(
+                "already-completed library boundary future " + kind,
+                () -> {
+                  // The stubs stand in for an SDK future that was already complete when the
+                  // retention code attached its continuation.
+                  try (DynamoDbSnapshotRetentionFixture.Scene s =
+                      fixture.scene(
+                          "library-boundary-inline-" + kind.replace(' ', '-'),
+                          true,
+                          RetentionPolicy.delete(1))) {
+                    backlog(s, 1);
+                    AtomicReference<Thread> queryObserver = new AtomicReference<>();
+                    DynamoDbAsyncClient client =
+                        (DynamoDbAsyncClient)
+                            Proxy.newProxyInstance(
+                                DynamoDbAsyncClient.class.getClassLoader(),
+                                new Class<?>[] {DynamoDbAsyncClient.class},
+                                (proxy, method, args) -> {
+                                  if (method.getName().equals("query")
+                                      && args[0] instanceof QueryRequest
+                                      && ((QueryRequest) args[0]).indexName() != null) {
+                                    queryObserver.set(Thread.currentThread());
+                                    if (kind.equals("synchronous throw"))
+                                      throw new IllegalStateException("synchronous query failure");
+                                    return CompletableFuture.failedFuture(
+                                        new IllegalStateException("completed query failure"));
+                                  }
+                                  try {
+                                    Object result = method.invoke(s.c.async, args);
+                                    if (method.getName().equals("transactWriteItems"))
+                                      return CompletableFuture.completedFuture(
+                                          ((CompletableFuture<?>) result).join());
+                                    return result;
+                                  } catch (InvocationTargetException failure) {
+                                    throw failure.getCause();
+                                  }
+                                });
+                    AsyncEventStore<JsonNode, JsonNode> store = asyncStore(s, client);
+                    Thread caller = Thread.currentThread();
+                    AtomicReference<Thread> notification = new AtomicReference<>();
+                    AtomicReference<CompletableFuture<Void>> publicResult = new AtomicReference<>();
+                    AtomicReference<Boolean> pending = new AtomicReference<>(false);
+                    s.listener =
+                        failure -> {
+                          notification.set(Thread.currentThread());
+                          CompletableFuture<Void> result = publicResult.get();
+                          pending.set(result == null || !result.isDone());
+                        };
+                    s.operate(
+                        true,
+                        () -> {
+                          CompletableFuture<Void> result =
+                              store.persistEventAndSnapshot(event(ID, 2), snapshot(2));
+                          publicResult.set(result);
+                          try {
+                            assertNull(result.get(3, TimeUnit.SECONDS));
+                          } catch (Exception failure) {
+                            throw new CompletionException(failure);
+                          }
+                          return null;
+                        });
+                    assertCommitted(s, 2);
+                    assertEquals(1, s.failures.size());
+                    assertSame(caller, queryObserver.get());
+                    assertDedicatedNotifierThread(notification.get(), caller);
+                    assertTrue(pending.get());
+                    s.observation
+                        .put("terminal_observed_thread", queryObserver.get().getName())
+                        .put("notification_thread", notification.get().getName())
+                        .put("public_future_pending_at_notification", pending.get());
+                  }
+                }));
+  }
+
+  @TestFactory
+  Stream<DynamicTest> directExecutorTerminalContinuationsNotifyOnTheDedicatedThread() {
+    return Stream.of("retention-query", "retention-delete", "invalid-query")
+        .map(phase ->
+            DynamicTest.dynamicTest(
+                "direct executor SDK terminal " + phase,
+                () -> {
+                  // A real SDK client whose future completion executor runs inline. The
+                  // replaced error response completes the SDK pipeline on the thread that
+                  // called query/batchWriteItem, so the SDK's terminal continuations observe
+                  // an already-completed future.
+                  try (DynamoDbSnapshotRetentionFixture.Scene s =
                           fixture.scene(
-                              "sdk-listener-error-" + phase, true, RetentionPolicy.delete(1))) {
-                        backlog(s, 1);
-                        AsyncEventStore<JsonNode, JsonNode> store = asyncStore(s, s.c.async);
-                        s.listener =
-                            failure -> {
-                              s.observation
-                                  .put("listener_assertion_error_sent", true)
-                                  .put("notification_cause", failure.cause().getClass().getName())
-                                  .put("notification_thread", Thread.currentThread().getName());
-                              throw new AssertionError("listener failure");
-                            };
-                        s.register(
-                            phase.equals("invalid-query") ? "retention-query" : phase,
-                            1,
-                            phase.equals("invalid-query")
-                                ? FaultRegistry.Injection.REPLACE_RESPONSE
-                                : FaultRegistry.Injection.REPLACE_REQUEST,
-                            phase.equals("invalid-query")
-                                ? DynamoDbFaultEffects.response(
-                                    response -> {
-                                      Map<String, AttributeValue> invalid =
-                                          new LinkedHashMap<>(
-                                              ((QueryResponse) response).items().get(0));
-                                      invalid.put("skey", AttributeValue.fromN("9007199254740992"));
-                                      invalid.put(
-                                          "active_history_seq_nr",
-                                          AttributeValue.fromN("9007199254740992"));
-                                      return ((QueryResponse) response)
-                                          .toBuilder().items(invalid).build();
-                                    })
-                                : DynamoDbFaultEffects.sdkError("InternalServerError"));
-                        s.operate(
-                            true,
-                            () -> {
-                              CompletableFuture<Void> result =
-                                  store.persistEventAndSnapshot(event(ID, 2), snapshot(2));
-                              try {
-                                assertNull(result.get(3, TimeUnit.SECONDS));
-                                s.observation.put("public_future_result", "success");
-                                return null;
-                              } catch (Exception failure) {
-                                throw new CompletionException(failure);
-                              }
-                            });
-                        assertCommitted(s, 2);
-                        assertEquals(1, s.failures.size());
-                        assertTrue(s.notificationThreads.get(0).startsWith("sdk-async-response"));
-                        if (phase.equals("invalid-query"))
-                          assertInstanceOf(StorageException.class, s.failures.get(0).cause());
-                        else assertSame(phase(s, phase).get(0).failure, s.failures.get(0).cause());
-                        s.operate(
-                            true,
-                            () -> {
-                              store.persistEventAndSnapshot(event(ID, 3), snapshot(3)).join();
-                              return null;
-                            });
-                        assertTrue(s.failures.isEmpty());
-                        assertHistory(s, List.of(3L));
-                      }
-                    }));
+                              "sdk-direct-executor-" + phase, true, RetentionPolicy.delete(1));
+                      FaultAsyncHttpClient http =
+                          new FaultAsyncHttpClient(
+                              DynamoDbTestClients.asyncHttp(configuration.eventLoop()).build(),
+                              s.c.recorder);
+                      DynamoDbAsyncClient direct =
+                          DynamoDbAsyncClient.builder()
+                              .endpointOverride(configuration.endpoint())
+                              .region(DynamoDbTestClients.REGION)
+                              .credentialsProvider(
+                                  software.amazon.awssdk.auth.credentials.StaticCredentialsProvider
+                                      .create(
+                                          software.amazon.awssdk.auth.credentials
+                                              .AwsBasicCredentials.create(
+                                              DynamoDbTestClients.ACCESS_KEY,
+                                              "DynamoDbLocalDummySecret")))
+                              .overrideConfiguration(
+                                  DynamoDbTestClients.overrides()
+                                      .addExecutionInterceptor(s.c.recorder)
+                                      .build())
+                              .asyncConfiguration(
+                                  software.amazon.awssdk.core.client.config.ClientAsyncConfiguration
+                                      .builder()
+                                      .advancedOption(
+                                          software.amazon.awssdk.core.client.config
+                                              .SdkAdvancedAsyncClientOption
+                                              .FUTURE_COMPLETION_EXECUTOR,
+                                          Runnable::run)
+                                      .build())
+                              .httpClient(http)
+                              .build()) {
+                    backlog(s, 1);
+                    // The commit future is already complete when the store attaches its
+                    // continuation; this is the library-boundary part of the trigger.
+                    DynamoDbAsyncClient completedCommit =
+                        (DynamoDbAsyncClient)
+                            Proxy.newProxyInstance(
+                                DynamoDbAsyncClient.class.getClassLoader(),
+                                new Class<?>[] {DynamoDbAsyncClient.class},
+                                (proxy, method, args) -> {
+                                  try {
+                                    Object result = method.invoke(direct, args);
+                                    if (method.getName().equals("transactWriteItems"))
+                                      return CompletableFuture.completedFuture(
+                                          ((CompletableFuture<?>) result).join());
+                                    return result;
+                                  } catch (InvocationTargetException failure) {
+                                    throw failure.getCause();
+                                  }
+                                });
+                    AsyncEventStore<JsonNode, JsonNode> store = asyncStore(s, completedCommit);
+                    Thread caller = Thread.currentThread();
+                    AtomicReference<Thread> notification = new AtomicReference<>();
+                    AtomicReference<CompletableFuture<Void>> publicResult = new AtomicReference<>();
+                    AtomicReference<Boolean> pending = new AtomicReference<>(false);
+                    s.listener =
+                        failure -> {
+                          notification.set(Thread.currentThread());
+                          CompletableFuture<Void> result = publicResult.get();
+                          pending.set(result == null || !result.isDone());
+                        };
+                    String faultPhase = phase.equals("invalid-query") ? "retention-query" : phase;
+                    s.register(
+                        faultPhase,
+                        1,
+                        FaultRegistry.Injection.REPLACE_REQUEST,
+                        phase.equals("invalid-query")
+                            ? invalidHistoryResponse()
+                            : DynamoDbFaultEffects.sdkError("InternalServerError"));
+                    s.operate(
+                        true,
+                        () -> {
+                          CompletableFuture<Void> result =
+                              store.persistEventAndSnapshot(event(ID, 2), snapshot(2));
+                          publicResult.set(result);
+                          try {
+                            assertNull(result.get(3, TimeUnit.SECONDS));
+                          } catch (Exception failure) {
+                            throw new CompletionException(failure);
+                          }
+                          return null;
+                        });
+                    assertCommitted(s, 2);
+                    assertEquals(1, s.failures.size());
+                    if (phase.equals("invalid-query"))
+                      assertInstanceOf(StorageException.class, s.failures.get(0).cause());
+                    assertDedicatedNotifierThread(notification.get(), caller);
+                    assertTrue(pending.get());
+                    s.observation
+                        .put("notification_thread", notification.get().getName())
+                        .put("public_future_pending_at_notification", pending.get());
+                  }
+                }));
+  }
+
+  /** A synchronous successful response with an invalid history item, for afterExecution cases. */
+  private static FaultRegistry.Effect invalidHistoryResponse() {
+    return new FaultRegistry.Effect() {
+      @Override
+      public boolean supports(FaultRegistry.Injection injection) {
+        return injection == FaultRegistry.Injection.REPLACE_REQUEST;
+      }
+
+      @Override
+      public HttpReply reply(DynamoDbRequestRecorder.Request request) {
+        ObjectNode body = DynamoDbJson.object();
+        var item = body.putArray("Items").addObject();
+        item.putObject("aid").put("S", ID.asString());
+        item.putObject("skey").put("N", "9007199254740992");
+        item.putObject("active_history_seq_nr").put("N", "9007199254740992");
+        body.put("Count", 1).put("ScannedCount", 1);
+        return new HttpReply(200, body);
+      }
+    };
   }
 
   @org.junit.jupiter.api.Test
@@ -519,20 +764,19 @@ class DynamoDbSnapshotRetentionBoundaryTest {
                       if (retention)
                         completionChecks.add(
                             ((CompletableFuture<?>) response)
-                                .whenComplete(
-                                    (value, failure) -> {
-                                      assertNull(failure);
-                                      receipt
-                                          .put(
-                                              "same_response_thread",
-                                              hookThread.get() == Thread.currentThread())
-                                          .put(
-                                              "sdk_future_completion_thread",
-                                              Thread.currentThread().getName())
-                                          .put(
-                                              "after_execution_observed_at_sdk_future_completion",
-                                              hookThread.get() != null);
-                                    }));
+                                .whenComplete((value, failure) -> {
+                                  assertNull(failure);
+                                  receipt
+                                      .put(
+                                          "same_response_thread",
+                                          hookThread.get() == Thread.currentThread())
+                                      .put(
+                                          "sdk_future_completion_thread",
+                                          Thread.currentThread().getName())
+                                      .put(
+                                          "after_execution_observed_at_sdk_future_completion",
+                                          hookThread.get() != null);
+                                }));
                       return response;
                     } catch (InvocationTargetException failure) {
                       throw failure.getCause();
@@ -712,12 +956,11 @@ class DynamoDbSnapshotRetentionBoundaryTest {
               "retention-mark",
               1,
               FaultRegistry.Injection.REPLACE_RESPONSE,
-              DynamoDbFaultEffects.response(
-                  response -> {
-                    s.observation.set("first_update_response", DynamoDbJson.sdk(response));
-                    s.advanceClock(4102444900L);
-                    return response;
-                  }));
+              DynamoDbFaultEffects.response(response -> {
+                s.observation.set("first_update_response", DynamoDbJson.sdk(response));
+                s.advanceClock(4102444900L);
+                return response;
+              }));
           s.write(event(ID, 3), snapshot(3));
           List<DynamoDbRequestRecorder.Request> marks = phase(s, "retention-mark");
           assertEquals(2, marks.size());
@@ -743,31 +986,29 @@ class DynamoDbSnapshotRetentionBoundaryTest {
               "retention-query",
               1,
               FaultRegistry.Injection.REPLACE_RESPONSE,
-              DynamoDbFaultEffects.response(
-                  response -> {
-                    assertTrue(
-                        ((QueryResponse) response)
-                            .items().stream().anyMatch(item -> "3".equals(item.get("skey").n())));
-                    s.observation.set(
-                        "gsi_response_before_competing_mark", DynamoDbJson.sdk(response));
-                    s.c.admin.updateItem(
-                        UpdateItemRequest.builder()
-                            .tableName(s.c.snapshot)
-                            .key(
-                                Map.of(
-                                    "aid",
-                                    AttributeValue.fromS(ID.asString()),
-                                    "skey",
-                                    AttributeValue.fromN("3")))
-                            .updateExpression("SET #ttl = :expires REMOVE active_history_seq_nr")
-                            .conditionExpression("attribute_exists(active_history_seq_nr)")
-                            .expressionAttributeNames(Map.of("#ttl", "ttl"))
-                            .expressionAttributeValues(
-                                Map.of(":expires", AttributeValue.fromN("4102444740")))
-                            .build());
-                    competingUpdates.incrementAndGet();
-                    return response;
-                  }));
+              DynamoDbFaultEffects.response(response -> {
+                assertTrue(
+                    ((QueryResponse) response)
+                        .items().stream().anyMatch(item -> "3".equals(item.get("skey").n())));
+                s.observation.set("gsi_response_before_competing_mark", DynamoDbJson.sdk(response));
+                s.c.admin.updateItem(
+                    UpdateItemRequest.builder()
+                        .tableName(s.c.snapshot)
+                        .key(
+                            Map.of(
+                                "aid",
+                                AttributeValue.fromS(ID.asString()),
+                                "skey",
+                                AttributeValue.fromN("3")))
+                        .updateExpression("SET #ttl = :expires REMOVE active_history_seq_nr")
+                        .conditionExpression("attribute_exists(active_history_seq_nr)")
+                        .expressionAttributeNames(Map.of("#ttl", "ttl"))
+                        .expressionAttributeValues(
+                            Map.of(":expires", AttributeValue.fromN("4102444740")))
+                        .build());
+                competingUpdates.incrementAndGet();
+                return response;
+              }));
           try (WarningLogs logs = new WarningLogs()) {
             s.write(event(ID, 4), snapshot(4));
             List<DynamoDbRequestRecorder.Request> marks = phase(s, "retention-mark");
@@ -826,11 +1067,10 @@ class DynamoDbSnapshotRetentionBoundaryTest {
               "retention-mark",
               1,
               FaultRegistry.Injection.REPLACE_RESPONSE,
-              DynamoDbFaultEffects.response(
-                  response -> {
-                    s.observation.set("first_successful_update", DynamoDbJson.sdk(response));
-                    return response;
-                  }));
+              DynamoDbFaultEffects.response(response -> {
+                s.observation.set("first_successful_update", DynamoDbJson.sdk(response));
+                return response;
+              }));
           s.register(
               "retention-mark",
               1,
@@ -875,13 +1115,12 @@ class DynamoDbSnapshotRetentionBoundaryTest {
               "retention-mark",
               1,
               FaultRegistry.Injection.REPLACE_RESPONSE,
-              DynamoDbFaultEffects.response(
-                  response -> {
-                    s.observation.set("pending_update_response", DynamoDbJson.sdk(response));
-                    entered.complete(null);
-                    release.join();
-                    return response;
-                  }));
+              DynamoDbFaultEffects.response(response -> {
+                s.observation.set("pending_update_response", DynamoDbJson.sdk(response));
+                entered.complete(null);
+                release.join();
+                return response;
+              }));
           FaultRegistry.Operation operation = s.c.faults.begin(s.nextOperation++, true);
           ExecutorService caller = Executors.newSingleThreadExecutor();
           CompletableFuture<Void> result =
@@ -911,174 +1150,171 @@ class DynamoDbSnapshotRetentionBoundaryTest {
   Stream<DynamicTest>
       cancellingThePublicTtlFutureStillTerminatesTheRequestAndReleasesFaultResources() {
     return Stream.of(false, true)
-        .map(
-            failing ->
-                DynamicTest.dynamicTest(
-                    "TTL cancellation " + failing,
-                    () -> {
-                      try (DynamoDbSnapshotRetentionFixture.Scene s =
-                          fixture.scene(
-                              "ttl-cancellation-" + failing, true, RetentionPolicy.ttl(1, 60))) {
-                        backlog(s, 1);
-                        CompletableFuture<Void> entered = new CompletableFuture<>(),
-                            release = new CompletableFuture<>();
-                        AtomicReference<CompletableFuture<?>> update = new AtomicReference<>();
-                        DynamoDbAsyncClient observed =
-                            (DynamoDbAsyncClient)
-                                Proxy.newProxyInstance(
-                                    DynamoDbAsyncClient.class.getClassLoader(),
-                                    new Class<?>[] {DynamoDbAsyncClient.class},
-                                    (proxy, method, args) -> {
-                                      try {
-                                        Object result = method.invoke(s.c.async, args);
-                                        if (method.getName().equals("updateItem"))
-                                          update.set((CompletableFuture<?>) result);
-                                        return result;
-                                      } catch (InvocationTargetException failure) {
-                                        throw failure.getCause();
-                                      }
-                                    });
-                        AsyncEventStore<JsonNode, JsonNode> store = asyncStore(s, observed);
-                        s.register(
-                            "retention-mark",
-                            1,
-                            FaultRegistry.Injection.REPLACE_RESPONSE,
-                            DynamoDbFaultEffects.response(
-                                response -> {
-                                  entered.complete(null);
-                                  release.join();
-                                  if (failing)
-                                    throw DynamoDbException.builder().statusCode(500).build();
-                                  return response;
-                                }));
-                        FaultRegistry.Operation operation =
-                            s.c.faults.begin(s.nextOperation++, true);
-                        CompletableFuture<Void> result =
-                            store.persistEventAndSnapshot(event(ID, 2), snapshot(2));
-                        try {
-                          entered.get(10, TimeUnit.SECONDS);
-                          assertTrue(result.cancel(true));
-                          assertFalse(s.c.recorder.requestsFinished(operation).isDone());
-                          assertEquals(1, s.c.faults.pending(operation));
-                        } finally {
-                          release.complete(null);
-                          assertNotNull(update.get());
-                          // Request reservations are released before the retention interceptor.
-                          // Await the real SDK future so notification has finished as well.
-                          update
-                              .get()
-                              .handle((response, failure) -> null)
-                              .get(10, TimeUnit.SECONDS);
-                          s.c.recorder.requestsFinished(operation).get(10, TimeUnit.SECONDS);
-                          s.finish(operation, null);
-                        }
-                        assertTrue(result.isCancelled());
-                        assertFalse(update.get().isCancelled());
-                        assertEquals(failing, update.get().isCompletedExceptionally());
-                        assertEquals(failing ? 1 : 0, s.failures.size());
-                        if (failing)
-                          assertSame(
-                              phase(s, "retention-mark").get(0).failure, s.failures.get(0).cause());
-                        assertCommitted(s, 2);
-                        s.observation
-                            .put("public_future_cancelled", true)
-                            .put("sdk_future_terminal_after_cancellation", update.get().isDone())
-                            .put("sdk_future_cancelled", update.get().isCancelled());
-                        Map<String, AttributeValue> marked = s.stored("snapshot", ID, 1);
-                        s.write(event(ID, 3), snapshot(3));
-                        assertEquals(marked, s.stored("snapshot", ID, 1));
-                        assertHistory(s, List.of(3L));
-                        assertTrue(s.failures.isEmpty());
-                      }
-                    }));
+        .map(failing ->
+            DynamicTest.dynamicTest(
+                "TTL cancellation " + failing,
+                () -> {
+                  try (DynamoDbSnapshotRetentionFixture.Scene s =
+                      fixture.scene(
+                          "ttl-cancellation-" + failing, true, RetentionPolicy.ttl(1, 60))) {
+                    backlog(s, 1);
+                    CompletableFuture<Void> entered = new CompletableFuture<>(),
+                        release = new CompletableFuture<>();
+                    AtomicReference<CompletableFuture<?>> update = new AtomicReference<>();
+                    DynamoDbAsyncClient observed =
+                        (DynamoDbAsyncClient)
+                            Proxy.newProxyInstance(
+                                DynamoDbAsyncClient.class.getClassLoader(),
+                                new Class<?>[] {DynamoDbAsyncClient.class},
+                                (proxy, method, args) -> {
+                                  try {
+                                    Object result = method.invoke(s.c.async, args);
+                                    if (method.getName().equals("updateItem"))
+                                      update.set((CompletableFuture<?>) result);
+                                    return result;
+                                  } catch (InvocationTargetException failure) {
+                                    throw failure.getCause();
+                                  }
+                                });
+                    AsyncEventStore<JsonNode, JsonNode> store = asyncStore(s, observed);
+                    // The listener runs on the per-store notifier, after the SDK future and the
+                    // request accounting. Wait for it explicitly instead of inferring it from
+                    // those completions.
+                    CompletableFuture<Void> notified = new CompletableFuture<>();
+                    s.listener = failure -> notified.complete(null);
+                    s.register(
+                        "retention-mark",
+                        1,
+                        FaultRegistry.Injection.REPLACE_RESPONSE,
+                        DynamoDbFaultEffects.response(response -> {
+                          entered.complete(null);
+                          release.join();
+                          if (failing) throw DynamoDbException.builder().statusCode(500).build();
+                          return response;
+                        }));
+                    FaultRegistry.Operation operation = s.c.faults.begin(s.nextOperation++, true);
+                    CompletableFuture<Void> result =
+                        store.persistEventAndSnapshot(event(ID, 2), snapshot(2));
+                    try {
+                      entered.get(10, TimeUnit.SECONDS);
+                      assertTrue(result.cancel(true));
+                      assertFalse(s.c.recorder.requestsFinished(operation).isDone());
+                      assertEquals(1, s.c.faults.pending(operation));
+                    } finally {
+                      release.complete(null);
+                      assertNotNull(update.get());
+                      // Request reservations are released before the retention interceptor.
+                      // The SDK future and request accounting can finish before the dedicated
+                      // notifier runs the listener, so wait for the listener itself.
+                      update.get().handle((response, failure) -> null).get(10, TimeUnit.SECONDS);
+                      s.c.recorder.requestsFinished(operation).get(10, TimeUnit.SECONDS);
+                      if (failing) notified.get(10, TimeUnit.SECONDS);
+                      s.finish(operation, null);
+                    }
+                    assertTrue(result.isCancelled());
+                    assertFalse(update.get().isCancelled());
+                    assertEquals(failing, update.get().isCompletedExceptionally());
+                    assertEquals(failing ? 1 : 0, s.failures.size());
+                    if (failing)
+                      assertSame(
+                          phase(s, "retention-mark").get(0).failure, s.failures.get(0).cause());
+                    assertCommitted(s, 2);
+                    s.observation
+                        .put("public_future_cancelled", true)
+                        .put("sdk_future_terminal_after_cancellation", update.get().isDone())
+                        .put("sdk_future_cancelled", update.get().isCancelled());
+                    Map<String, AttributeValue> marked = s.stored("snapshot", ID, 1);
+                    s.write(event(ID, 3), snapshot(3));
+                    assertEquals(marked, s.stored("snapshot", ID, 1));
+                    assertHistory(s, List.of(3L));
+                    assertTrue(s.failures.isEmpty());
+                  }
+                }));
   }
 
   @TestFactory
   Stream<DynamicTest>
       actualSparseGsiKeepsNewestNAndProtectsMarkedCurrentConfigurationOtherAidHeadAndJournal() {
     return Stream.of(RetentionPolicy.delete(2), RetentionPolicy.ttl(2, 60))
-        .flatMap(
-            policy ->
-                both(
-                    "sparse-gsi-protection-" + policy.mode().orElseThrow().name(),
-                    policy,
-                    s -> {
-                      Map<String, Map<String, AttributeValue>> configurationBefore =
-                          DynamoDbConfigurationFixture.stored(s.c);
-                      s.write(event(ID, 1), snapshot(1));
-                      Map<String, AttributeValue> marked =
-                          new LinkedHashMap<>(s.stored("snapshot", ID, 1));
-                      marked.remove("active_history_seq_nr");
-                      marked.put(
-                          "ttl",
-                          software.amazon.awssdk.services.dynamodb.model.AttributeValue.fromN(
-                              "4102444800"));
-                      s.c.admin.putItem(
-                          PutItemRequest.builder().tableName(s.c.snapshot).item(marked).build());
-                      s.observation.set(
-                          "artificial_mark_before_retention", DynamoDbJson.sdk(marked));
-                      s.write(event(OTHER, 1), snapshot(1));
-                      Map<String, AttributeValue> otherBefore = s.stored("snapshot", OTHER, 1);
-                      Map<String, AttributeValue> otherHead = s.stored("head", OTHER, 0),
-                          otherCurrent = s.stored("snapshot", OTHER, 0),
-                          otherJournal = s.stored("journal", OTHER, 1);
-                      Map<Long, Map<String, AttributeValue>> writtenHistory = new LinkedHashMap<>();
-                      Map<Long, Map<String, AttributeValue>> writtenJournal = new LinkedHashMap<>();
-                      writtenJournal.put(1L, s.stored("journal", ID, 1));
-                      for (long seq = 2; seq <= 6; seq++) {
-                        s.write(event(ID, seq), snapshot(seq));
-                        phase(s, "retention-query").forEach(r -> assertQuery(s, r));
-                        writtenHistory.put(seq, s.stored("snapshot", ID, seq));
-                        writtenJournal.put(seq, s.stored("journal", ID, seq));
+        .flatMap(policy ->
+            both(
+                "sparse-gsi-protection-" + policy.mode().orElseThrow().name(),
+                policy,
+                s -> {
+                  Map<String, Map<String, AttributeValue>> configurationBefore =
+                      DynamoDbConfigurationFixture.stored(s.c);
+                  s.write(event(ID, 1), snapshot(1));
+                  Map<String, AttributeValue> marked =
+                      new LinkedHashMap<>(s.stored("snapshot", ID, 1));
+                  marked.remove("active_history_seq_nr");
+                  marked.put(
+                      "ttl",
+                      software.amazon.awssdk.services.dynamodb.model.AttributeValue.fromN(
+                          "4102444800"));
+                  s.c.admin.putItem(
+                      PutItemRequest.builder().tableName(s.c.snapshot).item(marked).build());
+                  s.observation.set("artificial_mark_before_retention", DynamoDbJson.sdk(marked));
+                  s.write(event(OTHER, 1), snapshot(1));
+                  Map<String, AttributeValue> otherBefore = s.stored("snapshot", OTHER, 1);
+                  Map<String, AttributeValue> otherHead = s.stored("head", OTHER, 0),
+                      otherCurrent = s.stored("snapshot", OTHER, 0),
+                      otherJournal = s.stored("journal", OTHER, 1);
+                  Map<Long, Map<String, AttributeValue>> writtenHistory = new LinkedHashMap<>();
+                  Map<Long, Map<String, AttributeValue>> writtenJournal = new LinkedHashMap<>();
+                  writtenJournal.put(1L, s.stored("journal", ID, 1));
+                  for (long seq = 2; seq <= 6; seq++) {
+                    s.write(event(ID, seq), snapshot(seq));
+                    phase(s, "retention-query").forEach(r -> assertQuery(s, r));
+                    writtenHistory.put(seq, s.stored("snapshot", ID, seq));
+                    writtenJournal.put(seq, s.stored("journal", ID, seq));
+                  }
+                  assertHistory(s, List.of(5L, 6L));
+                  assertEquals(marked, s.stored("snapshot", ID, 1));
+                  assertEquals(otherBefore, s.stored("snapshot", OTHER, 1));
+                  assertEquals(otherHead, s.stored("head", OTHER, 0));
+                  assertEquals(otherCurrent, s.stored("snapshot", OTHER, 0));
+                  assertEquals(otherJournal, s.stored("journal", OTHER, 1));
+                  assertEquals(configurationBefore, DynamoDbConfigurationFixture.stored(s.c));
+                  writtenJournal.forEach(
+                      (seq, item) -> assertEquals(item, s.stored("journal", ID, seq)));
+                  if (policy.mode().orElseThrow() == RetentionMode.TTL) {
+                    for (long seq = 2; seq <= 6; seq++) {
+                      Map<String, AttributeValue> expected =
+                          new LinkedHashMap<>(writtenHistory.get(seq));
+                      if (seq <= 4) {
+                        expected.remove("active_history_seq_nr");
+                        expected.put("ttl", AttributeValue.fromN("4102444860"));
                       }
-                      assertHistory(s, List.of(5L, 6L));
-                      assertEquals(marked, s.stored("snapshot", ID, 1));
-                      assertEquals(otherBefore, s.stored("snapshot", OTHER, 1));
-                      assertEquals(otherHead, s.stored("head", OTHER, 0));
-                      assertEquals(otherCurrent, s.stored("snapshot", OTHER, 0));
-                      assertEquals(otherJournal, s.stored("journal", OTHER, 1));
-                      assertEquals(configurationBefore, DynamoDbConfigurationFixture.stored(s.c));
-                      writtenJournal.forEach(
-                          (seq, item) -> assertEquals(item, s.stored("journal", ID, seq)));
-                      if (policy.mode().orElseThrow() == RetentionMode.TTL) {
-                        for (long seq = 2; seq <= 6; seq++) {
-                          Map<String, AttributeValue> expected =
-                              new LinkedHashMap<>(writtenHistory.get(seq));
-                          if (seq <= 4) {
-                            expected.remove("active_history_seq_nr");
-                            expected.put("ttl", AttributeValue.fromN("4102444860"));
-                          }
-                          assertEquals(expected, s.stored("snapshot", ID, seq));
-                        }
-                        List<DynamoDbRequestRecorder.Request> marks =
-                            s.c.recorder.requests().stream()
-                                .filter(r -> r.phase.equals("retention-mark"))
-                                .collect(Collectors.toList());
-                        assertEquals(3, marks.size());
-                        marks.forEach(r -> assertMark(s, r, 4102444860L));
-                        assertFalse(s.stored("snapshot", ID, 0).containsKey("ttl"));
-                      }
-                      assertEquals("6", s.stored("head", ID, 0).get("seq_nr").n());
-                      assertEquals("6", s.stored("snapshot", ID, 0).get("seq_nr").n());
-                      assertJson(
-                          snapshot(6).aggregate(),
-                          JSON.deserialize(
-                              s.stored("snapshot", ID, 0).get("payload").b().asByteArray()));
-                      for (long seq = 1; seq <= 6; seq++)
-                        assertJson(
-                            event(ID, seq).payload(),
-                            JSON.deserialize(
-                                s.stored("journal", ID, seq).get("payload").b().asByteArray()));
-                      assertTrue(s.failures.isEmpty());
-                      s.last().set("stored_marked", DynamoDbJson.sdk(s.stored("snapshot", ID, 1)));
-                      s.last()
-                          .set(
-                              "stored_other_aid", DynamoDbJson.sdk(s.stored("snapshot", OTHER, 1)));
-                      s.last()
-                          .set(
-                              "configuration_after",
-                              DynamoDbJson.sdk(DynamoDbConfigurationFixture.stored(s.c)));
-                    }));
+                      assertEquals(expected, s.stored("snapshot", ID, seq));
+                    }
+                    List<DynamoDbRequestRecorder.Request> marks =
+                        s.c.recorder.requests().stream()
+                            .filter(r -> r.phase.equals("retention-mark"))
+                            .collect(Collectors.toList());
+                    assertEquals(3, marks.size());
+                    marks.forEach(r -> assertMark(s, r, 4102444860L));
+                    assertFalse(s.stored("snapshot", ID, 0).containsKey("ttl"));
+                  }
+                  assertEquals("6", s.stored("head", ID, 0).get("seq_nr").n());
+                  assertEquals("6", s.stored("snapshot", ID, 0).get("seq_nr").n());
+                  assertJson(
+                      snapshot(6).aggregate(),
+                      JSON.deserialize(
+                          s.stored("snapshot", ID, 0).get("payload").b().asByteArray()));
+                  for (long seq = 1; seq <= 6; seq++)
+                    assertJson(
+                        event(ID, seq).payload(),
+                        JSON.deserialize(
+                            s.stored("journal", ID, seq).get("payload").b().asByteArray()));
+                  assertTrue(s.failures.isEmpty());
+                  s.last().set("stored_marked", DynamoDbJson.sdk(s.stored("snapshot", ID, 1)));
+                  s.last()
+                      .set("stored_other_aid", DynamoDbJson.sdk(s.stored("snapshot", OTHER, 1)));
+                  s.last()
+                      .set(
+                          "configuration_after",
+                          DynamoDbJson.sdk(DynamoDbConfigurationFixture.stored(s.c)));
+                }));
   }
 
   @TestFactory
@@ -1132,613 +1368,551 @@ class DynamoDbSnapshotRetentionBoundaryTest {
   @TestFactory
   Stream<DynamicTest> initialDeletesRespect25ItemBoundary() {
     return Stream.of(25, 26, 51)
-        .flatMap(
-            count ->
-                both(
-                    "batch-boundary-" + count,
-                    RetentionPolicy.delete(1),
-                    s -> {
-                      backlog(s, count);
-                      s.write(event(ID, count + 1), snapshot(count + 1));
-                      List<Integer> expected =
-                          count == 25
-                              ? List.of(25)
-                              : count == 26 ? List.of(25, 1) : List.of(25, 25, 1);
-                      assertEquals(expected, s.initialBatchSizes());
-                      for (DynamoDbRequestRecorder.Request r : phase(s, "retention-delete")) {
-                        assertTrue(deleteNumbers(s, r).size() <= 25);
-                        assertEquals(1, r.transmissions);
-                      }
-                      assertHistory(s, List.of((long) count + 1));
-                      assertTrue(s.failures.isEmpty());
-                    }));
+        .flatMap(count ->
+            both(
+                "batch-boundary-" + count,
+                RetentionPolicy.delete(1),
+                s -> {
+                  backlog(s, count);
+                  s.write(event(ID, count + 1), snapshot(count + 1));
+                  List<Integer> expected =
+                      count == 25 ? List.of(25) : count == 26 ? List.of(25, 1) : List.of(25, 25, 1);
+                  assertEquals(expected, s.initialBatchSizes());
+                  for (DynamoDbRequestRecorder.Request r : phase(s, "retention-delete")) {
+                    assertTrue(deleteNumbers(s, r).size() <= 25);
+                    assertEquals(1, r.transmissions);
+                  }
+                  assertHistory(s, List.of((long) count + 1));
+                  assertTrue(s.failures.isEmpty());
+                }));
   }
 
   @TestFactory
   Stream<DynamicTest>
       unprocessedSuccessAndLimitObserveActualSendsRemainingRowsAndNextWriteRecovery() {
     return Stream.of(false, true)
-        .flatMap(
-            exhausted ->
-                both(
-                    "unprocessed-" + (exhausted ? "limit" : "success"),
-                    RetentionPolicy.delete(1),
-                    s -> {
-                      backlog(s, 30);
-                      AtomicReference<Thread> sdkThread = new AtomicReference<>(),
-                          notifiedThread = new AtomicReference<>();
-                      CompletableFuture<CompletableFuture<Void>> published =
-                          new CompletableFuture<>();
-                      var completions = s.observation.putArray("delete_completions");
-                      ExecutionInterceptor observer =
-                          new ExecutionInterceptor() {
-                            @Override
-                            public void afterExecution(
-                                Context.AfterExecution context, ExecutionAttributes attributes) {
-                              if (context.response() instanceof BatchWriteItemResponse) {
-                                sdkThread.set(Thread.currentThread());
-                                completions
-                                    .addObject()
-                                    .put("thread", Thread.currentThread().getName())
-                                    .set("response", DynamoDbJson.sdk(context.response()));
-                              }
-                            }
-                          };
-                      AsyncEventStore<JsonNode, JsonNode> store =
-                          s.asynchronous
-                              ? asyncStore(
-                                  s,
-                                  retentionClient(
-                                      s.c.async, request -> observedRequest(request, observer)))
-                              : null;
-                      Thread caller = Thread.currentThread();
-                      s.listener =
-                          failure -> {
-                            notifiedThread.set(Thread.currentThread());
-                            assertEquals(ID, failure.aggregateId());
-                            assertEquals(RetentionMode.DELETE, failure.mode());
-                            if (s.asynchronous) {
-                              assertSame(sdkThread.get(), Thread.currentThread());
-                              try {
-                                assertFalse(published.get(10, TimeUnit.SECONDS).isDone());
-                              } catch (Exception error) {
-                                throw new CompletionException(error);
-                              }
-                              s.observation.put("public_future_pending_at_notification", true);
-                            } else assertSame(caller, Thread.currentThread());
-                            throw new IllegalStateException("listener failure");
-                          };
-                      try (WarningLogs logs = new WarningLogs()) {
-                        s.register(
-                            "retention-delete",
-                            exhausted ? -1 : 1,
-                            FaultRegistry.Injection.REPLACE_REQUEST,
-                            DynamoDbFaultEffects.unprocessedFirst(2));
-                        s.operate(
-                            true,
-                            () -> {
-                              if (s.asynchronous) {
-                                CompletableFuture<Void> result =
-                                    store.persistEventAndSnapshot(event(ID, 31), snapshot(31));
-                                published.complete(result);
-                                assertNull(result.join());
-                              } else s.persist(event(ID, 31), snapshot(31));
-                              return null;
-                            });
-                        List<DynamoDbRequestRecorder.Request> deletes =
-                            phase(s, "retention-delete");
-                        assertEquals(exhausted ? 11 : 3, deletes.size());
-                        assertEquals(
-                            exhausted ? 1 : 3,
-                            deletes.stream().mapToInt(r -> r.transmissions).sum());
-                        assertEquals(
-                            exhausted ? 11 : 1, s.last().at("/faults/0/applications").intValue());
-                        assertEquals(
-                            exhausted
-                                ? List.of(
-                                    50L, 100L, 200L, 400L, 800L, 1000L, 1000L, 1000L, 1000L, 1000L)
-                                : List.of(50L),
-                            s.waits);
-                        assertEquals(
-                            exhausted ? List.of(25) : List.of(25, 5), s.initialBatchSizes());
-                        if (exhausted) {
-                          assertEquals(1, s.failures.size());
-                          assertInstanceOf(StorageException.class, s.failures.get(0).cause());
-                          assertEquals(1, logs.count());
-                          if (s.asynchronous) {
-                            assertSame(sdkThread.get(), notifiedThread.get());
-                            assertEquals(11, completions.size());
-                            s.observation.put("same_response_notification_thread", true);
+        .flatMap(exhausted ->
+            both(
+                "unprocessed-" + (exhausted ? "limit" : "success"),
+                RetentionPolicy.delete(1),
+                s -> {
+                  backlog(s, 30);
+                  AtomicReference<Thread> sdkThread = new AtomicReference<>(),
+                      notifiedThread = new AtomicReference<>();
+                  CompletableFuture<CompletableFuture<Void>> published = new CompletableFuture<>();
+                  var completions = s.observation.putArray("delete_completions");
+                  ExecutionInterceptor observer =
+                      new ExecutionInterceptor() {
+                        @Override
+                        public void afterExecution(
+                            Context.AfterExecution context, ExecutionAttributes attributes) {
+                          if (context.response() instanceof BatchWriteItemResponse) {
+                            sdkThread.set(Thread.currentThread());
+                            completions
+                                .addObject()
+                                .put("thread", Thread.currentThread().getName())
+                                .set("response", DynamoDbJson.sdk(context.response()));
                           }
-                          List<Long> expected = new ArrayList<>(range(1, 5));
-                          expected.addAll(List.of(29L, 30L, 31L));
-                          assertHistory(s, expected);
-                          for (long seq = 6; seq <= 28; seq++)
-                            assertTrue(s.stored("snapshot", ID, seq).isEmpty());
-                          s.operate(
-                              true,
-                              () -> {
-                                if (s.asynchronous)
-                                  store.persistEventAndSnapshot(event(ID, 32), snapshot(32)).join();
-                                else s.persist(event(ID, 32), snapshot(32));
-                                return null;
-                              });
-                          assertHistory(s, List.of(32L));
-                          assertTrue(s.failures.isEmpty());
-                        } else {
-                          assertHistory(s, List.of(31L));
-                          assertTrue(s.failures.isEmpty());
-                          assertEquals(0, logs.count());
                         }
-                        s.observation.put("warn_count", logs.count());
+                      };
+                  AsyncEventStore<JsonNode, JsonNode> store =
+                      s.asynchronous
+                          ? asyncStore(
+                              s,
+                              retentionClient(
+                                  s.c.async, request -> observedRequest(request, observer)))
+                          : null;
+                  Thread caller = Thread.currentThread();
+                  s.listener =
+                      failure -> {
+                        notifiedThread.set(Thread.currentThread());
+                        assertEquals(ID, failure.aggregateId());
+                        assertEquals(RetentionMode.DELETE, failure.mode());
+                        if (s.asynchronous) {
+                          assertDedicatedNotifierThread(Thread.currentThread(), caller);
+                          assertNotSame(sdkThread.get(), Thread.currentThread());
+                          try {
+                            assertFalse(published.get(10, TimeUnit.SECONDS).isDone());
+                          } catch (Exception error) {
+                            throw new CompletionException(error);
+                          }
+                          s.observation.put("public_future_pending_at_notification", true);
+                        } else assertSame(caller, Thread.currentThread());
+                        throw new IllegalStateException("listener failure");
+                      };
+                  try (WarningLogs logs = new WarningLogs()) {
+                    s.register(
+                        "retention-delete",
+                        exhausted ? -1 : 1,
+                        FaultRegistry.Injection.REPLACE_REQUEST,
+                        DynamoDbFaultEffects.unprocessedFirst(2));
+                    s.operate(
+                        true,
+                        () -> {
+                          if (s.asynchronous) {
+                            CompletableFuture<Void> result =
+                                store.persistEventAndSnapshot(event(ID, 31), snapshot(31));
+                            published.complete(result);
+                            assertNull(result.join());
+                          } else s.persist(event(ID, 31), snapshot(31));
+                          return null;
+                        });
+                    List<DynamoDbRequestRecorder.Request> deletes = phase(s, "retention-delete");
+                    assertEquals(exhausted ? 11 : 3, deletes.size());
+                    assertEquals(
+                        exhausted ? 1 : 3, deletes.stream().mapToInt(r -> r.transmissions).sum());
+                    assertEquals(
+                        exhausted ? 11 : 1, s.last().at("/faults/0/applications").intValue());
+                    assertEquals(
+                        exhausted
+                            ? List.of(
+                                50L, 100L, 200L, 400L, 800L, 1000L, 1000L, 1000L, 1000L, 1000L)
+                            : List.of(50L),
+                        s.waits);
+                    assertEquals(exhausted ? List.of(25) : List.of(25, 5), s.initialBatchSizes());
+                    if (exhausted) {
+                      assertEquals(1, s.failures.size());
+                      assertInstanceOf(StorageException.class, s.failures.get(0).cause());
+                      assertEquals(1, logs.count());
+                      if (s.asynchronous) {
+                        assertDedicatedNotifierThreadName(
+                            notifiedThread.get().getName(), caller.getName());
+                        assertNotSame(sdkThread.get(), notifiedThread.get());
+                        assertEquals(11, completions.size());
                       }
-                    }));
+                      List<Long> expected = new ArrayList<>(range(1, 5));
+                      expected.addAll(List.of(29L, 30L, 31L));
+                      assertHistory(s, expected);
+                      for (long seq = 6; seq <= 28; seq++)
+                        assertTrue(s.stored("snapshot", ID, seq).isEmpty());
+                      s.operate(
+                          true,
+                          () -> {
+                            if (s.asynchronous)
+                              store.persistEventAndSnapshot(event(ID, 32), snapshot(32)).join();
+                            else s.persist(event(ID, 32), snapshot(32));
+                            return null;
+                          });
+                      assertHistory(s, List.of(32L));
+                      assertTrue(s.failures.isEmpty());
+                    } else {
+                      assertHistory(s, List.of(31L));
+                      assertTrue(s.failures.isEmpty());
+                      assertEquals(0, logs.count());
+                    }
+                    s.observation.put("warn_count", logs.count());
+                  }
+                }));
   }
 
   @TestFactory
   Stream<DynamicTest>
       postCommitQueryAndDeleteFailuresNotifyOnceOnCorrectThreadAndKeepWriteSuccess() {
     return Stream.of("retention-query", "retention-delete", "retention-mark")
-        .flatMap(
-            phase ->
-                Stream.of(false, true)
-                    .flatMap(
-                        callbackThrows ->
-                            both(
-                                "failure-" + phase + "-callback-" + callbackThrows,
-                                phase.equals("retention-mark")
-                                    ? RetentionPolicy.ttl(1, 60)
-                                    : RetentionPolicy.delete(1),
-                                s -> {
-                                  s.write(event(ID, 1), snapshot(1));
-                                  Thread caller = Thread.currentThread();
-                                  s.listener =
-                                      failure -> {
-                                        assertEquals(ID, failure.aggregateId());
-                                        assertEquals(
-                                            s.tables.retentionPolicy().mode().orElseThrow(),
-                                            failure.mode());
-                                        if (s.asynchronous)
-                                          assertTrue(
-                                              Thread.currentThread()
-                                                  .getName()
-                                                  .startsWith("sdk-async-response"),
-                                              Thread.currentThread().getName());
-                                        else assertSame(caller, Thread.currentThread());
-                                        if (callbackThrows)
-                                          throw new IllegalStateException("listener failure");
-                                      };
-                                  s.register(
-                                      phase,
-                                      1,
-                                      FaultRegistry.Injection.REPLACE_REQUEST,
-                                      DynamoDbFaultEffects.sdkError("InternalServerError"));
-                                  assertDoesNotThrow(() -> s.write(event(ID, 2), snapshot(2)));
-                                  assertEquals(1, s.failures.size());
-                                  DynamoDbRequestRecorder.Request failed = phase(s, phase).get(0);
-                                  assertSame(failed.failure, s.failures.get(0).cause());
-                                  assertEquals(0, failed.transmissions);
-                                  assertEquals("2", s.stored("head", ID, 0).get("seq_nr").n());
-                                  assertEquals("2", s.stored("snapshot", ID, 0).get("seq_nr").n());
-                                  assertFalse(s.stored("journal", ID, 2).isEmpty());
-                                  assertHistory(s, List.of(1L, 2L));
-                                  s.last()
-                                      .set(
-                                          "stored_head", DynamoDbJson.sdk(s.stored("head", ID, 0)));
-                                  s.last()
-                                      .set(
-                                          "stored_current",
-                                          DynamoDbJson.sdk(s.stored("snapshot", ID, 0)));
-                                  s.write(event(ID, 3), snapshot(3));
-                                  assertTrue(s.failures.isEmpty());
-                                  assertHistory(s, List.of(3L));
-                                })));
+        .flatMap(phase ->
+            Stream.of(false, true)
+                .flatMap(callbackThrows ->
+                    both(
+                        "failure-" + phase + "-callback-" + callbackThrows,
+                        phase.equals("retention-mark")
+                            ? RetentionPolicy.ttl(1, 60)
+                            : RetentionPolicy.delete(1),
+                        s -> {
+                          s.write(event(ID, 1), snapshot(1));
+                          Thread caller = Thread.currentThread();
+                          s.listener =
+                              failure -> {
+                                assertEquals(ID, failure.aggregateId());
+                                assertEquals(
+                                    s.tables.retentionPolicy().mode().orElseThrow(),
+                                    failure.mode());
+                                if (s.asynchronous) {
+                                  assertDedicatedNotifierThread(Thread.currentThread(), caller);
+                                } else assertSame(caller, Thread.currentThread());
+                                if (callbackThrows)
+                                  throw new IllegalStateException("listener failure");
+                              };
+                          s.register(
+                              phase,
+                              1,
+                              FaultRegistry.Injection.REPLACE_REQUEST,
+                              DynamoDbFaultEffects.sdkError("InternalServerError"));
+                          assertDoesNotThrow(() -> s.write(event(ID, 2), snapshot(2)));
+                          assertEquals(1, s.failures.size());
+                          DynamoDbRequestRecorder.Request failed = phase(s, phase).get(0);
+                          assertSame(failed.failure, s.failures.get(0).cause());
+                          assertEquals(0, failed.transmissions);
+                          assertEquals("2", s.stored("head", ID, 0).get("seq_nr").n());
+                          assertEquals("2", s.stored("snapshot", ID, 0).get("seq_nr").n());
+                          assertFalse(s.stored("journal", ID, 2).isEmpty());
+                          assertHistory(s, List.of(1L, 2L));
+                          s.last().set("stored_head", DynamoDbJson.sdk(s.stored("head", ID, 0)));
+                          s.last()
+                              .set("stored_current", DynamoDbJson.sdk(s.stored("snapshot", ID, 0)));
+                          s.write(event(ID, 3), snapshot(3));
+                          assertTrue(s.failures.isEmpty());
+                          assertHistory(s, List.of(3L));
+                        })));
   }
 
   @TestFactory
-  Stream<DynamicTest> realSdkCompletedAndPendingFuturesKeepNotificationOnResponseThread() {
+  Stream<DynamicTest> realSdkCompletedAndPendingFuturesKeepNotificationOnDedicatedThread() {
     return Stream.of("retention-query", "retention-delete", "retention-mark")
-        .flatMap(
-            phase ->
-                Stream.of(false, true)
-                    .flatMap(
-                        completed ->
-                            (completed ? Stream.of(false, true) : Stream.of(false))
-                                .map(
-                                    gateCommit ->
-                                        DynamicTest.dynamicTest(
-                                            "real SDK "
-                                                + phase
-                                                + (completed ? " completed" : " pending")
-                                                + (gateCommit ? " commit gate" : ""),
-                                            () -> {
-                                              try (DynamoDbSnapshotRetentionFixture.Scene s =
-                                                      fixture.scene(
-                                                          "sdk-future-timing-"
-                                                              + phase
-                                                              + "-"
-                                                              + completed
-                                                              + (gateCommit ? "-commit-gate" : ""),
-                                                          true,
-                                                          phase.equals("retention-mark")
-                                                              ? RetentionPolicy.ttl(1, 60)
-                                                              : RetentionPolicy.delete(1));
-                                                  WarningLogs logs = new WarningLogs()) {
-                                                s.write(event(ID, 1), snapshot(1));
-                                                Thread caller = Thread.currentThread();
-                                                AtomicReference<Thread>
-                                                    sdkThread = new AtomicReference<>(),
-                                                    notificationThread = new AtomicReference<>();
-                                                AtomicReference<Throwable> sdkFailure =
-                                                    new AtomicReference<>();
-                                                AtomicReference<CompletableFuture<Void>>
-                                                    publicResult = new AtomicReference<>();
-                                                CompletableFuture<Void>
-                                                    commitEntered = new CompletableFuture<>(),
-                                                    commitRelease = new CompletableFuture<>(),
-                                                    retentionEntered = new CompletableFuture<>(),
-                                                    retentionRelease = new CompletableFuture<>(),
-                                                    notificationEntered = new CompletableFuture<>(),
-                                                    notificationRelease = new CompletableFuture<>();
-                                                var invocations =
-                                                    s.observation.putArray("sdk_invocations");
-                                                ExecutionInterceptor observer =
-                                                    new ExecutionInterceptor() {
-                                                      @Override
-                                                      public void onExecutionFailure(
-                                                          Context.FailedExecution context,
-                                                          ExecutionAttributes attributes) {
-                                                        sdkThread.set(Thread.currentThread());
-                                                        sdkFailure.set(context.exception());
-                                                      }
-                                                    };
-                                                DynamoDbAsyncClient controlled =
-                                                    (DynamoDbAsyncClient)
-                                                        Proxy.newProxyInstance(
-                                                            DynamoDbAsyncClient.class
-                                                                .getClassLoader(),
-                                                            new Class<?>[] {
-                                                              DynamoDbAsyncClient.class
-                                                            },
-                                                            (proxy, method, args) -> {
-                                                              boolean retentionOrCommit =
-                                                                  Set.of(
-                                                                          "transactWriteItems",
-                                                                          "query",
-                                                                          "batchWriteItem",
-                                                                          "updateItem")
-                                                                      .contains(method.getName());
-                                                              Object[] actualArgs = args;
-                                                              if (retentionOrCommit) {
-                                                                actualArgs = args.clone();
-                                                                actualArgs[0] =
-                                                                    observedRequest(
-                                                                        (AwsRequest) args[0],
-                                                                        observer);
-                                                              }
-                                                              Object response;
-                                                              try {
-                                                                response =
-                                                                    method.invoke(
-                                                                        s.c.async, actualArgs);
-                                                              } catch (
-                                                                  InvocationTargetException
-                                                                      failure) {
-                                                                throw failure.getCause();
-                                                              }
-                                                              if (retentionOrCommit) {
-                                                                CompletableFuture<?> actual =
-                                                                    (CompletableFuture<?>) response;
-                                                                var receipt =
-                                                                    DynamoDbJson.object()
-                                                                        .put(
-                                                                            "method",
-                                                                            method.getName())
-                                                                        .put(
-                                                                            "done_at_sdk_return",
-                                                                            actual.isDone());
-                                                                // Return the original SDK future.
-                                                                // The commit gate additionally
-                                                                // makes the public future available
-                                                                // while completed retention
-                                                                // requests are handled on a
-                                                                // different SDK completion thread.
-                                                                if (completed
-                                                                    && !(gateCommit
-                                                                        && method
-                                                                            .getName()
-                                                                            .equals(
-                                                                                "transactWriteItems")))
-                                                                  actual
-                                                                      .handle(
-                                                                          (value, failure) -> null)
-                                                                      .get(10, TimeUnit.SECONDS);
-                                                                receipt.put(
-                                                                    "done_before_store_continuation",
-                                                                    actual.isDone());
-                                                                synchronized (invocations) {
-                                                                  invocations.add(receipt);
-                                                                }
-                                                              }
-                                                              return response;
-                                                            });
-                                                AsyncEventStore<JsonNode, JsonNode> store =
-                                                    asyncStore(s, controlled);
-                                                s.listener =
-                                                    failure -> {
-                                                      notificationThread.set(
-                                                          Thread.currentThread());
-                                                      CompletableFuture<Void> result =
-                                                          publicResult.get();
-                                                      s.observation.put(
-                                                          "public_future_available_at_notification",
-                                                          result != null);
-                                                      if (result != null)
-                                                        s.observation.put(
-                                                            "public_future_pending_at_notification",
-                                                            !result.isDone());
-                                                      notificationEntered.complete(null);
-                                                      if (!completed || gateCommit)
-                                                        notificationRelease.join();
-                                                      throw new IllegalStateException(
-                                                          "listener failure");
-                                                    };
-                                                if (gateCommit)
-                                                  s.register(
-                                                      "commit",
-                                                      1,
-                                                      FaultRegistry.Injection.REPLACE_RESPONSE,
-                                                      DynamoDbFaultEffects.response(
-                                                          response -> {
-                                                            s.observation.set(
-                                                                "actual_commit_response_before_gate",
-                                                                DynamoDbJson.sdk(response));
-                                                            commitEntered.complete(null);
-                                                            commitRelease.join();
-                                                            return response;
-                                                          }));
-                                                s.register(
-                                                    phase,
-                                                    1,
-                                                    FaultRegistry.Injection.REPLACE_RESPONSE,
-                                                    DynamoDbFaultEffects.response(
-                                                        response -> {
-                                                          s.observation.set(
-                                                              "actual_sdk_response_before_fault",
-                                                              DynamoDbJson.sdk(response));
-                                                          if (!completed) {
-                                                            retentionEntered.complete(null);
-                                                            retentionRelease.join();
-                                                          }
-                                                          throw DynamoDbException.builder()
-                                                              .statusCode(500)
-                                                              .message("retention failure")
-                                                              .build();
-                                                        }));
-                                                s.operate(
-                                                    true,
-                                                    () -> {
-                                                      CompletableFuture<Void> result =
-                                                          store.persistEventAndSnapshot(
-                                                              event(ID, 2), snapshot(2));
-                                                      publicResult.set(result);
-                                                      try {
-                                                        if (gateCommit) {
-                                                          commitEntered.get(10, TimeUnit.SECONDS);
-                                                          assertFalse(result.isDone());
-                                                          commitRelease.complete(null);
-                                                        }
-                                                        if (!completed) {
-                                                          retentionEntered.get(
-                                                              10, TimeUnit.SECONDS);
-                                                          assertFalse(result.isDone());
-                                                          s.observation.put(
-                                                              "public_future_pending_before_release",
-                                                              true);
-                                                          retentionRelease.complete(null);
-                                                        }
-                                                        if (!completed || gateCommit) {
-                                                          notificationEntered.get(
-                                                              10, TimeUnit.SECONDS);
-                                                          assertFalse(result.isDone());
-                                                          s.observation.put(
-                                                              "public_future_pending_while_listener_blocked",
-                                                              true);
-                                                          notificationRelease.complete(null);
-                                                        }
-                                                        assertNull(
-                                                            result.get(10, TimeUnit.SECONDS));
-                                                        return null;
-                                                      } catch (Exception failure) {
-                                                        throw new CompletionException(failure);
-                                                      } finally {
-                                                        commitRelease.complete(null);
-                                                        retentionRelease.complete(null);
-                                                        notificationRelease.complete(null);
-                                                      }
-                                                    });
-                                                s.observation
-                                                    .put(
-                                                        "sdk_failure_thread",
-                                                        sdkThread.get().getName())
-                                                    .put(
-                                                        "notification_thread",
-                                                        notificationThread.get().getName())
-                                                    .put(
-                                                        "same_response_notification_thread",
-                                                        sdkThread.get() == notificationThread.get())
-                                                    .put("public_result", "success")
-                                                    .put("warn_count", logs.count());
-                                                assertEquals(1, s.failures.size());
-                                                assertEquals(1, logs.count());
-                                                assertSame(
-                                                    sdkFailure.get(), s.failures.get(0).cause());
-                                                assertEquals(ID, s.failures.get(0).aggregateId());
-                                                assertEquals(
-                                                    s.tables.retentionPolicy().mode().orElseThrow(),
-                                                    s.failures.get(0).mode());
-                                                assertSame(
-                                                    sdkThread.get(), notificationThread.get());
-                                                assertNotSame(caller, notificationThread.get());
-                                                Map<String, AttributeValue>
-                                                    head = s.stored("head", ID, 0),
-                                                    current = s.stored("snapshot", ID, 0),
-                                                    journal = s.stored("journal", ID, 2);
-                                                s.observation.set(
-                                                    "stored_head", DynamoDbJson.sdk(head));
-                                                s.observation.set(
-                                                    "stored_current", DynamoDbJson.sdk(current));
-                                                s.observation.set(
-                                                    "stored_journal", DynamoDbJson.sdk(journal));
-                                                assertEquals("2", head.get("seq_nr").n());
-                                                assertEquals("2", current.get("seq_nr").n());
-                                                assertEquals("2", journal.get("seq_nr").n());
-                                                if (!completed || gateCommit) {
-                                                  assertTrue(
-                                                      s.observation
-                                                          .path(
-                                                              "public_future_pending_at_notification")
-                                                          .booleanValue());
-                                                  assertTrue(
-                                                      s.observation
-                                                          .path(
-                                                              "public_future_pending_while_listener_blocked")
-                                                          .booleanValue());
-                                                }
-                                                for (JsonNode invocation : invocations) {
-                                                  String method =
-                                                      invocation.path("method").asText();
-                                                  if (completed
-                                                      && !(gateCommit
-                                                          && method.equals("transactWriteItems")))
-                                                    assertTrue(
-                                                        invocation
-                                                            .path("done_before_store_continuation")
-                                                            .booleanValue());
-                                                  if (!completed
-                                                      && method.equals(
-                                                          phase.equals("retention-query")
-                                                              ? "query"
-                                                              : phase.equals("retention-mark")
-                                                                  ? "updateItem"
-                                                                  : "batchWriteItem"))
-                                                    assertFalse(
-                                                        invocation
-                                                            .path("done_before_store_continuation")
-                                                            .booleanValue());
-                                                }
-                                              }
-                                            }))));
+        .flatMap(phase ->
+            Stream.of(false, true)
+                .flatMap(completed ->
+                    (completed ? Stream.of(false, true) : Stream.of(false))
+                        .map(gateCommit ->
+                            DynamicTest.dynamicTest(
+                                "real SDK "
+                                    + phase
+                                    + (completed ? " completed" : " pending")
+                                    + (gateCommit ? " commit gate" : ""),
+                                () -> {
+                                  try (DynamoDbSnapshotRetentionFixture.Scene s =
+                                          fixture.scene(
+                                              "sdk-future-timing-"
+                                                  + phase
+                                                  + "-"
+                                                  + completed
+                                                  + (gateCommit ? "-commit-gate" : ""),
+                                              true,
+                                              phase.equals("retention-mark")
+                                                  ? RetentionPolicy.ttl(1, 60)
+                                                  : RetentionPolicy.delete(1));
+                                      WarningLogs logs = new WarningLogs()) {
+                                    s.write(event(ID, 1), snapshot(1));
+                                    Thread caller = Thread.currentThread();
+                                    AtomicReference<Thread> sdkThread = new AtomicReference<>(),
+                                        notificationThread = new AtomicReference<>();
+                                    AtomicReference<Throwable> sdkFailure = new AtomicReference<>();
+                                    AtomicReference<CompletableFuture<Void>> publicResult =
+                                        new AtomicReference<>();
+                                    CompletableFuture<Void>
+                                        commitEntered = new CompletableFuture<>(),
+                                        commitRelease = new CompletableFuture<>(),
+                                        retentionEntered = new CompletableFuture<>(),
+                                        retentionRelease = new CompletableFuture<>(),
+                                        notificationEntered = new CompletableFuture<>(),
+                                        notificationRelease = new CompletableFuture<>();
+                                    var invocations = s.observation.putArray("sdk_invocations");
+                                    ExecutionInterceptor observer =
+                                        new ExecutionInterceptor() {
+                                          @Override
+                                          public void onExecutionFailure(
+                                              Context.FailedExecution context,
+                                              ExecutionAttributes attributes) {
+                                            sdkThread.set(Thread.currentThread());
+                                            sdkFailure.set(context.exception());
+                                          }
+                                        };
+                                    DynamoDbAsyncClient controlled =
+                                        (DynamoDbAsyncClient)
+                                            Proxy.newProxyInstance(
+                                                DynamoDbAsyncClient.class.getClassLoader(),
+                                                new Class<?>[] {DynamoDbAsyncClient.class},
+                                                (proxy, method, args) -> {
+                                                  boolean retentionOrCommit =
+                                                      Set.of(
+                                                              "transactWriteItems",
+                                                              "query",
+                                                              "batchWriteItem",
+                                                              "updateItem")
+                                                          .contains(method.getName());
+                                                  Object[] actualArgs = args;
+                                                  if (retentionOrCommit) {
+                                                    actualArgs = args.clone();
+                                                    actualArgs[0] =
+                                                        observedRequest(
+                                                            (AwsRequest) args[0], observer);
+                                                  }
+                                                  Object response;
+                                                  try {
+                                                    response = method.invoke(s.c.async, actualArgs);
+                                                  } catch (InvocationTargetException failure) {
+                                                    throw failure.getCause();
+                                                  }
+                                                  if (retentionOrCommit) {
+                                                    CompletableFuture<?> actual =
+                                                        (CompletableFuture<?>) response;
+                                                    var receipt =
+                                                        DynamoDbJson.object()
+                                                            .put("method", method.getName())
+                                                            .put(
+                                                                "done_at_sdk_return",
+                                                                actual.isDone());
+                                                    // Return the original SDK future.
+                                                    // The commit gate additionally
+                                                    // makes the public future available
+                                                    // while completed retention
+                                                    // requests are handled on the
+                                                    // dedicated notification thread.
+                                                    if (completed
+                                                        && !(gateCommit
+                                                            && method
+                                                                .getName()
+                                                                .equals("transactWriteItems")))
+                                                      actual
+                                                          .handle((value, failure) -> null)
+                                                          .get(10, TimeUnit.SECONDS);
+                                                    receipt.put(
+                                                        "done_before_store_continuation",
+                                                        actual.isDone());
+                                                    synchronized (invocations) {
+                                                      invocations.add(receipt);
+                                                    }
+                                                  }
+                                                  return response;
+                                                });
+                                    AsyncEventStore<JsonNode, JsonNode> store =
+                                        asyncStore(s, controlled);
+                                    s.listener =
+                                        failure -> {
+                                          notificationThread.set(Thread.currentThread());
+                                          CompletableFuture<Void> result = publicResult.get();
+                                          s.observation.put(
+                                              "public_future_available_at_notification",
+                                              result != null);
+                                          if (result != null)
+                                            s.observation.put(
+                                                "public_future_pending_at_notification",
+                                                !result.isDone());
+                                          notificationEntered.complete(null);
+                                          if (!completed || gateCommit) notificationRelease.join();
+                                          throw new IllegalStateException("listener failure");
+                                        };
+                                    if (gateCommit)
+                                      s.register(
+                                          "commit",
+                                          1,
+                                          FaultRegistry.Injection.REPLACE_RESPONSE,
+                                          DynamoDbFaultEffects.response(response -> {
+                                            s.observation.set(
+                                                "actual_commit_response_before_gate",
+                                                DynamoDbJson.sdk(response));
+                                            commitEntered.complete(null);
+                                            commitRelease.join();
+                                            return response;
+                                          }));
+                                    s.register(
+                                        phase,
+                                        1,
+                                        FaultRegistry.Injection.REPLACE_RESPONSE,
+                                        DynamoDbFaultEffects.response(response -> {
+                                          s.observation.set(
+                                              "actual_sdk_response_before_fault",
+                                              DynamoDbJson.sdk(response));
+                                          if (!completed) {
+                                            retentionEntered.complete(null);
+                                            retentionRelease.join();
+                                          }
+                                          throw DynamoDbException.builder()
+                                              .statusCode(500)
+                                              .message("retention failure")
+                                              .build();
+                                        }));
+                                    s.operate(
+                                        true,
+                                        () -> {
+                                          CompletableFuture<Void> result =
+                                              store.persistEventAndSnapshot(
+                                                  event(ID, 2), snapshot(2));
+                                          publicResult.set(result);
+                                          try {
+                                            if (gateCommit) {
+                                              commitEntered.get(10, TimeUnit.SECONDS);
+                                              assertFalse(result.isDone());
+                                              commitRelease.complete(null);
+                                            }
+                                            if (!completed) {
+                                              retentionEntered.get(10, TimeUnit.SECONDS);
+                                              assertFalse(result.isDone());
+                                              s.observation.put(
+                                                  "public_future_pending_before_release", true);
+                                              retentionRelease.complete(null);
+                                            }
+                                            if (!completed || gateCommit) {
+                                              notificationEntered.get(10, TimeUnit.SECONDS);
+                                              assertFalse(result.isDone());
+                                              s.observation.put(
+                                                  "public_future_pending_while_listener_blocked",
+                                                  true);
+                                              notificationRelease.complete(null);
+                                            }
+                                            assertNull(result.get(10, TimeUnit.SECONDS));
+                                            return null;
+                                          } catch (Exception failure) {
+                                            throw new CompletionException(failure);
+                                          } finally {
+                                            commitRelease.complete(null);
+                                            retentionRelease.complete(null);
+                                            notificationRelease.complete(null);
+                                          }
+                                        });
+                                    s.observation
+                                        .put("sdk_failure_thread", sdkThread.get().getName())
+                                        .put(
+                                            "notification_thread",
+                                            notificationThread.get().getName())
+                                        .put(
+                                            "notification_on_sdk_response_thread",
+                                            sdkThread.get() == notificationThread.get())
+                                        .put("public_result", "success")
+                                        .put("warn_count", logs.count());
+                                    assertEquals(1, s.failures.size());
+                                    assertEquals(1, logs.count());
+                                    assertSame(sdkFailure.get(), s.failures.get(0).cause());
+                                    assertEquals(ID, s.failures.get(0).aggregateId());
+                                    assertEquals(
+                                        s.tables.retentionPolicy().mode().orElseThrow(),
+                                        s.failures.get(0).mode());
+                                    assertDedicatedNotifierThread(notificationThread.get(), caller);
+                                    assertNotSame(sdkThread.get(), notificationThread.get());
+                                    Map<String, AttributeValue> head = s.stored("head", ID, 0),
+                                        current = s.stored("snapshot", ID, 0),
+                                        journal = s.stored("journal", ID, 2);
+                                    s.observation.set("stored_head", DynamoDbJson.sdk(head));
+                                    s.observation.set("stored_current", DynamoDbJson.sdk(current));
+                                    s.observation.set("stored_journal", DynamoDbJson.sdk(journal));
+                                    assertEquals("2", head.get("seq_nr").n());
+                                    assertEquals("2", current.get("seq_nr").n());
+                                    assertEquals("2", journal.get("seq_nr").n());
+                                    if (!completed || gateCommit) {
+                                      assertTrue(
+                                          s.observation
+                                              .path("public_future_pending_at_notification")
+                                              .booleanValue());
+                                      assertTrue(
+                                          s.observation
+                                              .path("public_future_pending_while_listener_blocked")
+                                              .booleanValue());
+                                    }
+                                    for (JsonNode invocation : invocations) {
+                                      String method = invocation.path("method").asText();
+                                      if (completed
+                                          && !(gateCommit && method.equals("transactWriteItems")))
+                                        assertTrue(
+                                            invocation
+                                                .path("done_before_store_continuation")
+                                                .booleanValue());
+                                      if (!completed
+                                          && method.equals(
+                                              phase.equals("retention-query")
+                                                  ? "query"
+                                                  : phase.equals("retention-mark")
+                                                      ? "updateItem"
+                                                      : "batchWriteItem"))
+                                        assertFalse(
+                                            invocation
+                                                .path("done_before_store_continuation")
+                                                .booleanValue());
+                                    }
+                                  }
+                                }))));
   }
 
   @TestFactory
   Stream<DynamicTest> sdkRetrySuccessDoesNotNotifyAnIntermediateFailure() {
     return Stream.of("retention-query", "retention-delete", "retention-mark")
-        .map(
-            phase ->
-                DynamicTest.dynamicTest(
-                    "SDK retry success " + phase,
-                    () -> {
-                      try (DynamoDbSnapshotRetentionFixture.Scene s =
-                              fixture.scene(
-                                  "sdk-retry-success-" + phase,
-                                  true,
-                                  phase.equals("retention-mark")
-                                      ? RetentionPolicy.ttl(1, 60)
-                                      : RetentionPolicy.delete(1));
-                          WarningLogs logs = new WarningLogs()) {
-                        s.write(event(ID, 1), snapshot(1));
-                        AtomicInteger finalFailures = new AtomicInteger(),
-                            errorAttempts = new AtomicInteger();
-                        ExecutionInterceptor observer =
-                            new ExecutionInterceptor() {
-                              @Override
-                              public void onExecutionFailure(
-                                  Context.FailedExecution context, ExecutionAttributes attributes) {
-                                finalFailures.incrementAndGet();
-                              }
-                            };
-                        // Retry strategy is a client setting in SDK 2.55.13. Only this test's
-                        // additional client retries; the accepted shared client settings stay
-                        // intact.
-                        try (FaultAsyncHttpClient http =
-                                new FaultAsyncHttpClient(
-                                    DynamoDbTestClients.asyncHttp(configuration.eventLoop())
-                                        .build(),
-                                    s.c.recorder);
-                            DynamoDbAsyncClient client =
-                                DynamoDbAsyncClient.builder()
-                                    .endpointOverride(configuration.endpoint())
-                                    .region(DynamoDbTestClients.REGION)
-                                    .credentialsProvider(
-                                        software.amazon.awssdk.auth.credentials
-                                            .StaticCredentialsProvider.create(
-                                            software.amazon.awssdk.auth.credentials
-                                                .AwsBasicCredentials.create(
+        .map(phase ->
+            DynamicTest.dynamicTest(
+                "SDK retry success " + phase,
+                () -> {
+                  try (DynamoDbSnapshotRetentionFixture.Scene s =
+                          fixture.scene(
+                              "sdk-retry-success-" + phase,
+                              true,
+                              phase.equals("retention-mark")
+                                  ? RetentionPolicy.ttl(1, 60)
+                                  : RetentionPolicy.delete(1));
+                      WarningLogs logs = new WarningLogs()) {
+                    s.write(event(ID, 1), snapshot(1));
+                    AtomicInteger finalFailures = new AtomicInteger(),
+                        errorAttempts = new AtomicInteger();
+                    ExecutionInterceptor observer =
+                        new ExecutionInterceptor() {
+                          @Override
+                          public void onExecutionFailure(
+                              Context.FailedExecution context, ExecutionAttributes attributes) {
+                            finalFailures.incrementAndGet();
+                          }
+                        };
+                    // Retry strategy is a client setting in SDK 2.55.13. Only this test's
+                    // additional client retries; the accepted shared client settings stay
+                    // intact.
+                    try (FaultAsyncHttpClient http =
+                            new FaultAsyncHttpClient(
+                                DynamoDbTestClients.asyncHttp(configuration.eventLoop()).build(),
+                                s.c.recorder);
+                        DynamoDbAsyncClient client =
+                            DynamoDbAsyncClient.builder()
+                                .endpointOverride(configuration.endpoint())
+                                .region(DynamoDbTestClients.REGION)
+                                .credentialsProvider(
+                                    software.amazon.awssdk.auth.credentials
+                                        .StaticCredentialsProvider.create(
+                                        software.amazon.awssdk.auth.credentials.AwsBasicCredentials
+                                            .create(
                                                 DynamoDbTestClients.ACCESS_KEY,
                                                 "DynamoDbLocalDummySecret")))
-                                    .overrideConfiguration(
-                                        DynamoDbTestClients.overrides()
-                                            .retryStrategy(
-                                                StandardRetryStrategy.builder()
-                                                    .maxAttempts(2)
-                                                    .build())
-                                            .addExecutionInterceptor(observer)
-                                            .addExecutionInterceptor(s.c.recorder)
-                                            .build())
-                                    .httpClient(http)
-                                    .build()) {
-                          AsyncEventStore<JsonNode, JsonNode> store = asyncStore(s, client);
-                          FaultRegistry.Effect error =
-                              DynamoDbFaultEffects.sdkError("InternalServerError");
-                          s.register(
-                              phase,
-                              1,
-                              FaultRegistry.Injection.REPLACE_REQUEST,
-                              new FaultRegistry.Effect() {
-                                @Override
-                                public boolean supports(FaultRegistry.Injection injection) {
-                                  return error.supports(injection);
-                                }
+                                .overrideConfiguration(
+                                    DynamoDbTestClients.overrides()
+                                        .retryStrategy(
+                                            StandardRetryStrategy.builder().maxAttempts(2).build())
+                                        .addExecutionInterceptor(observer)
+                                        .addExecutionInterceptor(s.c.recorder)
+                                        .build())
+                                .httpClient(http)
+                                .build()) {
+                      AsyncEventStore<JsonNode, JsonNode> store = asyncStore(s, client);
+                      FaultRegistry.Effect error =
+                          DynamoDbFaultEffects.sdkError("InternalServerError");
+                      s.register(
+                          phase,
+                          1,
+                          FaultRegistry.Injection.REPLACE_REQUEST,
+                          new FaultRegistry.Effect() {
+                            @Override
+                            public boolean supports(FaultRegistry.Injection injection) {
+                              return error.supports(injection);
+                            }
 
-                                @Override
-                                public HttpReply reply(DynamoDbRequestRecorder.Request request) {
-                                  return errorAttempts.getAndIncrement() == 0
-                                      ? error.reply(request)
-                                      : null;
-                                }
-                              });
-                          s.operate(
-                              true,
-                              () -> {
-                                assertNull(
-                                    store
-                                        .persistEventAndSnapshot(event(ID, 2), snapshot(2))
-                                        .join());
-                                return null;
-                              });
-                          List<DynamoDbRequestRecorder.Request> requests = phase(s, phase);
-                          assertEquals(1, requests.size());
-                          assertEquals(2, requests.get(0).httpAttempts);
-                          assertEquals(1, requests.get(0).transmissions);
-                          assertEquals(2, errorAttempts.get());
-                          assertEquals(0, finalFailures.get());
-                          assertTrue(s.failures.isEmpty());
-                          assertEquals(0, logs.count());
-                          assertHistory(s, List.of(2L));
-                          s.observation
-                              .put("sdk_final_failure_count", finalFailures.get())
-                              .put("http_attempts", errorAttempts.get())
-                              .put("warn_count", logs.count());
-                        }
-                        assertFalse(configuration.eventLoop().eventLoopGroup().isTerminated());
-                        s.observation
-                            .put("additional_sdk_client_and_http_pool_close_completed", true)
-                            .put("borrowed_event_loop_retained", true);
-                        s.write(event(ID, 3), snapshot(3));
-                        assertHistory(s, List.of(3L));
-                      }
-                    }));
+                            @Override
+                            public HttpReply reply(DynamoDbRequestRecorder.Request request) {
+                              return errorAttempts.getAndIncrement() == 0
+                                  ? error.reply(request)
+                                  : null;
+                            }
+                          });
+                      s.operate(
+                          true,
+                          () -> {
+                            assertNull(
+                                store.persistEventAndSnapshot(event(ID, 2), snapshot(2)).join());
+                            return null;
+                          });
+                      List<DynamoDbRequestRecorder.Request> requests = phase(s, phase);
+                      assertEquals(1, requests.size());
+                      assertEquals(2, requests.get(0).httpAttempts);
+                      assertEquals(1, requests.get(0).transmissions);
+                      assertEquals(2, errorAttempts.get());
+                      assertEquals(0, finalFailures.get());
+                      assertTrue(s.failures.isEmpty());
+                      assertEquals(0, logs.count());
+                      assertHistory(s, List.of(2L));
+                      s.observation
+                          .put("sdk_final_failure_count", finalFailures.get())
+                          .put("http_attempts", errorAttempts.get())
+                          .put("warn_count", logs.count());
+                    }
+                    assertFalse(configuration.eventLoop().eventLoopGroup().isTerminated());
+                    s.observation
+                        .put("additional_sdk_client_and_http_pool_close_completed", true)
+                        .put("borrowed_event_loop_retained", true);
+                    s.write(event(ID, 3), snapshot(3));
+                    assertHistory(s, List.of(3L));
+                  }
+                }));
   }
 
   @TestFactory
@@ -1778,13 +1952,12 @@ class DynamoDbSnapshotRetentionBoundaryTest {
               "retention-query",
               1,
               FaultRegistry.Injection.REPLACE_RESPONSE,
-              DynamoDbFaultEffects.response(
-                  response -> {
-                    s.observation.set("actual_pending_sdk_response", DynamoDbJson.sdk(response));
-                    entered.complete(null);
-                    release.join();
-                    return response;
-                  }));
+              DynamoDbFaultEffects.response(response -> {
+                s.observation.set("actual_pending_sdk_response", DynamoDbJson.sdk(response));
+                entered.complete(null);
+                release.join();
+                return response;
+              }));
           FaultRegistry.Operation operation = s.c.faults.begin(s.nextOperation++, true);
           ExecutorService caller = Executors.newSingleThreadExecutor();
           CompletableFuture<Void> result =

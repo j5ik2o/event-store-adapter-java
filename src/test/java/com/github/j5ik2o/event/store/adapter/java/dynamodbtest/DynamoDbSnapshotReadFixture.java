@@ -475,11 +475,10 @@ public final class DynamoDbSnapshotReadFixture {
                       .add(dataKey(parts[0], parts[1]));
                 }
             assertEquals(pending.keySet(), fields(request.original.path("RequestItems")));
-            pending.forEach(
-                (table, keys) ->
-                    assertEquals(
-                        DynamoDbJson.sdk(keys),
-                        request.original.at("/RequestItems/" + table + "/Keys")));
+            pending.forEach((table, keys) ->
+                assertEquals(
+                    DynamoDbJson.sdk(keys),
+                    request.original.at("/RequestItems/" + table + "/Keys")));
             break;
           default:
             fail("Unconnected constraint");
@@ -489,19 +488,17 @@ public final class DynamoDbSnapshotReadFixture {
     expected
         .path("request_count")
         .fields()
-        .forEachRemaining(
-            entry ->
-                assertEquals(
-                    entry.getValue().longValue(),
-                    requests.stream().filter(r -> r.phase.equals(entry.getKey())).count()));
+        .forEachRemaining(entry ->
+            assertEquals(
+                entry.getValue().longValue(),
+                requests.stream().filter(r -> r.phase.equals(entry.getKey())).count()));
     expected
         .path("minimum_request_count")
         .fields()
-        .forEachRemaining(
-            entry ->
-                assertTrue(
-                    requests.stream().filter(r -> r.phase.equals(entry.getKey())).count()
-                        >= entry.getValue().longValue()));
+        .forEachRemaining(entry ->
+            assertTrue(
+                requests.stream().filter(r -> r.phase.equals(entry.getKey())).count()
+                    >= entry.getValue().longValue()));
     ArrayNode notifications = DynamoDbJson.mapper().createArrayNode();
     scene.notifications.forEach(failure -> notifications.add("retention-failure"));
     scene.last().set("notifications", notifications);
@@ -594,29 +591,28 @@ public final class DynamoDbSnapshotReadFixture {
           definition
               .path("attributes")
               .fields()
-              .forEachRemaining(
-                  entry -> {
-                    String value = definition.path("values").path(entry.getKey()).asText();
-                    switch (entry.getValue().asText()) {
-                      case "S":
-                        item.put(entry.getKey(), AttributeValue.fromS(value));
-                        break;
-                      case "N":
-                        item.put(entry.getKey(), AttributeValue.fromN(value));
-                        break;
-                      case "B":
-                        item.put(
-                            entry.getKey(),
-                            AttributeValue.fromB(
-                                SdkBytes.fromByteArray(
-                                    JsonPayloadSerializer.of(DynamoDbJson.mapper(), JsonNode.class)
-                                        .serialize(
-                                            definition.path("binary_json").get(entry.getKey())))));
-                        break;
-                      default:
-                        throw new IllegalArgumentException("Unsupported seed attribute");
-                    }
-                  });
+              .forEachRemaining(entry -> {
+                String value = definition.path("values").path(entry.getKey()).asText();
+                switch (entry.getValue().asText()) {
+                  case "S":
+                    item.put(entry.getKey(), AttributeValue.fromS(value));
+                    break;
+                  case "N":
+                    item.put(entry.getKey(), AttributeValue.fromN(value));
+                    break;
+                  case "B":
+                    item.put(
+                        entry.getKey(),
+                        AttributeValue.fromB(
+                            SdkBytes.fromByteArray(
+                                JsonPayloadSerializer.of(DynamoDbJson.mapper(), JsonNode.class)
+                                    .serialize(
+                                        definition.path("binary_json").get(entry.getKey())))));
+                    break;
+                  default:
+                    throw new IllegalArgumentException("Unsupported seed attribute");
+                }
+              });
           c.admin.putItem(PutItemRequest.builder().tableName(c.snapshot).item(item).build());
           observation.set("seed_items", DynamoDbJson.sdk(item));
         }
@@ -818,12 +814,11 @@ public final class DynamoDbSnapshotReadFixture {
             .original
             .path("RequestItems")
             .fields()
-            .forEachRemaining(
-                entry ->
-                    assertEquals(
-                        DynamoDbJson.sdk(
-                            List.of(dataKey(c.targets.role(entry.getKey()), id.asString()))),
-                        entry.getValue().path("Keys")));
+            .forEachRemaining(entry ->
+                assertEquals(
+                    DynamoDbJson.sdk(
+                        List.of(dataKey(c.targets.role(entry.getKey()), id.asString()))),
+                    entry.getValue().path("Keys")));
       }
     }
 

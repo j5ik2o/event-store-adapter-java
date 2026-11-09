@@ -60,11 +60,10 @@ class SqlitePostCommitNotificationTest {
       EventStore<String, String> store =
           SqliteEventStore.create(
               storage,
-              configuration(
-                  failure -> {
-                    listenerCalls[0]++;
-                    throw new AssertionError("listener failed");
-                  }));
+              configuration(failure -> {
+                listenerCalls[0]++;
+                throw new AssertionError("listener failed");
+              }));
       store.persistEventAndSnapshot(event(1), snapshot(1));
       execute(file, FAIL_RETENTION);
 
@@ -109,11 +108,10 @@ class SqlitePostCommitNotificationTest {
       AsyncEventStore<String, String> async =
           SqliteEventStore.createAsync(
               storage,
-              configuration(
-                  failure -> {
-                    listenerCalls[0]++;
-                    throw new AssertionError("listener failed");
-                  }));
+              configuration(failure -> {
+                listenerCalls[0]++;
+                throw new AssertionError("listener failed");
+              }));
       assertDoesNotThrow(() -> async.persistEventAndSnapshot(event(1), snapshot(1)).join());
       execute(file, FAIL_RETENTION);
 

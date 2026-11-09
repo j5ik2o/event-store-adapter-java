@@ -23,14 +23,13 @@ final class ValueCaseRunner {
 
   static boolean supports(ConformanceCase c) {
     return c.operation()
-        .map(
-            op ->
-                op.equals("buildAid")
-                    || op.equals("validateSeqNr")
-                    || op.equals("fnv1a64")
-                    || op.equals("encodeBigtableEventEnvelope")
-                    || op.equals("encodeBigtableSnapshotEnvelope")
-                    || op.equals("decodeBigtableEnvelope"))
+        .map(op ->
+            op.equals("buildAid")
+                || op.equals("validateSeqNr")
+                || op.equals("fnv1a64")
+                || op.equals("encodeBigtableEventEnvelope")
+                || op.equals("encodeBigtableSnapshotEnvelope")
+                || op.equals("decodeBigtableEnvelope"))
         .orElse(false);
   }
 

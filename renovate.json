@@ -1,5 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "enabled": false,
   "extends": ["config:recommended"],
   "labels": ["renovate"],
   "commitMessagePrefix": "chore(deps):",
@@ -16,6 +17,12 @@
     {
       "description": "Gradle runs on a separate build JVM, but tests still run on JDK 11, 17, and 19. JUnit 6+ requires Java 17 at test runtime, so keep JUnit major updates blocked while JDK 11 tests are required.",
       "matchPackageNames": ["/^org\\.junit\\./"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
+      "description": "json-schema-validator 3.x requires Java 17 and Jackson 3. The build still compiles and tests on Java 11 with Jackson 2, so keep major updates blocked while Java 11 verification is required.",
+      "matchPackageNames": ["com.networknt:json-schema-validator"],
       "matchUpdateTypes": ["major"],
       "enabled": false
     },

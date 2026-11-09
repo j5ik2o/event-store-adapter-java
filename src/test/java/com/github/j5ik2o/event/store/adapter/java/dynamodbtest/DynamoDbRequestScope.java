@@ -44,23 +44,20 @@ final class DynamoDbRequestScope {
         break;
       case "TransactWriteItems":
         body.path("TransactItems")
-            .forEach(
-                action -> {
-                  keyHolders.add(action.path("Put").path("Item"));
-                  keyHolders.add(action.path("Update").path("Key"));
-                  keyHolders.add(action.path("Delete").path("Key"));
-                  keyHolders.add(action.path("ConditionCheck").path("Key"));
-                });
+            .forEach(action -> {
+              keyHolders.add(action.path("Put").path("Item"));
+              keyHolders.add(action.path("Update").path("Key"));
+              keyHolders.add(action.path("Delete").path("Key"));
+              keyHolders.add(action.path("ConditionCheck").path("Key"));
+            });
         break;
       case "BatchWriteItem":
         body.path("RequestItems")
-            .forEach(
-                table ->
-                    table.forEach(
-                        write -> {
-                          keyHolders.add(write.path("PutRequest").path("Item"));
-                          keyHolders.add(write.path("DeleteRequest").path("Key"));
-                        }));
+            .forEach(table ->
+                table.forEach(write -> {
+                  keyHolders.add(write.path("PutRequest").path("Item"));
+                  keyHolders.add(write.path("DeleteRequest").path("Key"));
+                }));
         break;
       case "Query":
         queryViolations(aid, body, result);

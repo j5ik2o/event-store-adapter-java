@@ -23,14 +23,13 @@ class BigtableCaseRunnerTest {
     Set<String> required = RequiredCases.load().get(Backend.BIGTABLE);
     return ConformanceDataLoader.load(ConformanceTestFiles.REAL_ROOT).cases().stream()
         .filter(c -> required.contains(c.id()))
-        .map(
-            c ->
-                dynamicTest(
-                    c.id(),
-                    () -> {
-                      CaseResult result = CaseClassifier.classify(c, Backend.BIGTABLE);
-                      assertEquals(ConformanceStatus.PASSED, result.status(), result.reason());
-                    }));
+        .map(c ->
+            dynamicTest(
+                c.id(),
+                () -> {
+                  CaseResult result = CaseClassifier.classify(c, Backend.BIGTABLE);
+                  assertEquals(ConformanceStatus.PASSED, result.status(), result.reason());
+                }));
   }
 
   @Test

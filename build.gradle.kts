@@ -13,7 +13,7 @@ plugins {
     `java-library`
     `maven-publish`
     signing
-    id("com.diffplug.spotless") version "8.10.4"
+    id("com.diffplug.spotless") version "8.11.0"
     id("io.github.gradle-nexus.publish-plugin") version "2.0.0"
 }
 
@@ -23,7 +23,6 @@ extra["isReleaseVersion"] = !version.toString().endsWith("SNAPSHOT")
 
 val driverModules = listOf("core", "dynamodb", "spanner", "bigtable", "sqlite")
 
-// Each storage driver module owns its SDK as an `api` dependency. Core carries no driver SDK.
 val coreDependencies =
     listOf(
         "api:com.fasterxml.jackson.core:jackson-databind:2.22.4",
@@ -36,18 +35,18 @@ val driverDependencies =
         "core" to coreDependencies,
         "dynamodb" to
             listOf(
-                "api:software.amazon.awssdk:dynamodb:2.57.9",
+                "api:software.amazon.awssdk:dynamodb:2.57.11",
                 "implementation:org.slf4j:slf4j-api:2.0.20",
             ),
         "spanner" to
             listOf(
-                "api:com.google.cloud:google-cloud-spanner:6.125.0",
+                "api:com.google.cloud:google-cloud-spanner:6.127.0",
                 "implementation:org.slf4j:slf4j-api:2.0.20",
                 "implementation:com.google.code.findbugs:jsr305:3.0.2",
             ),
         "bigtable" to
             listOf(
-                "api:com.google.cloud:google-cloud-bigtable:2.86.0",
+                "api:com.google.cloud:google-cloud-bigtable:2.88.0",
                 "implementation:org.slf4j:slf4j-api:2.0.20",
                 "implementation:com.google.code.findbugs:jsr305:3.0.2",
             ),
@@ -117,7 +116,6 @@ fun MavenPublication.applyCommonPom(projectName: String, descriptionText: String
     }
 }
 
-// Driver modules: core (with memory), dynamodb, spanner, bigtable and sqlite.
 subprojects {
     apply(plugin = "java-library")
     apply(plugin = "maven-publish")
@@ -208,8 +206,6 @@ subprojects {
     }
 }
 
-// The root project is the aggregate artifact: it contains no classes and depends on all driver
-// modules, so the same class is never shipped by both the aggregate and a driver module.
 dependencies {
     driverModules.forEach { "api"(project(":$it")) }
 
@@ -219,8 +215,8 @@ dependencies {
 
     testImplementation("ch.qos.logback:logback-classic:1.6.6")
     testImplementation("org.testcontainers:testcontainers:2.0.5")
-    testImplementation("software.amazon.awssdk:apache5-client:2.57.9")
-    testImplementation("software.amazon.awssdk:netty-nio-client:2.57.9")
+    testImplementation("software.amazon.awssdk:apache5-client:2.57.11")
+    testImplementation("software.amazon.awssdk:netty-nio-client:2.57.11")
 
     testImplementation("com.networknt:json-schema-validator:2.0.8")
     testImplementation("com.google.code.findbugs:jsr305:3.0.2")
@@ -250,8 +246,6 @@ val testJavaLauncher = javaToolchains.launcherFor {
     languageVersion.set(testJavaVersion.map(JavaLanguageVersion::of))
 }
 
-// A separate source set keeps only core and dynamodb on the classpath. It proves that the public
-// DynamoDB entry point initializes and reads/writes without the other driver modules present.
 val coreDynamoDbOnlyTestSourceSet =
     sourceSets.create("coreDynamoDbOnlyTest") {
         java.srcDir("src/coreDynamoDbOnlyTest/java")
@@ -266,7 +260,7 @@ dependencies {
     "coreDynamoDbOnlyTestRuntimeOnly"("org.junit.platform:junit-platform-launcher")
     "coreDynamoDbOnlyTestImplementation"("ch.qos.logback:logback-classic:1.6.6")
     "coreDynamoDbOnlyTestImplementation"("org.testcontainers:testcontainers:2.0.5")
-    "coreDynamoDbOnlyTestImplementation"("software.amazon.awssdk:apache5-client:2.57.9")
+    "coreDynamoDbOnlyTestImplementation"("software.amazon.awssdk:apache5-client:2.57.11")
 }
 
 val coreDynamoDbOnlyTest =
@@ -303,7 +297,6 @@ tasks {
         }
     }
 
-    // The aggregate javadoc covers every driver module so that docs/javadoc stays one site.
     named<Javadoc>("javadoc") {
         dependsOn(subprojects.map { "${it.path}:classes" })
         source(subprojects.map { it.extensions.getByType<SourceSetContainer>()["main"].allJava })
@@ -340,7 +333,7 @@ tasks {
     }
 
     withType<Wrapper> {
-        gradleVersion = "9.8.2"
+        gradleVersion = "9.9.0"
     }
 
     withType<JavaCompile> {

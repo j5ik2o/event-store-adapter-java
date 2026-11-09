@@ -57,6 +57,18 @@ class DynamoDbSnapshotRetentionTest {
   }
 
   @Test
+  void asynchronousRetentionWithoutANotifierFailsBeforeTouchingTheClient() {
+    DynamoDbTableConfig tables =
+        DynamoDbTableConfigTest.names().retentionPolicy(RetentionPolicy.delete(1)).build();
+    DynamoDbSnapshotRetention retention =
+        new DynamoDbSnapshotRetention(
+            ID, 2, tables, Optional.<RetentionFailureListener>empty(), Sleeper.SYSTEM);
+    IllegalStateException failure =
+        assertThrows(IllegalStateException.class, () -> retention.retainAsync(null));
+    assertTrue(failure.getMessage().contains("notifier"));
+  }
+
+  @Test
   void bothFactoriesOnlyStartRetentionAfterSuccessfulSnapshotCommit() {
     for (boolean async : List.of(false, true)) {
       for (RetentionPolicy policy :
@@ -148,18 +160,17 @@ class DynamoDbSnapshotRetentionTest {
                 .payloadSerializer(JSON)
                 .snapshotSerializer(JSON)
                 .build();
-        assertDoesNotThrow(
-            () -> {
-              if (async)
-                DynamoDbEventStore.createAsync(
-                        s.client(DynamoDbAsyncClient.class, true), s.tables, config)
-                    .join()
-                    .persistEventAndSnapshot(event(2), snapshot(2))
-                    .join();
-              else
-                DynamoDbEventStore.create(s.client(DynamoDbClient.class, false), s.tables, config)
-                    .persistEventAndSnapshot(event(2), snapshot(2));
-            });
+        assertDoesNotThrow(() -> {
+          if (async)
+            DynamoDbEventStore.createAsync(
+                    s.client(DynamoDbAsyncClient.class, true), s.tables, config)
+                .join()
+                .persistEventAndSnapshot(event(2), snapshot(2))
+                .join();
+          else
+            DynamoDbEventStore.create(s.client(DynamoDbClient.class, false), s.tables, config)
+                .persistEventAndSnapshot(event(2), snapshot(2));
+        });
         assertEquals(1, s.marks.size());
         assertTrue(s.failures.isEmpty());
         assertEquals(1, logs.list.stream().filter(log -> log.getLevel() == Level.WARN).count());
@@ -594,12 +605,11 @@ class DynamoDbSnapshotRetentionTest {
   private static List<Long> numbers(BatchWriteItemRequest request) {
     assertEquals(Set.of("snapshot"), request.requestItems().keySet());
     return request.requestItems().get("snapshot").stream()
-        .map(
-            write -> {
-              assertNull(write.putRequest());
-              assertEquals(ID.asString(), write.deleteRequest().key().get("aid").s());
-              return Long.parseLong(write.deleteRequest().key().get("skey").n());
-            })
+        .map(write -> {
+          assertNull(write.putRequest());
+          assertEquals(ID.asString(), write.deleteRequest().key().get("aid").s());
+          return Long.parseLong(write.deleteRequest().key().get("skey").n());
+        })
         .collect(Collectors.toList());
   }
 
@@ -641,11 +651,10 @@ class DynamoDbSnapshotRetentionTest {
       return EventStoreConfig.<String, String>builder()
           .payloadSerializer(JSON)
           .snapshotSerializer(JSON)
-          .retentionFailureListener(
-              failure -> {
-                failures.add(failure);
-                listener.onRetentionFailure(failure);
-              })
+          .retentionFailureListener(failure -> {
+            failures.add(failure);
+            listener.onRetentionFailure(failure);
+          })
           .build();
     }
 
@@ -655,13 +664,12 @@ class DynamoDbSnapshotRetentionTest {
           Map<String, List<Map<String, AttributeValue>>> items = new LinkedHashMap<>();
           ((BatchGetItemRequest) args[0])
               .requestItems()
-              .forEach(
-                  (table, keys) -> {
-                    Map<String, AttributeValue> item = new LinkedHashMap<>(keys.keys().get(0));
-                    item.put("store_id", AttributeValue.fromS("unit"));
-                    item.put("layout_version", AttributeValue.fromN("1"));
-                    items.put(table, List.of(item));
-                  });
+              .forEach((table, keys) -> {
+                Map<String, AttributeValue> item = new LinkedHashMap<>(keys.keys().get(0));
+                item.put("store_id", AttributeValue.fromS("unit"));
+                item.put("layout_version", AttributeValue.fromN("1"));
+                items.put(table, List.of(item));
+              });
           return CompletableFuture.completedFuture(
               BatchGetItemResponse.builder().responses(items).build());
         case "transactWriteItems":
@@ -688,52 +696,49 @@ class DynamoDbSnapshotRetentionTest {
       configuration.overrideConfiguration(ClientOverrideConfiguration.builder().build());
       request
           .overrideConfiguration()
-          .ifPresent(
-              overrides ->
-                  overrides.plugins().forEach(plugin -> plugin.configureClient(configuration)));
+          .ifPresent(overrides ->
+              overrides.plugins().forEach(plugin -> plugin.configureClient(configuration)));
       List<ExecutionInterceptor> interceptors =
           new ArrayList<>(configuration.overrideConfiguration().executionInterceptors());
       Collections.reverse(interceptors);
       CompletableFuture<T> result = new CompletableFuture<>();
-      response.whenComplete(
-          (value, failure) -> {
-            try {
-              ExecutionAttributes attributes = new ExecutionAttributes();
-              if (failure == null) {
-                Context.AfterExecution context =
-                    InterceptorContext.builder().request(request).response(value).build();
-                interceptors.forEach(
-                    interceptor -> interceptor.afterExecution(context, attributes));
-                result.complete(value);
-              } else {
-                Context.FailedExecution context =
-                    (Context.FailedExecution)
-                        Proxy.newProxyInstance(
-                            Context.FailedExecution.class.getClassLoader(),
-                            new Class<?>[] {Context.FailedExecution.class},
-                            (proxy, method, args) -> {
-                              switch (method.getName()) {
-                                case "exception":
-                                  return failure;
-                                case "request":
-                                  return request;
-                                case "httpRequest":
-                                case "httpResponse":
-                                case "response":
-                                  return Optional.empty();
-                                default:
-                                  throw new AssertionError(
-                                      "Unexpected failure context access: " + method);
-                              }
-                            });
-                interceptors.forEach(
-                    interceptor -> interceptor.onExecutionFailure(context, attributes));
-                result.completeExceptionally(failure);
-              }
-            } catch (Throwable hookFailure) {
-              result.completeExceptionally(hookFailure);
-            }
-          });
+      response.whenComplete((value, failure) -> {
+        try {
+          ExecutionAttributes attributes = new ExecutionAttributes();
+          if (failure == null) {
+            Context.AfterExecution context =
+                InterceptorContext.builder().request(request).response(value).build();
+            interceptors.forEach(interceptor -> interceptor.afterExecution(context, attributes));
+            result.complete(value);
+          } else {
+            Context.FailedExecution context =
+                (Context.FailedExecution)
+                    Proxy.newProxyInstance(
+                        Context.FailedExecution.class.getClassLoader(),
+                        new Class<?>[] {Context.FailedExecution.class},
+                        (proxy, method, args) -> {
+                          switch (method.getName()) {
+                            case "exception":
+                              return failure;
+                            case "request":
+                              return request;
+                            case "httpRequest":
+                            case "httpResponse":
+                            case "response":
+                              return Optional.empty();
+                            default:
+                              throw new AssertionError(
+                                  "Unexpected failure context access: " + method);
+                          }
+                        });
+            interceptors.forEach(
+                interceptor -> interceptor.onExecutionFailure(context, attributes));
+            result.completeExceptionally(failure);
+          }
+        } catch (Throwable hookFailure) {
+          result.completeExceptionally(hookFailure);
+        }
+      });
       return result;
     }
 

@@ -244,18 +244,17 @@ class DynamoDbSnapshotReadTest {
                 Map.of("journal", KeysAndAttributes.builder().keys(key("head")).build()))
             .build());
     return invalid.entrySet().stream()
-        .map(
-            entry ->
-                DynamicTest.dynamicTest(
-                    entry.getKey(),
-                    () -> {
-                      for (boolean async : List.of(false, true)) {
-                        Stub s = new Stub(BYTES);
-                        s.reply = request -> entry.getValue();
-                        assertInstanceOf(StorageException.class, s.failure(async));
-                        assertEquals(1, s.requests.size());
-                      }
-                    }));
+        .map(entry ->
+            DynamicTest.dynamicTest(
+                entry.getKey(),
+                () -> {
+                  for (boolean async : List.of(false, true)) {
+                    Stub s = new Stub(BYTES);
+                    s.reply = request -> entry.getValue();
+                    assertInstanceOf(StorageException.class, s.failure(async));
+                    assertEquals(1, s.requests.size());
+                  }
+                }));
   }
 
   @Test
@@ -457,11 +456,10 @@ class DynamoDbSnapshotReadTest {
     assertEquals(Set.of("head", "snapshot"), request.requestItems().keySet());
     request
         .requestItems()
-        .forEach(
-            (table, attributes) -> {
-              assertEquals(List.of(key(table)), attributes.keys());
-              assertTrue(attributes.consistentRead());
-            });
+        .forEach((table, attributes) -> {
+          assertEquals(List.of(key(table)), attributes.keys());
+          assertTrue(attributes.consistentRead());
+        });
   }
 
   private static final class Stub {

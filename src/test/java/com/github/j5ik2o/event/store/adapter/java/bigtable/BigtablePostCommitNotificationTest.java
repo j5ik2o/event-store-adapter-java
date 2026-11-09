@@ -91,11 +91,10 @@ class BigtablePostCommitNotificationTest {
     EventStore<String, String> store =
         BigtableEventStore.create(
             open(prefix, RetentionPolicy.delete(1), hooks),
-            configuration(
-                failure -> {
-                  listenerCalls[0]++;
-                  throw new AssertionError("listener failed");
-                }));
+            configuration(failure -> {
+              listenerCalls[0]++;
+              throw new AssertionError("listener failed");
+            }));
     assertDoesNotThrow(() -> store.persistEventAndSnapshot(event(1), snapshot(1)));
     int before = hooks.calls;
     int listenerBefore = listenerCalls[0];
@@ -144,11 +143,10 @@ class BigtablePostCommitNotificationTest {
     AsyncEventStore<String, String> async =
         BigtableEventStore.createAsync(
             open(prefix, RetentionPolicy.delete(1), hooks),
-            configuration(
-                failure -> {
-                  listenerCalls[0]++;
-                  throw new AssertionError("listener failed");
-                }));
+            configuration(failure -> {
+              listenerCalls[0]++;
+              throw new AssertionError("listener failed");
+            }));
     assertDoesNotThrow(() -> async.persistEventAndSnapshot(event(1), snapshot(1)).join());
     int before = listenerCalls[0];
 

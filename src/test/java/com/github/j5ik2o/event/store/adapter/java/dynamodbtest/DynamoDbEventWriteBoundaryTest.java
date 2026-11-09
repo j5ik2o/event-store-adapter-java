@@ -57,15 +57,14 @@ class DynamoDbEventWriteBoundaryTest {
 
   private Stream<DynamicTest> both(String name, Scenario scenario) {
     return Stream.of(false, true)
-        .map(
-            async ->
-                DynamicTest.dynamicTest(
-                    name + (async ? " async" : " sync"),
-                    () -> {
-                      try (Scene scene = new Scene(name, async)) {
-                        scenario.run(scene);
-                      }
-                    }));
+        .map(async ->
+            DynamicTest.dynamicTest(
+                name + (async ? " async" : " sync"),
+                () -> {
+                  try (Scene scene = new Scene(name, async)) {
+                    scenario.run(scene);
+                  }
+                }));
   }
 
   private static EventEnvelope<byte[]> event(
@@ -516,55 +515,50 @@ class DynamoDbEventWriteBoundaryTest {
   @TestFactory
   Stream<DynamicTest> asynchronousPendingAndCancellationWaitForActualRequestTermination() {
     return Stream.of(false, true)
-        .map(
-            cancel ->
-                DynamicTest.dynamicTest(
-                    cancel ? "async cancellation" : "async pending",
-                    () -> {
-                      try (Scene s =
-                          new Scene(cancel ? "async-cancellation" : "async-pending", true)) {
-                        CompletableFuture<Void> entered = new CompletableFuture<>();
-                        CompletableFuture<Void> release = new CompletableFuture<>();
-                        s.register(
-                            "commit",
-                            FaultRegistry.Injection.REPLACE_RESPONSE,
-                            DynamoDbFaultEffects.response(
-                                response -> {
-                                  s.observation.set(
-                                      "actual_sdk_response", DynamoDbJson.sdk(response));
-                                  entered.complete(null);
-                                  release.join();
-                                  return response;
-                                }));
-                        FaultRegistry.Operation operation =
-                            s.c.faults.begin(s.nextOperation++, true);
-                        CompletableFuture<Void> result = s.asyncStore.persistEvent(event(1));
-                        try {
-                          entered.get(10, TimeUnit.SECONDS);
-                          assertFalse(result.isDone());
-                          assertEquals(1, s.c.faults.pending(operation));
-                          assertFalse(s.c.recorder.requestsFinished(operation).isDone());
-                          assertFalse(s.c.closed());
-                          s.assertSaved(event(1), -1);
-                          s.observation.put("future_pending_before_release", !result.isDone());
-                          s.observation.put(
-                              "request_pending_before_release", s.c.faults.pending(operation));
-                          if (cancel) {
-                            assertTrue(result.cancel(true));
-                            assertTrue(result.isCancelled());
-                            assertFalse(s.c.recorder.requestsFinished(operation).isDone());
-                          }
-                        } finally {
-                          release.complete(null);
-                          if (!cancel) result.get(10, TimeUnit.SECONDS);
-                          s.complete(operation, null, 1, 1, event(1), s.stored());
-                        }
-                        s.observation.put("future_cancelled", result.isCancelled());
-                        assertFalse(s.c.closed());
-                        s.assertSaved(event(1), -1);
-                        assertNull(s.write(event(2), 1, 1));
+        .map(cancel ->
+            DynamicTest.dynamicTest(
+                cancel ? "async cancellation" : "async pending",
+                () -> {
+                  try (Scene s = new Scene(cancel ? "async-cancellation" : "async-pending", true)) {
+                    CompletableFuture<Void> entered = new CompletableFuture<>();
+                    CompletableFuture<Void> release = new CompletableFuture<>();
+                    s.register(
+                        "commit",
+                        FaultRegistry.Injection.REPLACE_RESPONSE,
+                        DynamoDbFaultEffects.response(response -> {
+                          s.observation.set("actual_sdk_response", DynamoDbJson.sdk(response));
+                          entered.complete(null);
+                          release.join();
+                          return response;
+                        }));
+                    FaultRegistry.Operation operation = s.c.faults.begin(s.nextOperation++, true);
+                    CompletableFuture<Void> result = s.asyncStore.persistEvent(event(1));
+                    try {
+                      entered.get(10, TimeUnit.SECONDS);
+                      assertFalse(result.isDone());
+                      assertEquals(1, s.c.faults.pending(operation));
+                      assertFalse(s.c.recorder.requestsFinished(operation).isDone());
+                      assertFalse(s.c.closed());
+                      s.assertSaved(event(1), -1);
+                      s.observation.put("future_pending_before_release", !result.isDone());
+                      s.observation.put(
+                          "request_pending_before_release", s.c.faults.pending(operation));
+                      if (cancel) {
+                        assertTrue(result.cancel(true));
+                        assertTrue(result.isCancelled());
+                        assertFalse(s.c.recorder.requestsFinished(operation).isDone());
                       }
-                    }));
+                    } finally {
+                      release.complete(null);
+                      if (!cancel) result.get(10, TimeUnit.SECONDS);
+                      s.complete(operation, null, 1, 1, event(1), s.stored());
+                    }
+                    s.observation.put("future_cancelled", result.isCancelled());
+                    assertFalse(s.c.closed());
+                    s.assertSaved(event(1), -1);
+                    assertNull(s.write(event(2), 1, 1));
+                  }
+                }));
   }
 
   private static final class Scene implements AutoCloseable {

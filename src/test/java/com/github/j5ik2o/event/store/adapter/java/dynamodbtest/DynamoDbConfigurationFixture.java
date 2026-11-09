@@ -413,20 +413,19 @@ public final class DynamoDbConfigurationFixture implements BeforeAllCallback {
       definition
           .path("attributes")
           .fields()
-          .forEachRemaining(
-              entry -> {
-                String value = definition.path("values").path(entry.getKey()).asText();
-                switch (entry.getValue().asText()) {
-                  case "S":
-                    attributes.put(entry.getKey(), AttributeValue.fromS(value));
-                    break;
-                  case "N":
-                    attributes.put(entry.getKey(), AttributeValue.fromN(value));
-                    break;
-                  default:
-                    throw new IllegalArgumentException("Unsupported configuration attribute");
-                }
-              });
+          .forEachRemaining(entry -> {
+            String value = definition.path("values").path(entry.getKey()).asText();
+            switch (entry.getValue().asText()) {
+              case "S":
+                attributes.put(entry.getKey(), AttributeValue.fromS(value));
+                break;
+              case "N":
+                attributes.put(entry.getKey(), AttributeValue.fromN(value));
+                break;
+              default:
+                throw new IllegalArgumentException("Unsupported configuration attribute");
+            }
+          });
       c.admin.putItem(
           PutItemRequest.builder()
               .tableName(table(c, definition.path("table").asText()))
@@ -557,62 +556,58 @@ public final class DynamoDbConfigurationFixture implements BeforeAllCallback {
       JsonNode constraints = exp.path("constraints");
       constraints
           .fields()
-          .forEachRemaining(
-              field -> {
-                switch (field.getKey()) {
-                  case "keys":
-                    assertEquals(strings(field.getValue()), requested(c, r.original));
-                    break;
-                  case "consistent_read_all_tables":
-                    assertTrue(field.getValue().booleanValue());
-                    strong(r.original);
-                    break;
-                  case "only_unprocessed_keys":
-                    assertTrue(field.getValue().booleanValue());
-                    assertEquals(
-                        Set.of("snapshot:__config__:0", "head:__config__"),
-                        requested(c, r.original));
-                    break;
-                  case "exponential_backoff":
-                    assertTrue(field.getValue().booleanValue());
-                    assertEquals(List.of(50L), waits);
-                    break;
-                  case "put_tables":
-                    Set<String> roles = new HashSet<>();
-                    for (JsonNode action : r.original.path("TransactItems"))
-                      roles.add(c.targets.role(action.at("/Put/TableName").asText()));
-                    assertEquals(strings(field.getValue()), roles);
-                    break;
-                  case "condition":
-                    assertEquals("aid", field.getValue().path("attribute_not_exists").asText());
-                    break;
-                  case "same_store_id":
-                    assertTrue(field.getValue().booleanValue());
-                    break;
-                  case "layout_version":
-                    assertEquals(1, field.getValue().intValue());
-                    break;
-                  default:
-                    fail("Unconnected configuration constraint: " + field.getKey());
-                }
-              });
+          .forEachRemaining(field -> {
+            switch (field.getKey()) {
+              case "keys":
+                assertEquals(strings(field.getValue()), requested(c, r.original));
+                break;
+              case "consistent_read_all_tables":
+                assertTrue(field.getValue().booleanValue());
+                strong(r.original);
+                break;
+              case "only_unprocessed_keys":
+                assertTrue(field.getValue().booleanValue());
+                assertEquals(
+                    Set.of("snapshot:__config__:0", "head:__config__"), requested(c, r.original));
+                break;
+              case "exponential_backoff":
+                assertTrue(field.getValue().booleanValue());
+                assertEquals(List.of(50L), waits);
+                break;
+              case "put_tables":
+                Set<String> roles = new HashSet<>();
+                for (JsonNode action : r.original.path("TransactItems"))
+                  roles.add(c.targets.role(action.at("/Put/TableName").asText()));
+                assertEquals(strings(field.getValue()), roles);
+                break;
+              case "condition":
+                assertEquals("aid", field.getValue().path("attribute_not_exists").asText());
+                break;
+              case "same_store_id":
+                assertTrue(field.getValue().booleanValue());
+                break;
+              case "layout_version":
+                assertEquals(1, field.getValue().intValue());
+                break;
+              default:
+                fail("Unconnected configuration constraint: " + field.getKey());
+            }
+          });
     }
     expected
         .path("request_count")
         .fields()
-        .forEachRemaining(
-            entry ->
-                assertEquals(
-                    entry.getValue().longValue(),
-                    requests.stream().filter(r -> r.phase.equals(entry.getKey())).count()));
+        .forEachRemaining(entry ->
+            assertEquals(
+                entry.getValue().longValue(),
+                requests.stream().filter(r -> r.phase.equals(entry.getKey())).count()));
     expected
         .path("minimum_request_count")
         .fields()
-        .forEachRemaining(
-            entry ->
-                assertTrue(
-                    requests.stream().filter(r -> r.phase.equals(entry.getKey())).count()
-                        >= entry.getValue().longValue()));
+        .forEachRemaining(entry ->
+            assertTrue(
+                requests.stream().filter(r -> r.phase.equals(entry.getKey())).count()
+                    >= entry.getValue().longValue()));
     for (JsonNode phase : expected.path("no_requests_in_phases"))
       assertEquals(0, requests.stream().filter(r -> r.phase.equals(phase.asText())).count());
     String boundId = null;
@@ -635,23 +630,19 @@ public final class DynamoDbConfigurationFixture implements BeforeAllCallback {
     expected
         .path("attributes")
         .fields()
-        .forEachRemaining(
-            entry ->
-                assertEquals(
-                    Set.of(entry.getValue().asText()),
-                    stringsFromFields(json.path(entry.getKey()))));
+        .forEachRemaining(entry ->
+            assertEquals(
+                Set.of(entry.getValue().asText()), stringsFromFields(json.path(entry.getKey()))));
     expected
         .path("values")
         .fields()
-        .forEachRemaining(
-            entry -> {
-              AttributeValue value = actual.get(entry.getKey());
-              if (value.n() != null)
-                assertEquals(
-                    0,
-                    new BigDecimal(entry.getValue().asText()).compareTo(new BigDecimal(value.n())));
-              else assertEquals(entry.getValue().asText(), value.s());
-            });
+        .forEachRemaining(entry -> {
+          AttributeValue value = actual.get(entry.getKey());
+          if (value.n() != null)
+            assertEquals(
+                0, new BigDecimal(entry.getValue().asText()).compareTo(new BigDecimal(value.n())));
+          else assertEquals(entry.getValue().asText(), value.s());
+        });
   }
 
   private static void assertTransaction(
@@ -693,14 +684,13 @@ public final class DynamoDbConfigurationFixture implements BeforeAllCallback {
     request
         .path("RequestItems")
         .fields()
-        .forEachRemaining(
-            entry -> {
-              String role = c.targets.role(entry.getKey());
-              for (JsonNode k : entry.getValue().path("Keys")) {
-                assertEquals(DynamoDbJson.sdk(key(role)), k);
-                assertTrue(result.add(role + ":__config__" + (role.equals("head") ? "" : ":0")));
-              }
-            });
+        .forEachRemaining(entry -> {
+          String role = c.targets.role(entry.getKey());
+          for (JsonNode k : entry.getValue().path("Keys")) {
+            assertEquals(DynamoDbJson.sdk(key(role)), k);
+            assertTrue(result.add(role + ":__config__" + (role.equals("head") ? "" : ":0")));
+          }
+        });
     return result;
   }
 

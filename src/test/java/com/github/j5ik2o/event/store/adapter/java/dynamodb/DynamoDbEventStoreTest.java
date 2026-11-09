@@ -118,10 +118,9 @@ class DynamoDbEventStoreTest {
       assertSame(callbackFailure, failure);
       assertSame(cause, failure.getCause());
       CompletableFuture<Void> snapshotResult =
-          assertDoesNotThrow(
-              () ->
-                  store.persistEventAndSnapshot(
-                      DynamoDbEventWriteTest.event(1, 1), DynamoDbEventWriteTest.snapshot(1)));
+          assertDoesNotThrow(() ->
+              store.persistEventAndSnapshot(
+                  DynamoDbEventWriteTest.event(1, 1), DynamoDbEventWriteTest.snapshot(1)));
       Throwable snapshotCallbackFailure = snapshotResult.handle((ignored, error) -> error).join();
       assertInstanceOf(StorageException.class, snapshotCallbackFailure);
       assertSame(cause, snapshotCallbackFailure.getCause());

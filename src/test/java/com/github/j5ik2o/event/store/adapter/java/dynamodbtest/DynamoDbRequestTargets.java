@@ -33,11 +33,10 @@ final class DynamoDbRequestTargets {
         request
             .path("RequestItems")
             .fields()
-            .forEachRemaining(
-                entry -> {
-                  role(entry.getKey());
-                  for (JsonNode key : entry.getValue().path("Keys")) configKeys.add(config(key));
-                });
+            .forEachRemaining(entry -> {
+              role(entry.getKey());
+              for (JsonNode key : entry.getValue().path("Keys")) configKeys.add(config(key));
+            });
         if (configKeys.isEmpty()) throw new IllegalArgumentException("Empty BatchGetItem");
         if (configKeys.stream().allMatch(Boolean::booleanValue)) return "configuration-read";
         if (configKeys.stream().anyMatch(Boolean::booleanValue)) {
@@ -68,11 +67,10 @@ final class DynamoDbRequestTargets {
         request
             .path("RequestItems")
             .fieldNames()
-            .forEachRemaining(
-                table -> {
-                  if (!role(table).equals("snapshot"))
-                    throw new IllegalArgumentException("Unexpected delete target");
-                });
+            .forEachRemaining(table -> {
+              if (!role(table).equals("snapshot"))
+                throw new IllegalArgumentException("Unexpected delete target");
+            });
         return "retention-delete";
       case "UpdateItem":
         JsonNode structure = DynamoDbRequestStructure.parse(request);
