@@ -21,20 +21,20 @@ CQRS/Event Sourcing向けのイベントストアです。Memory、DynamoDB、SQ
 
 ### バージョン
 
-現在の成果物版は `5.0.1` で、Maven Central に公開しています。[共通契約 v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md) に従います。メジャーの番号 5 は、共通契約の版と同じです。配布適合データの版は **1.3.0** で、別の番号です。
+公開済みの最新の成果物版は `5.1.0` です。このブランチでは `5.2.0-SNAPSHOT` を準備し、ライブラリを core（Memory を含む）と保存先ごとのドライバの成果物に分けます。分割した成果物はまだ公開していません。パッケージ名とクラス名は変わりません。[共通契約 v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md) に従います。メジャーの番号 5 は、共通契約の版と同じです。配布適合データの版は **1.3.0** で、別の番号です。
 
-2.0.0 は版をそろえる決定の前に出した版で、中身は 5.0.0 と同じです。5.0.1 以降を使ってください。
+2.0.0 は版をそろえる決定の前に出した版で、中身は 5.0.0 と同じです。5.1.0 以降を使ってください。
 
 ### 公開パッケージ
 
-| パッケージ | 公開型 |
-|------------|--------|
-| `com.github.j5ik2o.event.store.adapter.java.core` | ID、封筒、シリアライザ、設定、例外、`EventStore<P,A>`、`AsyncEventStore<P,A>` |
-| `com.github.j5ik2o.event.store.adapter.java.memory` | `MemoryStorage`、`MemoryEventStore` |
-| `com.github.j5ik2o.event.store.adapter.java.dynamodb` | `DynamoDbTableConfig`、`DynamoDbEventStore` |
-| `com.github.j5ik2o.event.store.adapter.java.sqlite` | `SqliteStorageConfig`、`SqliteStorage`、`SqliteEventStore` |
-| `com.github.j5ik2o.event.store.adapter.java.spanner` | `SpannerStorageConfig`、`SpannerRetentionPolicy`、`SpannerStorage`、`SpannerEventStore` |
-| `com.github.j5ik2o.event.store.adapter.java.bigtable` | `BigtableStorageConfig`、`BigtableStorage`、`BigtableEventStore` |
+| パッケージ | 成果物 | 公開型 |
+|------------|--------|--------|
+| `com.github.j5ik2o.event.store.adapter.java.core` | `event-store-adapter-java-core` | ID、封筒、シリアライザ、設定、例外、`EventStore<P,A>`、`AsyncEventStore<P,A>` |
+| `com.github.j5ik2o.event.store.adapter.java.memory` | `event-store-adapter-java-core` | `MemoryStorage`、`MemoryEventStore` |
+| `com.github.j5ik2o.event.store.adapter.java.dynamodb` | `event-store-adapter-java-dynamodb` | `DynamoDbTableConfig`、`DynamoDbEventStore` |
+| `com.github.j5ik2o.event.store.adapter.java.sqlite` | `event-store-adapter-java-sqlite` | `SqliteStorageConfig`、`SqliteStorage`、`SqliteEventStore` |
+| `com.github.j5ik2o.event.store.adapter.java.spanner` | `event-store-adapter-java-spanner` | `SpannerStorageConfig`、`SpannerRetentionPolicy`、`SpannerStorage`、`SpannerEventStore` |
+| `com.github.j5ik2o.event.store.adapter.java.bigtable` | `event-store-adapter-java-bigtable` | `BigtableStorageConfig`、`BigtableStorage`、`BigtableEventStore` |
 
 ### リンク
 
@@ -50,12 +50,44 @@ CQRS/Event Sourcing向けのイベントストアです。Memory、DynamoDB、SQ
 
 ## インストール
 
+公開済みの5.1.0を使うときは、既存のまとめ用の成果物を指定します。
+
+```kotlin
+dependencies {
+    implementation("io.github.j5ik2o:event-store-adapter-java:5.1.0")
+}
+```
+
+以下の成果物構成と依存関係の例は、公開予定の5.2.0向けです。これらの依存関係は、その版の公開後に解決できます。
+
+`event-store-adapter-java` はまとめ用の成果物として残ります。クラスを含まず、5 つのモジュールに依存するため、既存の依存のまま動きます。使う保存先の SDK だけを持たせたいときは、ドライバの成果物を直接指定します。`event-store-adapter-java-core` は core の型と Memory を含み、各ドライバの成果物はこれに依存します。
+
+| 成果物 | 内容 |
+|--------|------|
+| `event-store-adapter-java` | 5 モジュールすべて（まとめ用。クラスなし） |
+| `event-store-adapter-java-core` | core の型と Memory |
+| `event-store-adapter-java-dynamodb` | DynamoDB |
+| `event-store-adapter-java-spanner` | Spanner |
+| `event-store-adapter-java-bigtable` | Bigtable |
+| `event-store-adapter-java-sqlite` | SQLite |
+
 ```kotlin
 repositories {
     mavenCentral()
 }
 dependencies {
-    implementation("io.github.j5ik2o:event-store-adapter-java:5.0.1")
+    // core の型と Memory。
+    implementation("io.github.j5ik2o:event-store-adapter-java-core:5.2.0")
+    // 使うドライバだけを足す。DynamoDB の SDK はこの成果物だけに入る。
+    implementation("io.github.j5ik2o:event-store-adapter-java-dynamodb:5.2.0")
+}
+```
+
+すべてをまとめて依存するときは、まとめ用の成果物を使います。
+
+```kotlin
+dependencies {
+    implementation("io.github.j5ik2o:event-store-adapter-java:5.2.0")
 }
 ```
 
@@ -150,7 +182,7 @@ DynamoDBの非同期生成には設定照合の通信があるため、factory�
 
 ### SQLite
 
-SQLiteは、同じホスト上のローカルファイル1つにイベントを保存します。5.0.1には含まれず、次の版から使えます。新規または空のファイルは `SqliteStorage.initialize` で一度だけ初期化し、`SqliteStorage.open` で開きます。開く操作はファイルを初期化しません。ファイルがないときは `STORAGE` エラー、未初期化または設定と一致しないときは `CONFIGURATION` エラーで失敗します。`SqliteStorage` はJDBC接続を1本所有し、閉じる必要があります。同じファイルを、同じプロセスまたは同じホストの複数プロセスの複数の `SqliteStorage` から使えます。各オブジェクトは自分の操作を直列化します。`lockWait`（既定5秒）以内に書き込みロックを取れない書込みは `STORAGE` エラーで失敗し、何も確定しません。SQLiteの非同期APIはロック待ちを含めて呼出しスレッドで実行し、完了済みのfutureを返します。ファイルをネットワークファイルシステムに置かないでください。ファイルの形式と運用は [SQLITE_DATABASE_SCHEMA](docs/SQLITE_DATABASE_SCHEMA.ja.md) を参照してください。
+SQLiteは、同じホスト上のローカルファイル1つにイベントを保存します。5.1.0から使えます。新規または空のファイルは `SqliteStorage.initialize` で一度だけ初期化し、`SqliteStorage.open` で開きます。開く操作はファイルを初期化しません。ファイルがないときは `STORAGE` エラー、未初期化または設定と一致しないときは `CONFIGURATION` エラーで失敗します。`SqliteStorage` はJDBC接続を1本所有し、閉じる必要があります。同じファイルを、同じプロセスまたは同じホストの複数プロセスの複数の `SqliteStorage` から使えます。各オブジェクトは自分の操作を直列化します。`lockWait`（既定5秒）以内に書き込みロックを取れない書込みは `STORAGE` エラーで失敗し、何も確定しません。SQLiteの非同期APIはロック待ちを含めて呼出しスレッドで実行し、完了済みのfutureを返します。ファイルをネットワークファイルシステムに置かないでください。ファイルの形式と運用は [SQLITE_DATABASE_SCHEMA](docs/SQLITE_DATABASE_SCHEMA.ja.md) を参照してください。
 
 ```java
 import com.github.j5ik2o.event.store.adapter.java.sqlite.*;
@@ -176,7 +208,7 @@ try (SqliteStorage sqlite = SqliteStorage.open(file, settings)) {
 
 ### Spanner
 
-Spannerは、GoogleSQL方言のCloud Spannerデータベース1つの5つの表にイベントを保存します。5.0.1には含まれず、次の版から使えます。5つの表と設定の行は、[SPANNER_DATABASE_SCHEMA](docs/SPANNER_DATABASE_SCHEMA.ja.md) のDDLで利用者が作成します。ライブラリはDDLを実行しません。`SpannerStorage.open(DatabaseClient, SpannerStorageConfig)` は配置を照合するだけです。表・列・主キー・設定の行・行削除ポリシーの欠落や不一致は `CONFIGURATION` エラー、データベースを読めないときは `STORAGE` エラーになります。`DatabaseClient`（認証やエミュレーターの接続先を含む）は利用者が作って所有し、ライブラリは閉じません。書込みはSERIALIZABLEの読み書きトランザクションで行います。トランザクションが中断（ABORTED）されたときは、同じ封筒で `transactionRetryLimit` 回（既定5回、初回は数えない）まで再試行し、超えると `STORAGE` エラーになります。コミットの応答を失ったときは、成否不明の `STORAGE` エラーになります。同じ封筒を送り直すと、最初のコミットが通っていれば `OPTIMISTIC_LOCK` エラーになります。読み取りはstrongの読み取り専用トランザクション1つで行います。保持方針は `SpannerRetentionPolicy.none()`、`delete(n)`、`ttl(n, graceDays)` です。猶予は日数で数え、設定の行の `ttl_grace_days` と行削除ポリシーの `INTERVAL n DAY` と同じ値にします。非同期のSpanner APIは呼出しスレッドで実行し、完了済みのfutureを返します。変更フィードは提供せず、`SpannerStorageConfig.Builder.changeFeed(true)` は `CONFIGURATION` エラーになります。表はJavaScriptのv5実装と同じ配置です。
+Spannerは、GoogleSQL方言のCloud Spannerデータベース1つの5つの表にイベントを保存します。5.1.0から使えます。5つの表と設定の行は、[SPANNER_DATABASE_SCHEMA](docs/SPANNER_DATABASE_SCHEMA.ja.md) のDDLで利用者が作成します。ライブラリはDDLを実行しません。`SpannerStorage.open(DatabaseClient, SpannerStorageConfig)` は配置を照合するだけです。表・列・主キー・設定の行・行削除ポリシーの欠落や不一致は `CONFIGURATION` エラー、データベースを読めないときは `STORAGE` エラーになります。`DatabaseClient`（認証やエミュレーターの接続先を含む）は利用者が作って所有し、ライブラリは閉じません。書込みはSERIALIZABLEの読み書きトランザクションで行います。トランザクションが中断（ABORTED）されたときは、同じ封筒で `transactionRetryLimit` 回（既定5回、初回は数えない）まで再試行し、超えると `STORAGE` エラーになります。コミットの応答を失ったときは、成否不明の `STORAGE` エラーになります。同じ封筒を送り直すと、最初のコミットが通っていれば `OPTIMISTIC_LOCK` エラーになります。読み取りはstrongの読み取り専用トランザクション1つで行います。保持方針は `SpannerRetentionPolicy.none()`、`delete(n)`、`ttl(n, graceDays)` です。猶予は日数で数え、設定の行の `ttl_grace_days` と行削除ポリシーの `INTERVAL n DAY` と同じ値にします。非同期のSpanner APIは呼出しスレッドで実行し、完了済みのfutureを返します。変更フィードは提供せず、`SpannerStorageConfig.Builder.changeFeed(true)` は `CONFIGURATION` エラーになります。表はJavaScriptのv5実装と同じ配置です。
 
 ```java
 import com.github.j5ik2o.event.store.adapter.java.spanner.*;
@@ -200,7 +232,7 @@ Optional<String> spannerName = UserAccountExample.restore(spannerStore, spannerI
 
 ### Bigtable
 
-Bigtableは、Cloud Bigtableの1つのインスタンスの2つの表（journal表とhead表）にイベントを保存します。5.0.1には含まれず、次の版から使えます。2つの表、列ファミリ、ガベージコレクションの規則は、[BIGTABLE_DATABASE_SCHEMA](docs/BIGTABLE_DATABASE_SCHEMA.ja.md) のコマンドで利用者が作成し、その後 `BigtableStorage.initialize(BigtableDataClient, BigtableStorageConfig)` を1回呼んで、同じ設定の行を両方の表に書きます。ライブラリは表を作りません。`BigtableStorage.open(BigtableDataClient, BigtableTableAdminClient, BigtableStorageConfig)` は配置を照合するだけです。表・列ファミリ・ガベージコレクションの規則・設定の行の欠落や不一致は `CONFIGURATION` エラー、Bigtableに届かないときは `STORAGE` エラーになります。2つのクライアント（認証、1つのクラスタに固定したapp profile、エミュレーターの接続先を含む）は利用者が作って所有し、ライブラリは閉じません。追記は、headの行の条件付き更新1回で確定します。直前のイベントはその前に、新しいイベントはその後にjournalへ書き出します。その更新の条件が成り立たないときは `OPTIMISTIC_LOCK` エラーになり、更新を再試行することはありません。応答を失ったときは、成否不明の `STORAGE` エラーになります。同じ封筒を送り直すと、最初の更新が通っていれば `OPTIMISTIC_LOCK` エラーになります。直列化した封筒が `envelopeLimitBytes`（既定1 MiB、最大8 MiB、両方の設定の行の値と同じ）を超えると、何も書く前に規則 `BT-16` の `CONTRACT_VIOLATION` エラーになります。保持方針は `RetentionPolicy.none()` または `delete(n)` で、TTLはbuildで失敗します。非同期のBigtable APIは呼出しスレッドで実行し、完了済みのfutureを返します。変更フィードは提供せず、`BigtableStorageConfig.Builder.changeFeed(true)` は `CONFIGURATION` エラーになります。表はRustのv5実装と同じ配置です。
+Bigtableは、Cloud Bigtableの1つのインスタンスの2つの表（journal表とhead表）にイベントを保存します。5.1.0から使えます。2つの表、列ファミリ、ガベージコレクションの規則は、[BIGTABLE_DATABASE_SCHEMA](docs/BIGTABLE_DATABASE_SCHEMA.ja.md) のコマンドで利用者が作成し、その後 `BigtableStorage.initialize(BigtableDataClient, BigtableStorageConfig)` を1回呼んで、同じ設定の行を両方の表に書きます。ライブラリは表を作りません。`BigtableStorage.open(BigtableDataClient, BigtableTableAdminClient, BigtableStorageConfig)` は配置を照合するだけです。表・列ファミリ・ガベージコレクションの規則・設定の行の欠落や不一致は `CONFIGURATION` エラー、Bigtableに届かないときは `STORAGE` エラーになります。2つのクライアント（認証、1つのクラスタに固定したapp profile、エミュレーターの接続先を含む）は利用者が作って所有し、ライブラリは閉じません。追記は、headの行の条件付き更新1回で確定します。直前のイベントはその前に、新しいイベントはその後にjournalへ書き出します。その更新の条件が成り立たないときは `OPTIMISTIC_LOCK` エラーになり、更新を再試行することはありません。応答を失ったときは、成否不明の `STORAGE` エラーになります。同じ封筒を送り直すと、最初の更新が通っていれば `OPTIMISTIC_LOCK` エラーになります。直列化した封筒が `envelopeLimitBytes`（既定1 MiB、最大8 MiB、両方の設定の行の値と同じ）を超えると、何も書く前に規則 `BT-16` の `CONTRACT_VIOLATION` エラーになります。保持方針は `RetentionPolicy.none()` または `delete(n)` で、TTLはbuildで失敗します。非同期のBigtable APIは呼出しスレッドで実行し、完了済みのfutureを返します。変更フィードは提供せず、`BigtableStorageConfig.Builder.changeFeed(true)` は `CONFIGURATION` エラーになります。表はRustのv5実装と同じ配置です。
 
 ```java
 import com.github.j5ik2o.event.store.adapter.java.bigtable.*;

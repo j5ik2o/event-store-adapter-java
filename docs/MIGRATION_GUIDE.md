@@ -4,18 +4,18 @@
 
 ### Version and approach
 
-The current artifact is `5.0.1` and follows the [common contract v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md); its major version 5 matches the contract revision. The distributed conformance data version 1.3.0 and DynamoDB `layout_version=1` are separate numbers.
+The latest published artifact is `5.1.0`. The upcoming `5.2.0` release separates the storage driver artifacts without changing their package or class names. The library follows the [common contract v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md); its major version 5 matches the contract revision. The distributed conformance data version 1.3.0 and DynamoDB `layout_version=1` are separate numbers.
 
 For Java 1.x users, migration is a manual procedure: **read with the old library, convert the data into payloads and envelopes in your application, then rewrite it consecutively with the new library**. The new library provides no old public types, old internal types, automatic reading of the old storage layout, compatibility aliases or migration tool. It does not infer missing type information or timestamp precision.
 
-Java 1.x has no Spanner storage either, so there is no Spanner data to migrate and no migration tool for it. To use Spanner, create the five tables and the configuration row with the DDL in the [Spanner storage schema](SPANNER_DATABASE_SCHEMA.md), then call `SpannerStorage.open` with your own `DatabaseClient`; it is available from the release after 5.0.1.
+Java 1.x has no Spanner storage either, so there is no Spanner data to migrate and no migration tool for it. To use Spanner, create the five tables and the configuration row with the DDL in the [Spanner storage schema](SPANNER_DATABASE_SCHEMA.md), then call `SpannerStorage.open` with your own `DatabaseClient`; it is available from 5.1.0.
 
-Java 1.x has no Bigtable storage either, so there is no Bigtable data to migrate and no migration tool for it. This is a new installation, not a migration. To use Bigtable, create the two tables and their column families with the commands in the [Bigtable storage schema](BIGTABLE_DATABASE_SCHEMA.md); it is available from the release after 5.0.1. The tables use the same layout as the Rust v5 implementation.
+Java 1.x has no Bigtable storage either, so there is no Bigtable data to migrate and no migration tool for it. This is a new installation, not a migration. To use Bigtable, create the two tables and their column families with the commands in the [Bigtable storage schema](BIGTABLE_DATABASE_SCHEMA.md); it is available from 5.1.0. The tables use the same layout as the Rust v5 implementation.
 
 - For new, empty tables, call `BigtableStorage.initialize` once with your own `BigtableDataClient` to write the configuration rows, then call `BigtableStorage.open` with your own `BigtableDataClient` and `BigtableTableAdminClient`.
 - For an existing store written by the Rust v5 implementation, do not call `BigtableStorage.initialize`: the configuration rows already exist, so it throws a `ConfigurationException`. Set `BigtableStorageConfig` to the values recorded in the configuration rows (the retention count and `envelopeLimitBytes`), and call `BigtableStorage.open` directly.
 
-Java 1.x has no SQLite storage, so there is no SQLite data to migrate and no migration tool for it. To use SQLite, initialize a new file with `SqliteStorage.initialize`; it is available from the release after 5.0.1. See the [SQLite storage schema](SQLITE_DATABASE_SCHEMA.md).
+Java 1.x has no SQLite storage, so there is no SQLite data to migrate and no migration tool for it. To use SQLite, initialize a new file with `SqliteStorage.initialize`; it is available from 5.1.0. See the [SQLite storage schema](SQLITE_DATABASE_SCHEMA.md).
 
 ### Related documents
 
@@ -33,9 +33,9 @@ The new types are in `com.github.j5ik2o.event.store.adapter.java.core`, and the 
 | `EventStoreAsync<AID,A,E>` | `core.AsyncEventStore<P,A>` |
 | `EventStore.ofDynamoDB`, `EventStoreAsync.ofDynamoDB` | `DynamoDbEventStore.create`, `createAsync`. Specify the three table names and the snapshot GSI name |
 | DynamoDB-only entry points of the old implementation | Memory is available through `MemoryEventStore.create/createAsync` and `MemoryStorage.create` |
-| (none in 1.x) | `SqliteStorage.initialize/open`, `SqliteEventStore.create/createAsync` and `SqliteStorageConfig`; new in the release after 5.0.1 |
-| (none in 1.x) | `SpannerStorage.open`, `SpannerEventStore.create/createAsync`, `SpannerStorageConfig` and `SpannerRetentionPolicy`; new in the release after 5.0.1 |
-| (none in 1.x) | `BigtableStorage.initialize/open`, `BigtableEventStore.create/createAsync` and `BigtableStorageConfig`; new in the release after 5.0.1 |
+| (none in 1.x) | `SqliteStorage.initialize/open`, `SqliteEventStore.create/createAsync` and `SqliteStorageConfig`; new in 5.1.0 |
+| (none in 1.x) | `SpannerStorage.open`, `SpannerEventStore.create/createAsync`, `SpannerStorageConfig` and `SpannerRetentionPolicy`; new in 5.1.0 |
+| (none in 1.x) | `BigtableStorage.initialize/open`, `BigtableEventStore.create/createAsync` and `BigtableStorageConfig`; new in 5.1.0 |
 | User-implemented `AggregateId` | `core.AggregateId.of(typeName, value)`. The library builds the string from the type name and the value |
 | `Aggregate`, `Event` | The implementation requirement is removed. Wrap domain payloads and state in `EventEnvelope<P>` and `SnapshotEnvelope<A>` |
 | `AggregateAndEvent` | Removed. Pass the event envelope and the snapshot envelope separately |
