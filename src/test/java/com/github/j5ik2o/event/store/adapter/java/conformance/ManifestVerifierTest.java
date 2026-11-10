@@ -61,7 +61,7 @@ class ManifestVerifierTest {
   void realDataReportsTheActualManifestVersion() throws IOException {
     ManifestVerifier.Result result = ManifestVerifier.verify(ConformanceTestFiles.REAL_ROOT);
 
-    assertEquals("1.3.0", result.manifestVersion());
+    assertEquals("1.4.0", result.manifestVersion());
     assertTrue(result.versionMatches());
   }
 
@@ -70,7 +70,7 @@ class ManifestVerifierTest {
       throws IOException {
     Path copy = ConformanceTestFiles.copyOfRealData(tempDir);
     ConformanceTestFiles.replaceInFile(
-        copy.resolve("manifest.json"), "\"version\": \"1.3.0\"", "\"version\": \"9.9.9\"");
+        copy.resolve("manifest.json"), "\"version\": \"1.4.0\"", "\"version\": \"9.9.9\"");
 
     ManifestVerifier.Result result = ManifestVerifier.verify(copy);
 
