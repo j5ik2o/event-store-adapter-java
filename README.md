@@ -19,7 +19,7 @@ Developers changing this repository: see [CONTRIBUTING](CONTRIBUTING.md).
 
 ### Versions
 
-The latest published artifact version is `5.1.0`. This branch prepares `5.2.0-SNAPSHOT`, which splits the library into one artifact for the core (with Memory) and one for each storage driver. The split artifacts are not yet published. The package and class names do not change. This library follows [common contract v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md); its major version 5 matches the contract revision. The distributed conformance data has version **1.3.0**, a separate number.
+The latest published artifact version is `5.2.0`. This version splits the library into one artifact for the core (with Memory) and one for each storage driver. The package and class names do not change. This library follows [common contract v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md); its major version 5 matches the contract revision. The distributed conformance data has version **1.3.0**, a separate number.
 
 Version 2.0.0 was released before the decision to align versions, and its contents are the same as 5.0.0. Use 5.1.0 or later.
 
@@ -48,15 +48,7 @@ Version 2.0.0 was released before the decision to align versions, and its conten
 
 ## Installation
 
-For the published 5.1.0 release, use the existing aggregate artifact:
-
-```kotlin
-dependencies {
-    implementation("io.github.j5ik2o:event-store-adapter-java:5.1.0")
-}
-```
-
-The following artifact layout and dependency examples target the upcoming 5.2.0 release. These dependencies can be resolved only after that release is published.
+From 5.2.0, the library is published as six artifacts. Versions up to 5.1.0 have only `event-store-adapter-java`, which contains all classes.
 
 `event-store-adapter-java` remains as an aggregate artifact: it contains no classes and depends on the five modules, so an existing dependency keeps working. To keep only the SDK of the storage you use, depend on the driver artifact directly. `event-store-adapter-java-core` contains the core types and Memory; every driver artifact depends on it.
 

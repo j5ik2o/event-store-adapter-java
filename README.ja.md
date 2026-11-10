@@ -21,7 +21,7 @@ CQRS/Event Sourcing向けのイベントストアです。Memory、DynamoDB、SQ
 
 ### バージョン
 
-公開済みの最新の成果物版は `5.1.0` です。このブランチでは `5.2.0-SNAPSHOT` を準備し、ライブラリを core（Memory を含む）と保存先ごとのドライバの成果物に分けます。分割した成果物はまだ公開していません。パッケージ名とクラス名は変わりません。[共通契約 v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md) に従います。メジャーの番号 5 は、共通契約の版と同じです。配布適合データの版は **1.3.0** で、別の番号です。
+公開済みの最新の成果物版は `5.2.0` です。この版から、ライブラリを core（Memory を含む）と保存先ごとのドライバの成果物に分けています。パッケージ名とクラス名は変わりません。[共通契約 v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md) に従います。メジャーの番号 5 は、共通契約の版と同じです。配布適合データの版は **1.3.0** で、別の番号です。
 
 2.0.0 は版をそろえる決定の前に出した版で、中身は 5.0.0 と同じです。5.1.0 以降を使ってください。
 
@@ -50,15 +50,7 @@ CQRS/Event Sourcing向けのイベントストアです。Memory、DynamoDB、SQ
 
 ## インストール
 
-公開済みの5.1.0を使うときは、既存のまとめ用の成果物を指定します。
-
-```kotlin
-dependencies {
-    implementation("io.github.j5ik2o:event-store-adapter-java:5.1.0")
-}
-```
-
-以下の成果物構成と依存関係の例は、公開予定の5.2.0向けです。これらの依存関係は、その版の公開後に解決できます。
+5.2.0から、ライブラリは6つの成果物として公開しています。5.1.0までの版には `event-store-adapter-java` だけがあり、すべてのクラスを含みます。
 
 `event-store-adapter-java` はまとめ用の成果物として残ります。クラスを含まず、5 つのモジュールに依存するため、既存の依存のまま動きます。使う保存先の SDK だけを持たせたいときは、ドライバの成果物を直接指定します。`event-store-adapter-java-core` は core の型と Memory を含み、各ドライバの成果物はこれに依存します。
 
