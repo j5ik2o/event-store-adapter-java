@@ -21,6 +21,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.OptionalLong;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -724,5 +725,77 @@ class SpannerRetryWaitTest {
         SpannerExceptionFactory.newSpannerException(ErrorCode.ABORTED, "abort", grpc);
     wrapper.initCause(grpc);
     assertEquals(61000, SpannerRetryWait.serverMillis(failure));
+  }
+
+  @Test
+  void causeAccessorFailureFallsBackAndPreservesAbort() throws Exception {
+    AtomicBoolean armed = new AtomicBoolean();
+    RuntimeException cause =
+        new RuntimeException("broken accessor") {
+          @Override
+          public synchronized Throwable getCause() {
+            if (armed.get()) throw new IllegalStateException("cause accessor failed");
+            return null;
+          }
+        };
+    SpannerException abort =
+        SpannerExceptionFactory.newSpannerException(ErrorCode.ABORTED, "original ABORTED", cause);
+    armed.set(true);
+    assertEquals(-1, SpannerRetryWait.serverMillis(abort));
+    StorageException error =
+        assertThrows(
+            StorageException.class,
+            () ->
+                run(
+                    1,
+                    SpannerStorageHooks.NONE,
+                    tx -> {
+                      throw abort;
+                    }));
+    assertSame(abort, error.getCause());
+    assertEquals(2, managers);
+    assertEquals(List.of(25L), sleeps);
+    managers = bodies = 0;
+    sleeps.clear();
+    assertEquals(
+        "ok",
+        run(
+            1,
+            SpannerStorageHooks.NONE,
+            tx -> {
+              if (bodies == 1) throw abort;
+              return "ok";
+            }));
+    assertEquals(2, managers);
+    assertEquals(List.of(25L), sleeps);
+  }
+
+  @Test
+  void causeAccessorFailureKeepsCollectedMetadata() {
+    for (boolean structured : new boolean[] {false, true}) {
+      Metadata metadata = new Metadata();
+      metadata.put(KEY, hint(0, 3000001).toByteArray());
+      if (structured)
+        metadata.put(
+            Metadata.Key.of("grpc-status-details-bin", Metadata.BINARY_BYTE_MARSHALLER),
+            com.google.rpc.Status.newBuilder()
+                .setCode(10)
+                .addDetails(Any.pack(hint(0, 2000001)))
+                .build()
+                .toByteArray());
+      AtomicBoolean armed = new AtomicBoolean();
+      io.grpc.StatusRuntimeException cause =
+          new io.grpc.StatusRuntimeException(Status.ABORTED, metadata) {
+            @Override
+            public synchronized Throwable getCause() {
+              if (armed.get()) throw new IllegalStateException("cause accessor failed");
+              return null;
+            }
+          };
+      SpannerException abort =
+          SpannerExceptionFactory.newSpannerException(ErrorCode.ABORTED, "original ABORTED", cause);
+      armed.set(true);
+      assertEquals(structured ? 3 : 4, SpannerRetryWait.serverMillis(abort));
+    }
   }
 }

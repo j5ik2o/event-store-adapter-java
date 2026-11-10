@@ -107,9 +107,14 @@ final class SpannerRetryWait {
     List<Metadata> metadata = new ArrayList<>();
     Throwable current = failure;
     while (current != null && visited.add(current)) {
-      Metadata value = trailers(current);
-      if (value != null) metadata.add(value);
-      current = current.getCause();
+      try {
+        Metadata value = trailers(current);
+        if (value != null) metadata.add(value);
+        current = current.getCause();
+      } catch (RuntimeException ignored) {
+        // Keep partial trailers without asking the SDK to traverse the failing cause again.
+        break;
+      }
     }
     if (current == null) {
       try {
@@ -122,7 +127,7 @@ final class SpannerRetryWait {
         // A decoding failure must not replace the original ABORTED.
       }
     } else {
-      // SDK 6.127.0 getErrorDetails traverses causes without a cycle guard.
+      // The SDK accessor cannot safely traverse cyclic or failing cause chains.
       for (Metadata value : metadata) {
         byte[] encoded = value.get(STATUS_DETAILS);
         if (encoded == null) continue;
