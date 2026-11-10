@@ -12,10 +12,19 @@ Issue: https://github.com/j5ik2o/event-store-adapter-java/issues/807
 - 対象の4クラスは 83 件すべて通る。全テストは 2238 件で失敗 0（スキップ 440 は修正前と同数）。
 - 共通 repo の PR は出した（下記）。新しい適合データを Java に重ねると、DynamoDB Local で4ケースとも通る。修正前の Java では over の2ケースが失敗する。
 
+## Bugbot のスレッド「Personal handoff notes committed」
+
+- 指摘: この文書は個人の引き継ぎメモで、`docs/` 配下のまま PR をマージすると main に入る(Low)。
+- 分類: 聞く。指摘は事実で、データやセキュリティの問題ではない。ただし直す(ファイルを PR から消す)と、この文書を枝に残して追記するという運用と衝突する。いつ消すかはオーナーの判断。
+- スレッドは resolve していない。理由と推奨を返信した。
+- 推奨: ready 化の前に、この文書を削除するコミットを積む。メモの内容は PR の説明か issue #807 に移す。
+- 決めてほしいこと: 削除のタイミング(ready 化の前でよいか)と、メモの移し先。
+
 ## 次の一手
 
 1. レビューコメントが付いたら、一つずつ「直す」「理由をつけて直さない」「聞く」に分ける。
-2. 共通 repo の PR がマージされたら、Java に適合データを取り込む（別 PR）。必須ケース一覧（`required-cases.json`）とケース数の固定値（`ConformanceDataLoaderTest`、`ConformanceReportTest`）の更新が要る。
+2. ready 化の前に、上の「聞く」の判断を受けてこの文書を削除する。
+3. 共通 repo の PR がマージされたら、Java に適合データを取り込む（別 PR）。必須ケース一覧（`required-cases.json`）とケース数の固定値（`ConformanceDataLoaderTest`、`ConformanceReportTest`）の更新が要る。
 
 ## 未決の判断
 
