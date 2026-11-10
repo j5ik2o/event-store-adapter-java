@@ -250,7 +250,7 @@ class DynamoDbEventWriteTest {
           DynamoDbTableConfigTest.names()
               .retentionPolicy(history ? RetentionPolicy.delete(2) : RetentionPolicy.none())
               .build();
-      int overhead = history ? 75 : 52;
+      int overhead = history ? 151 : 109;
       for (long seq : List.of(1L, 2L)) {
         SnapshotEnvelope<String> snapshot =
             SnapshotEnvelope.<String>builder().aggregate("state").seqNr(seq).build();
@@ -431,11 +431,35 @@ class DynamoDbEventWriteTest {
   }
 
   @Test
+  void aFewBytesUnderTheUpperBoundPassAndAFewBytesOverAreRejectedForPutAndUpdate() {
+    int headOverhead = 134;
+    for (long seq : List.of(1L, 2L)) {
+      for (int under : List.of(1, 3, 8)) {
+        assertDoesNotThrow(() ->
+            DynamoDbEventWrite.prepare(
+                event(seq, 1), TABLES, serializer(new byte[409600 - headOverhead - under])));
+      }
+      for (int over : List.of(1, 3, 8)) {
+        assertEquals(
+            "D-7",
+            assertThrows(
+                    ContractViolationException.class,
+                    () ->
+                        DynamoDbEventWrite.prepare(
+                            event(seq, 1),
+                            TABLES,
+                            serializer(new byte[409600 - headOverhead + over])))
+                .rule());
+      }
+    }
+  }
+
+  @Test
   void headBoundaryAcceptsExactlyTheLimitAndRejectsOneMoreForPutAndUpdate() {
     for (long seq : List.of(1L, 2L)) {
       assertDoesNotThrow(() ->
-          DynamoDbEventWrite.prepare(event(seq, 1), TABLES, serializer(new byte[409600 - 77])));
-      for (int bytes : List.of(409601 - 77, 409600 - 42, 409601 - 42)) {
+          DynamoDbEventWrite.prepare(event(seq, 1), TABLES, serializer(new byte[409600 - 134])));
+      for (int bytes : List.of(409601 - 134, 409600 - 80, 409601 - 80)) {
         assertEquals(
             "D-7",
             assertThrows(

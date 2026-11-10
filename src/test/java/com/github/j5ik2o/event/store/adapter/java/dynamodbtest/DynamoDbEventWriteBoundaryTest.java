@@ -476,13 +476,13 @@ class DynamoDbEventWriteBoundaryTest {
     return both(
         "size-boundaries",
         s -> {
-          // Independently derived AWS counts: head 77 + B; journal 42 + B, for A-x/1ns/empty
-          // manifest.
-          byte[] exact = new byte[409600 - 77];
+          // Upper-bound counts, every N counted as 21: head 134 + B; journal 80 + B, for A-x and an
+          // empty manifest.
+          byte[] exact = new byte[409600 - 134];
           Arrays.fill(exact, (byte) 0xa5);
           for (long seq : List.of(1L, 2L)) {
             Map<String, Object> before = s.stored();
-            for (int bytes : List.of(409601 - 77, 409600 - 42, 409601 - 42)) {
+            for (int bytes : List.of(409601 - 134, 409600 - 80, 409601 - 80)) {
               assertEquals(
                   "D-7",
                   ((ContractViolationException) s.write(event(seq, 1, "", new byte[bytes]), 0, 0))
@@ -497,12 +497,12 @@ class DynamoDbEventWriteBoundaryTest {
   }
 
   @TestFactory
-  Stream<DynamicTest> multibyteMetadataAndNumericWidthsChangeTheBoundary() {
+  Stream<DynamicTest> multibyteMetadataChangesTheBoundaryButNumberWidthDoesNot() {
     return both(
         "metadata-size-boundaries",
         s -> {
-          // head: 77 + manifest UTF-8(3) + occurred_at's extra 9 bytes for 19 significant digits.
-          byte[] exact = new byte[409600 - 89];
+          // head: 134 + manifest UTF-8(3); a 19-digit occurred_at adds nothing over a 1-digit one.
+          byte[] exact = new byte[409600 - 137];
           EventEnvelope<byte[]> tooLarge =
               event(1, Long.MAX_VALUE, "界", new byte[exact.length + 1]);
           assertEquals("D-7", ((ContractViolationException) s.write(tooLarge, 0, 0)).rule());
