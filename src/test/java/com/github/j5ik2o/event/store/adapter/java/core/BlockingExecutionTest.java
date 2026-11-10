@@ -105,6 +105,7 @@ class BlockingExecutionTest {
   void queuedCancelSkipsInvocationButRetainsCapacity() throws Exception {
     BlockingExecution execution = BlockingExecution.singleWorker(1);
     CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+    AtomicInteger invoked = new AtomicInteger(), cleaned = new AtomicInteger();
     try {
       execution.submit(() -> {
         entered.countDown();
@@ -112,7 +113,14 @@ class BlockingExecutionTest {
         return null;
       });
       await(entered);
-      CompletableFuture<?> queued = execution.submit(() -> fail("cancelled queued invocation"));
+      CompletableFuture<?> queued =
+          execution.submit(() -> {
+            try {
+              return invoked.incrementAndGet();
+            } finally {
+              cleaned.incrementAndGet();
+            }
+          });
       assertTrue(queued.cancel(true));
       assertInstanceOf(
           RejectedExecutionException.class,
@@ -125,6 +133,8 @@ class BlockingExecutionTest {
       release.countDown();
       drain(execution);
       assertTrue(queued.isCancelled());
+      assertEquals(0, invoked.get());
+      assertEquals(0, cleaned.get());
     } finally {
       release.countDown();
       drain(execution);
@@ -463,6 +473,266 @@ class BlockingExecutionTest {
       } finally {
         race.countDown();
         release.countDown();
+        drain(execution);
+      }
+    }
+  }
+
+  @Test
+  void failedCancelAfterCompleteMustNotSkipAcceptedWork() throws Exception {
+    failedCancelMustNotSkipAcceptedWork(0);
+  }
+
+  @Test
+  void failedCancelAfterExceptionalCompletionMustNotSkipAcceptedWork() throws Exception {
+    failedCancelMustNotSkipAcceptedWork(1);
+  }
+
+  @Test
+  void failedCancelAfterTimeoutMustNotSkipAcceptedWork() throws Exception {
+    failedCancelMustNotSkipAcceptedWork(2);
+  }
+
+  private void failedCancelMustNotSkipAcceptedWork(int mode) throws Exception {
+    BlockingExecution e = BlockingExecution.singleWorker(1);
+    CountDownLatch in = new CountDownLatch(1), out = new CountDownLatch(1);
+    AtomicInteger calls = new AtomicInteger();
+    try {
+      e.submit(() -> {
+        in.countDown();
+        await(out);
+        return null;
+      });
+      await(in);
+      CompletableFuture<Integer> f = e.submit(calls::incrementAndGet);
+      if (mode == 0) f.complete(99);
+      else if (mode == 1) f.completeExceptionally(new RuntimeException("consumer"));
+      else {
+        f.orTimeout(1, TimeUnit.MILLISECONDS);
+        assertThrows(ExecutionException.class, () -> f.get(3, TimeUnit.SECONDS));
+      }
+      assertFalse(f.cancel(false));
+      out.countDown();
+      drain(e);
+      assertEquals(
+          1, calls.get(), "failed cancel must not suppress accepted operation mode=" + mode);
+    } finally {
+      out.countDown();
+      drain(e);
+    }
+  }
+
+  private static Object retainedOperation(CompletableFuture<?> future) throws Exception {
+    java.lang.reflect.Field enclosing =
+        java.util.Arrays.stream(future.getClass().getDeclaredFields())
+            .filter(field -> field.getName().startsWith("this$"))
+            .findFirst()
+            .orElseThrow();
+    enclosing.setAccessible(true);
+    Object command = enclosing.get(future);
+    java.lang.reflect.Field operation = command.getClass().getDeclaredField("operation");
+    operation.setAccessible(true);
+    return operation.get(command);
+  }
+
+  @Test
+  void terminatedCommandsReleaseInputsWhileRunningCancellationRetainsThem() throws Exception {
+    for (int mode = 0; mode < 6; mode++) {
+      int outcome = mode;
+      AtomicInteger workers = new AtomicInteger(), calls = new AtomicInteger();
+      CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+      BlockingExecution execution =
+          new BlockingExecution(
+              1,
+              action -> {
+                if (workers.incrementAndGet() > 1 && outcome == 4) {
+                  throw new IllegalStateException("replacement denied");
+                }
+                Thread worker = new Thread(action);
+                worker.setUncaughtExceptionHandler((thread, failure) -> {});
+                return worker;
+              });
+      java.util.concurrent.Callable<Integer> operation =
+          new java.util.concurrent.Callable<Integer>() {
+            final byte[] input = new byte[1024 * 1024];
+
+            public Integer call() throws Exception {
+              calls.incrementAndGet();
+              entered.countDown();
+              await(release);
+              if (outcome == 1) throw new IllegalArgumentException("ordinary");
+              if (outcome == 2 || outcome == 4) throw new AssertionError("fatal");
+              return input.length;
+            }
+          };
+      CompletableFuture<Integer> result;
+      try {
+        if (mode == 3 || mode == 4) {
+          execution.submit(() -> {
+            entered.countDown();
+            await(release);
+            if (outcome == 4) throw new AssertionError("fatal leader");
+            return null;
+          });
+          await(entered);
+          result = execution.submit(operation);
+          assertSame(operation, retainedOperation(result));
+          if (mode == 3) assertTrue(result.cancel(false));
+        } else {
+          result = execution.submit(operation);
+          await(entered);
+          assertSame(operation, retainedOperation(result));
+          if (mode == 0) {
+            assertTrue(result.cancel(true));
+            assertSame(operation, retainedOperation(result));
+          }
+        }
+        release.countDown();
+        execution.close();
+        if (mode == 4) {
+          assertThrows(
+              ExecutionException.class, () -> get(execution.drained().toCompletableFuture()));
+          assertThrows(ExecutionException.class, () -> get(result));
+        } else {
+          drain(execution);
+        }
+        org.junit.jupiter.api.Assertions.assertNull(
+            retainedOperation(result), "owned input after mode " + mode);
+        assertEquals(mode == 3 || mode == 4 ? 0 : 1, calls.get());
+      } finally {
+        release.countDown();
+        execution.close();
+        try {
+          get(execution.drained().toCompletableFuture());
+        } catch (ExecutionException failure) {
+          if (mode != 4) throw failure;
+        }
+      }
+    }
+  }
+
+  @Test
+  void workerHelpsCancellationWhileCancellingCallbackIsStalled() throws Exception {
+    BlockingExecution execution = BlockingExecution.singleWorker(2);
+    CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+    CountDownLatch callback = new CountDownLatch(1), callbackRelease = new CountDownLatch(1);
+    AtomicInteger calls = new AtomicInteger();
+    AtomicReference<Boolean> cancelled = new AtomicReference<>();
+    Thread canceller = null;
+    try {
+      execution.submit(() -> {
+        entered.countDown();
+        await(release);
+        return null;
+      });
+      await(entered);
+      CompletableFuture<Integer> queued = execution.submit(calls::incrementAndGet);
+      CompletableFuture<Integer> next = execution.submit(() -> 7);
+      queued.whenComplete((value, failure) -> {
+        callback.countDown();
+        try {
+          await(callbackRelease);
+        } catch (InterruptedException interrupted) {
+          throw new AssertionError(interrupted);
+        }
+      });
+      canceller = new Thread(() -> cancelled.set(queued.cancel(false)));
+      canceller.start();
+      await(callback);
+      release.countDown();
+      assertEquals(7, get(next));
+      drain(execution);
+      assertEquals(0, calls.get());
+      assertTrue(canceller.isAlive());
+      callbackRelease.countDown();
+      canceller.join(5000);
+      assertFalse(canceller.isAlive());
+      assertEquals(Boolean.TRUE, cancelled.get());
+    } finally {
+      release.countDown();
+      callbackRelease.countDown();
+      if (canceller != null) {
+        canceller.join(5000);
+        assertFalse(canceller.isAlive());
+      }
+      drain(execution);
+    }
+  }
+
+  @org.junit.jupiter.api.AfterAll
+  static void noLaneWorkersRemain() throws Exception {
+    for (Thread thread : Thread.getAllStackTraces().keySet()) {
+      if (thread.getName().equals("event-store-blocking")
+          || thread.getName().matches("Thread-[0-9]+")) {
+        thread.join(5000);
+        assertFalse(thread.isAlive(), "remaining worker " + thread);
+      }
+    }
+  }
+
+  @Test
+  void completionCancellationAndRunningRacePreservesWorkWhenCancelFails() throws Exception {
+    for (int i = 0; i < 100; i++) {
+      BlockingExecution execution = BlockingExecution.singleWorker(1);
+      CountDownLatch entered = new CountDownLatch(1),
+          release = new CountDownLatch(1),
+          race = new CountDownLatch(1);
+      AtomicInteger calls = new AtomicInteger();
+      AtomicReference<Boolean> cancelled = new AtomicReference<>();
+      AtomicReference<Throwable> threadFailure = new AtomicReference<>();
+      Thread completer = null, canceller = null;
+      try {
+        execution.submit(() -> {
+          entered.countDown();
+          await(release);
+          return null;
+        });
+        await(entered);
+        CompletableFuture<Integer> result = execution.submit(calls::incrementAndGet);
+        completer =
+            new Thread(() -> {
+              try {
+                await(race);
+                result.complete(99);
+              } catch (Throwable failure) {
+                threadFailure.set(failure);
+              }
+            });
+        canceller =
+            new Thread(() -> {
+              try {
+                await(race);
+                for (int attempt = 0; attempt < 100; attempt++) {
+                  cancelled.set(result.cancel(false));
+                }
+              } catch (Throwable failure) {
+                threadFailure.set(failure);
+              }
+            });
+        completer.start();
+        canceller.start();
+        race.countDown();
+        release.countDown();
+        completer.join(5000);
+        canceller.join(5000);
+        assertFalse(completer.isAlive());
+        assertFalse(canceller.isAlive());
+        org.junit.jupiter.api.Assertions.assertNull(threadFailure.get());
+        assertNotNull(cancelled.get());
+        drain(execution);
+        if (!cancelled.get()) assertEquals(1, calls.get());
+        else assertTrue(calls.get() == 0 || calls.get() == 1);
+      } finally {
+        race.countDown();
+        release.countDown();
+        if (completer != null) {
+          completer.join(5000);
+          assertFalse(completer.isAlive());
+        }
+        if (canceller != null) {
+          canceller.join(5000);
+          assertFalse(canceller.isAlive());
+        }
         drain(execution);
       }
     }

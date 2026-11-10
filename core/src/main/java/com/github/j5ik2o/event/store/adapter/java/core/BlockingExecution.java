@@ -25,6 +25,7 @@ public final class BlockingExecution implements AutoCloseable {
 
   private enum CommandState {
     QUEUED,
+    CANCELLING,
     RUNNING,
     FINISHED,
     SKIPPED
@@ -138,6 +139,8 @@ public final class BlockingExecution implements AutoCloseable {
   private void runWorker() {
     while (true) {
       Command<?> command;
+      boolean cancelling;
+      boolean invoke;
       synchronized (lock) {
         while (active == null && lifecycle == Lifecycle.OPEN) {
           try {
@@ -152,17 +155,31 @@ public final class BlockingExecution implements AutoCloseable {
         } else if (command.state == CommandState.QUEUED) {
           command.state = CommandState.RUNNING;
         }
+        cancelling = command != null && command.state == CommandState.CANCELLING;
+        invoke = command != null && command.state == CommandState.RUNNING;
       }
       if (command == null) {
         termination.complete(null);
         return;
       }
       try {
-        if (command.state == CommandState.RUNNING) {
+        while (cancelling) {
+          // Help the reserved cancellation without waiting for the cancelling caller's callbacks.
+          command.result.cancel(false);
+          synchronized (lock) {
+            if (command.state == CommandState.QUEUED) {
+              command.state = CommandState.RUNNING;
+            }
+            cancelling = command.state == CommandState.CANCELLING;
+            invoke = command.state == CommandState.RUNNING;
+          }
+        }
+        if (invoke) {
           command.invoke();
         }
       } finally {
         synchronized (lock) {
+          command.operation = null;
           command.state = CommandState.FINISHED;
           active = pending.pollFirst();
         }
@@ -181,6 +198,7 @@ public final class BlockingExecution implements AutoCloseable {
       stranded.addAll(pending);
       pending.clear();
       for (Command<?> command : stranded) {
+        command.operation = null;
         command.state = CommandState.FINISHED;
       }
     }
@@ -191,7 +209,7 @@ public final class BlockingExecution implements AutoCloseable {
   }
 
   private final class Command<T> {
-    private final Callable<T> operation;
+    private Callable<T> operation;
     private CommandState state = CommandState.QUEUED;
     private final CompletableFuture<T> result =
         new CompletableFuture<T>() {
@@ -199,11 +217,21 @@ public final class BlockingExecution implements AutoCloseable {
           public boolean cancel(boolean mayInterruptIfRunning) {
             synchronized (lock) {
               if (state == CommandState.QUEUED) {
-                state = CommandState.SKIPPED;
+                state = CommandState.CANCELLING;
               }
             }
             // Completion may invoke user callbacks: never do it while holding the lane monitor.
-            return super.cancel(false);
+            boolean cancelled = super.cancel(false);
+            synchronized (lock) {
+              if (state == CommandState.CANCELLING) {
+                if (cancelled) {
+                  state = CommandState.SKIPPED;
+                } else {
+                  state = CommandState.QUEUED;
+                }
+              }
+            }
+            return cancelled;
           }
         };
 
@@ -213,7 +241,13 @@ public final class BlockingExecution implements AutoCloseable {
 
     void invoke() {
       try {
-        result.complete(operation.call());
+        T value;
+        try {
+          value = operation.call();
+        } finally {
+          operation = null;
+        }
+        result.complete(value);
       } catch (Exception failure) {
         result.completeExceptionally(failure);
       } catch (Error fatal) {
