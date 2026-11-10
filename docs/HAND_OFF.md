@@ -2,7 +2,7 @@
 
 Issue: https://github.com/j5ik2o/event-store-adapter-java/issues/807
 
-## いまの状態（修正済み、PR 作成前）
+## いまの状態（PR 提出済み、レビュー待ち）
 
 - ブランチ `t3/fix-dynamodb-item-size-estimate` に、境界テスト（赤）の上に修正を積んだ。`DynamoDbItemSize` は数値を常に21バイトと数える。
 - 対象の4クラスは 83 件すべて通る。全テストは 2238 件で失敗 0（スキップ 440 は修正前と同数）。
@@ -10,9 +10,8 @@ Issue: https://github.com/j5ik2o/event-store-adapter-java/issues/807
 
 ## 次の一手
 
-1. Java の PR をドラフトで出し、この PR の URL を下に書く。
-2. レビューコメントが付いたら、一つずつ「直す」「理由をつけて直さない」「聞く」に分ける。
-3. 共通 repo の PR がマージされたら、Java に適合データを取り込む（別 PR）。必須ケース一覧（`required-cases.json`）とケース数の固定値（`ConformanceDataLoaderTest`、`ConformanceReportTest`）の更新が要る。
+1. レビューコメントが付いたら、一つずつ「直す」「理由をつけて直さない」「聞く」に分ける。
+2. 共通 repo の PR がマージされたら、Java に適合データを取り込む（別 PR）。必須ケース一覧（`required-cases.json`）とケース数の固定値（`ConformanceDataLoaderTest`、`ConformanceReportTest`）の更新が要る。
 
 ## 未決の判断
 
@@ -21,5 +20,5 @@ Issue: https://github.com/j5ik2o/event-store-adapter-java/issues/807
 
 ## PR
 
-- 共通 repo（conformance）: https://github.com/j5ik2o/event-store-adapter/pull/108
-- java: まだなし
+- 共通 repo（conformance）: https://github.com/j5ik2o/event-store-adapter/pull/108（ドラフト）
+- java: https://github.com/j5ik2o/event-store-adapter-java/pull/808（ドラフト）
