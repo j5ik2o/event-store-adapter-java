@@ -435,10 +435,9 @@ class DynamoDbEventWriteTest {
     int headOverhead = 134;
     for (long seq : List.of(1L, 2L)) {
       for (int under : List.of(1, 3, 8)) {
-        assertDoesNotThrow(
-            () ->
-                DynamoDbEventWrite.prepare(
-                    event(seq, 1), TABLES, serializer(new byte[409600 - headOverhead - under])));
+        assertDoesNotThrow(() ->
+            DynamoDbEventWrite.prepare(
+                event(seq, 1), TABLES, serializer(new byte[409600 - headOverhead - under])));
       }
       for (int over : List.of(1, 3, 8)) {
         assertEquals(

@@ -2,7 +2,11 @@
 
 Issue: https://github.com/j5ik2o/event-store-adapter-java/issues/807
 
-## いまの状態（PR 提出済み、レビュー待ち）
+## いまの状態（PR 提出済み、CI 修正を積んだ、レビュー待ち）
+
+- PR #808 の CI は2件落ちていた。どちらも修正済み(新しいコミットとして積み、force-push はしていない)。
+  - Run lint(spotlessCheck): `DynamoDbEventWriteTest.java` の書式違反。`./gradlew spotlessApply` で直した。
+  - Check release tooling(user-docs check): `docs/` の直下に置けるのは型の文書・型の外の文書・移動を示すファイルだけ。この文書が直下にあって落ちた。`docs/handoff/` に移した。
 
 - ブランチ `t3/fix-dynamodb-item-size-estimate` に、境界テスト（赤）の上に修正を積んだ。`DynamoDbItemSize` は数値を常に21バイトと数える。
 - 対象の4クラスは 83 件すべて通る。全テストは 2238 件で失敗 0（スキップ 440 は修正前と同数）。
