@@ -21,22 +21,23 @@ class DynamoDbItemSizeTest {
   }
 
   @Test
-  void numberEstimateCountsSignificantDigitsAfterTrimmingZeroes() {
-    for (String value : List.of("0", "1", "10", "1000", "1.00", "1E+12", "-1")) {
-      assertEquals(3, DynamoDbItemSize.estimate(Map.of("n", AttributeValue.fromN(value))), value);
+  void everyNumberIsCountedAsTheTwentyOneByteUpperBound() {
+    List<String> values =
+        List.of(
+            "0",
+            "1",
+            "-1",
+            "1000",
+            "1.00",
+            "1E+12",
+            "99000.00",
+            "00012300.00",
+            Long.toString(Long.MIN_VALUE),
+            Long.toString(Long.MAX_VALUE),
+            "9".repeat(38));
+    for (String value : values) {
+      assertEquals(22, DynamoDbItemSize.estimate(Map.of("n", AttributeValue.fromN(value))), value);
     }
-    for (String value : List.of("99", "-99", "99000.00")) {
-      assertEquals(3, DynamoDbItemSize.estimate(Map.of("n", AttributeValue.fromN(value))), value);
-    }
-    assertEquals(4, DynamoDbItemSize.estimate(Map.of("n", AttributeValue.fromN("00012300.00"))));
-    assertEquals(
-        12,
-        DynamoDbItemSize.estimate(
-            Map.of("n", AttributeValue.fromN(Long.toString(Long.MIN_VALUE)))));
-    assertEquals(
-        12,
-        DynamoDbItemSize.estimate(
-            Map.of("n", AttributeValue.fromN(Long.toString(Long.MAX_VALUE)))));
   }
 
   @Test
@@ -55,12 +56,12 @@ class DynamoDbItemSizeTest {
   @Test
   void journalAndHeadHaveIndependentExactBoundaryEstimates() {
     for (int size : List.of(409600, 409601)) {
-      // aid A-x; seq 1; occurred_at 1; empty manifest. Journal overhead is 42.
-      assertEquals(size, DynamoDbItemSize.estimate(journal(size - 42)));
-      // Head overhead: outer names/values 30, containers/elements 11, envelope 36.
-      Map<String, AttributeValue> head = head(size - 77);
+      // aid A-x; seq 1; occurred_at 1; empty manifest. Journal overhead is 42 + 2 * 19.
+      assertEquals(size, DynamoDbItemSize.estimate(journal(size - 80)));
+      // Head overhead: 77 + 3 * 19 for its three numbers.
+      Map<String, AttributeValue> head = head(size - 134);
       assertEquals(size, DynamoDbItemSize.estimate(head));
-      assertEquals(size - 35, DynamoDbItemSize.estimate(journal(size - 77)));
+      assertEquals(size - 54, DynamoDbItemSize.estimate(journal(size - 134)));
     }
   }
 
@@ -82,11 +83,11 @@ class DynamoDbItemSizeTest {
   void currentAndHistoryHaveIndependentExactBoundaryEstimates() {
     for (int size : List.of(409600, 409601)) {
       // Names: aid(3), skey(4), seq_nr(6), manifest(8), payload(7), last_updated_at(15).
-      // Values: A-x(3), three one-digit numbers(2 each), empty manifest(0), raw binary.
-      assertEquals(size, DynamoDbItemSize.estimate(snapshot(size - 52, false)));
-      // History adds active_history_seq_nr(21) and its number(2); skey has the same width.
-      assertEquals(size, DynamoDbItemSize.estimate(snapshot(size - 75, true)));
-      assertEquals(size - 23, DynamoDbItemSize.estimate(snapshot(size - 75, false)));
+      // Values: A-x(3), three numbers(21 each), empty manifest(0), raw binary.
+      assertEquals(size, DynamoDbItemSize.estimate(snapshot(size - 109, false)));
+      // History adds active_history_seq_nr(21) and its number(21); skey has the same width.
+      assertEquals(size, DynamoDbItemSize.estimate(snapshot(size - 151, true)));
+      assertEquals(size - 42, DynamoDbItemSize.estimate(snapshot(size - 151, false)));
     }
   }
 

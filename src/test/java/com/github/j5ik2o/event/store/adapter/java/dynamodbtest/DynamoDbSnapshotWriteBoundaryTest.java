@@ -259,10 +259,10 @@ class DynamoDbSnapshotWriteBoundaryTest {
                 "size-boundaries-" + policy.mode().map(Enum::name).orElse("none"),
                 policy,
                 s -> {
-                  // Independent AWS counts for A-x, single-digit numbers and empty manifest:
-                  // current = 43 name bytes + 3 aid bytes + 6 number bytes + B = 52 + B.
-                  // history adds active_history_seq_nr(21) + N(2) = 75 + B.
-                  int overhead = s.history ? 75 : 52;
+                  // Upper-bound counts for A-x and an empty manifest, every N counted as 21:
+                  // current = 43 name bytes + 3 aid bytes + 3 numbers * 21 = 109 + B.
+                  // history adds active_history_seq_nr(21) + N(21) = 151 + B.
+                  int overhead = s.history ? 151 : 109;
                   byte[] exact = new byte[409600 - overhead];
                   Arrays.fill(exact, (byte) 0xa5);
                   for (long seq : List.of(1L, 2L)) {
@@ -291,14 +291,13 @@ class DynamoDbSnapshotWriteBoundaryTest {
           s.c.admin.putItem(
               PutItemRequest.builder().tableName(s.c.head).item(head(event(maximum - 1))).build());
           EventEnvelope<byte[]> event = event(maximum, Long.MAX_VALUE, "", new byte[0]);
-          // history 75 + manifest UTF-8(3) + three 16-digit numbers' extra bytes(7 each)
-          // + last_updated_at's 13-digit number's extra bytes(6) = 105.
+          // history 151 + manifest UTF-8(3) = 154; number width does not change the count.
           violation(
-              s.write(event, snapshot(maximum, "界", new byte[409601 - 105]), 0, 0), "D-7", maximum);
-          SnapshotEnvelope<byte[]> snapshot = snapshot(maximum, "界", new byte[409600 - 105]);
+              s.write(event, snapshot(maximum, "界", new byte[409601 - 154]), 0, 0), "D-7", maximum);
+          SnapshotEnvelope<byte[]> snapshot = snapshot(maximum, "界", new byte[409600 - 154]);
           assertNull(s.write(event, snapshot, 1, 1));
           s.assertSaved(event, snapshot);
-          s.observation.put("independent_overhead_bytes", 105);
+          s.observation.put("independent_overhead_bytes", 154);
         });
   }
 
