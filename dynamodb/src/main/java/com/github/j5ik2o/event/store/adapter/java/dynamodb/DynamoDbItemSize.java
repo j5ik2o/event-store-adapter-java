@@ -1,12 +1,14 @@
 package com.github.j5ik2o.event.store.adapter.java.dynamodb;
 
-import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 
-/** AWS attribute-size estimate for the S/N/B/L/M attributes used by event writes. */
+/** Upper-bound size of the S/N/B/L/M attributes used by event writes. */
 final class DynamoDbItemSize {
+  /** Fixed per-number bound shared with the rs and go adapters, whatever the actual digits. */
+  private static final long NUMBER_MAX_BYTES = 21;
+
   private DynamoDbItemSize() {}
 
   static long estimate(Map<String, AttributeValue> item) {
@@ -19,12 +21,7 @@ final class DynamoDbItemSize {
 
   private static long valueSize(AttributeValue value) {
     if (value.s() != null) return utf8(value.s());
-    if (value.n() != null) {
-      // AWS documents one byte per two significant digits, rounded up, plus one byte.
-      // This is an estimate, not a guarantee of DynamoDB's internal number encoding.
-      int digits = new BigDecimal(value.n()).stripTrailingZeros().precision();
-      return (digits + 1L) / 2 + 1;
-    }
+    if (value.n() != null) return NUMBER_MAX_BYTES;
     if (value.b() != null) return value.b().asByteBuffer().remaining();
     if (value.hasL()) {
       long bytes = 3;
