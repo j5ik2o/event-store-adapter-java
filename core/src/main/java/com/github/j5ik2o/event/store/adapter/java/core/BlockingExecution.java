@@ -71,7 +71,8 @@ public final class BlockingExecution implements AutoCloseable {
    * <p>Cancellation before the atomic running transition skips invocation, retaining its slot until
    * removed by the worker. Cancellation after that transition abandons only the result, even with
    * {@code mayInterruptIfRunning=true}. Completion callbacks may run on the worker; never wait for
-   * another operation or drain on this lane from a callback.
+   * another operation or drain on this lane from a callback. Each operation starts with the
+   * worker's interrupt flag cleared.
    *
    * @param operation whole operation, including cleanup and post-commit work
    * @param <T> result type
@@ -175,6 +176,8 @@ public final class BlockingExecution implements AutoCloseable {
           }
         }
         if (invoke) {
+          // An interrupt left by earlier user code on this worker belongs to that command only.
+          Thread.interrupted();
           command.invoke();
         }
       } finally {
