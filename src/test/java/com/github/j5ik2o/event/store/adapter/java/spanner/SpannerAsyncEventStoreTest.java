@@ -9,12 +9,17 @@ import static com.github.j5ik2o.event.store.adapter.java.spanner.SpannerTestFixt
 import static com.github.j5ik2o.event.store.adapter.java.spanner.SpannerTestFixtures.snapshot;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.github.j5ik2o.event.store.adapter.java.core.AggregateId;
 import com.github.j5ik2o.event.store.adapter.java.core.AsyncEventStore;
 import com.github.j5ik2o.event.store.adapter.java.core.OptimisticLockException;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class SpannerAsyncEventStoreTest {
@@ -43,5 +48,42 @@ class SpannerAsyncEventStoreTest {
         assertThrows(CompletionException.class, () -> async.persistEvent(event(1)).join());
 
     assertInstanceOf(OptimisticLockException.class, e.getCause());
+  }
+
+  @Test
+  void operationsRunOnTheCallingThreadAndReturnCompletedFutures() {
+    String prefix = noneStore();
+    AtomicReference<Thread> ranOn = new AtomicReference<>();
+    SpannerStorageHooks hooks =
+        new SpannerStorageHooks() {
+          @Override
+          public void beforeCommit(AggregateId aggregateId) {
+            ranOn.set(Thread.currentThread());
+          }
+        };
+    AsyncEventStore<String, String> async =
+        SpannerEventStore.createAsync(open(prefix, SpannerRetentionPolicy.none(), hooks), config());
+
+    CompletableFuture<Void> write = async.persistEvent(event(1));
+
+    assertTrue(write.isDone() && !write.isCompletedExceptionally());
+    assertSame(Thread.currentThread(), ranOn.get());
+  }
+
+  @Test
+  void anErrorEscapesSynchronouslyOnTheCallingThread() {
+    String prefix = noneStore();
+    SpannerStorageHooks hooks =
+        new SpannerStorageHooks() {
+          @Override
+          public void beforeCommit(AggregateId aggregateId) {
+            throw new AssertionError("injected");
+          }
+        };
+    AsyncEventStore<String, String> async =
+        SpannerEventStore.createAsync(open(prefix, SpannerRetentionPolicy.none(), hooks), config());
+
+    assertThrows(AssertionError.class, () -> async.persistEvent(event(1)));
+    assertEquals(0, EMULATOR.count(prefix, "journal"));
   }
 }
