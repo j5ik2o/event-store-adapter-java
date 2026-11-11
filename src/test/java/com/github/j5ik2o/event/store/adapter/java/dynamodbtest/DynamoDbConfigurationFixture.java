@@ -114,6 +114,8 @@ public final class DynamoDbConfigurationFixture implements BeforeAllCallback {
         Files.writeString(directory.resolve(owner + ".json"), observation.toPrettyString());
         assertTrue(termination.isSuccess(), () -> String.valueOf(termination.cause()));
         assertTrue(eventLoop.eventLoopGroup().isTerminated());
+        contexts.clear();
+        closedContexts.clear();
       }
     }
   }

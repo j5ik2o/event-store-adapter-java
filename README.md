@@ -19,7 +19,7 @@ Developers changing this repository: see [CONTRIBUTING](CONTRIBUTING.md).
 
 ### Versions
 
-The latest published artifact version is `5.2.0`. This version splits the library into one artifact for the core (with Memory) and one for each storage driver. The package and class names do not change. This library follows [common contract v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md); its major version 5 matches the contract revision. The distributed conformance data has version **1.3.0**, a separate number.
+The latest published artifact version is `5.2.0`. This version splits the library into one artifact for the core (with Memory) and one for each storage driver. The package and class names do not change. This library follows [common contract v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md); its major version 5 matches the contract revision. The distributed conformance data has version **1.4.0**, a separate number.
 
 Version 2.0.0 was released before the decision to align versions, and its contents are the same as 5.0.0. Use 5.1.0 or later.
 
@@ -275,7 +275,7 @@ See [MIGRATION_GUIDE](docs/MIGRATION_GUIDE.md) for API changes and the old-versi
 
 ## Conformance
 
-The distributed conformance data (version 1.3.0) is in [conformance/](conformance/README.md).
+The distributed conformance data (version 1.4.0) is in [conformance/](conformance/README.md).
 
 [Memory usage tests](src/test/java/com/github/j5ik2o/event/store/adapter/java/examples/UserAccountExampleTest.java), [DynamoDB usage tests](src/test/java/com/github/j5ik2o/event/store/adapter/java/dynamodbtest/DynamoDbPublicApiUsageTest.java) [SQLite usage tests](src/test/java/com/github/j5ik2o/event/store/adapter/java/examples/SqliteUserAccountExampleTest.java) [Spanner usage tests](src/test/java/com/github/j5ik2o/event/store/adapter/java/examples/SpannerUserAccountExampleTest.java) and [Bigtable usage tests](src/test/java/com/github/j5ik2o/event/store/adapter/java/examples/BigtableUserAccountExampleTest.java) compile and run the example through the public factories. DynamoDB tests use the pinned DynamoDB Local image, Spanner tests use the pinned Cloud Spanner emulator image and Bigtable tests use the pinned Cloud Bigtable emulator image; Docker is required for all three. SQLite tests use temporary local files; Docker is not required.
 

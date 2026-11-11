@@ -2,7 +2,7 @@
 
 # Bigtable の保存先のスキーマ
 
-この文書は `com.github.j5ik2o.event.store.adapter.java.bigtable` が使う配置を説明します。`5.0.1` には含まれず、次のリリースから使えます。ライブラリは[共通契約 v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md)と、その [Bigtable プロファイル](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/storage/bigtable.md)に従います。適合データは 1.3.0 です。保存する `layout_version` は **1** で、保存形式を表す別の番号です。表の配置は Rust v5 の実装と同じです。
+この文書は `com.github.j5ik2o.event.store.adapter.java.bigtable` が使う配置を説明します。`5.0.1` には含まれず、次のリリースから使えます。ライブラリは[共通契約 v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md)と、その [Bigtable プロファイル](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/storage/bigtable.md)に従います。適合データは 1.4.0 です。保存する `layout_version` は **1** で、保存形式を表す別の番号です。表の配置は Rust v5 の実装と同じです。
 
 公開する型は [README](../README.ja.md) を、版の違いは [MIGRATION_GUIDE](MIGRATION_GUIDE.ja.md) を見てください。設計記録は [bigtable-backend](design/bigtable-backend.ja.md) です。
 
