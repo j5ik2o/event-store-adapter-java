@@ -14,6 +14,7 @@ import com.google.cloud.bigtable.data.v2.models.RowMutation;
 import com.google.cloud.bigtable.data.v2.stub.metrics.NoopMetricsProvider;
 import com.google.protobuf.ByteString;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -32,6 +33,8 @@ public final class BigtableEmulator {
   public static final String INSTANCE = "test-instance";
   public static final String STORE_ID = "5f0c8b8e-3c1a-4d7e-9a4b-2f6d1c0e7a11";
   private static final int PORT = 8086;
+
+  private static final Duration LIMIT = Duration.ofSeconds(60);
 
   private static BigtableEmulator shared;
 
@@ -236,6 +239,10 @@ public final class BigtableEmulator {
 
   /** A raw read of one row, or null when the row does not exist. */
   public Row row(String table, ByteString key) {
+    return row(data, LIMIT, table, key);
+  }
+
+  static Row row(BigtableDataClient data, Duration limit, String table, ByteString key) {
     return data.readRow(table, key);
   }
 
