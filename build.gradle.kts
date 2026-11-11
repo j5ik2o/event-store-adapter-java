@@ -71,17 +71,6 @@ val scmUrl = "scm:git:git@github.com:j5ik2o/event-store-adapter-java.git"
 allprojects {
     repositories {
         mavenCentral()
-
-        // 認証付き snapshot リポジトリ
-        maven {
-            name = "sonatypeSnapshots"
-            url = uri("https://central.sonatype.com/repository/maven-snapshots/")
-            credentials {
-                username = System.getenv("SONATYPE_USERNAME")
-                password = System.getenv("SONATYPE_PASSWORD")
-            }
-            mavenContent { snapshotsOnly() }
-        }
     }
 }
 
@@ -362,7 +351,6 @@ nexusPublishing {
         this.sonatype {
             packageGroup = "io.github.j5ik2o"
             nexusUrl = uri("https://ossrh-staging-api.central.sonatype.com/service/local/")
-            snapshotRepositoryUrl = uri("https://central.sonatype.com/repository/maven-snapshots/")
             username = System.getenv("SONATYPE_USERNAME")
             password = System.getenv("SONATYPE_PASSWORD")
         }
