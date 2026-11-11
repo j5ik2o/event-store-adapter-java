@@ -26,8 +26,8 @@ import javax.annotation.Nullable;
  * A gRPC relay placed between the client under test and the real emulator. It records every call
  * (method, the {@code authorization} header, the request bytes) so authentication and request
  * counts are observed on the server side, where the transport layer has already attached the
- * credentials. It can also cut a ReadRows stream after a number of messages and drop the response
- * of one CheckAndMutateRow after the emulator applied it.
+ * credentials. It can also cut a ReadRows stream after a number of messages, and drop or hold the
+ * response of one CheckAndMutateRow after the emulator applied it.
  */
 public final class BigtableRecordingProxy implements AutoCloseable {
   static final String READ_ROWS = "google.bigtable.v2.Bigtable/ReadRows";
@@ -72,6 +72,7 @@ public final class BigtableRecordingProxy implements AutoCloseable {
   private final AtomicInteger readRowsMessagesBeforeCut = new AtomicInteger(-1);
   private final AtomicInteger readRowsCallsToSkipBeforeCut = new AtomicInteger();
   private final AtomicInteger dropCheckAndMutateResponses = new AtomicInteger();
+  private final AtomicInteger holdCheckAndMutateResponses = new AtomicInteger();
 
   public BigtableRecordingProxy(String upstreamHost, int upstreamPort) throws IOException {
     this.upstream =
@@ -129,6 +130,14 @@ public final class BigtableRecordingProxy implements AutoCloseable {
     dropCheckAndMutateResponses.incrementAndGet();
   }
 
+  /**
+   * The next CheckAndMutateRow is applied by the emulator, but its response is held and never sent,
+   * so the client sees only its own deadline.
+   */
+  public void holdNextCheckAndMutateResponse() {
+    holdCheckAndMutateResponses.incrementAndGet();
+  }
+
   @Override
   public void close() {
     server.shutdownNow();
@@ -154,6 +163,10 @@ public final class BigtableRecordingProxy implements AutoCloseable {
       boolean dropResponse =
           call.method.equals(CHECK_AND_MUTATE)
               && dropCheckAndMutateResponses.getAndUpdate(n -> Math.max(0, n - 1)) > 0;
+      boolean holdResponse =
+          call.method.equals(CHECK_AND_MUTATE)
+              && !dropResponse
+              && holdCheckAndMutateResponses.getAndUpdate(n -> Math.max(0, n - 1)) > 0;
       ClientCall<byte[], byte[]> out = upstream.newCall(descriptor, CallOptions.DEFAULT);
       AtomicInteger delivered = new AtomicInteger();
       out.start(
@@ -165,6 +178,9 @@ public final class BigtableRecordingProxy implements AutoCloseable {
 
             @Override
             public void onMessage(byte[] message) {
+              if (holdResponse) {
+                return;
+              }
               if (dropResponse) {
                 in.close(
                     Status.UNAVAILABLE.withDescription("response dropped by the proxy"),
@@ -185,7 +201,7 @@ public final class BigtableRecordingProxy implements AutoCloseable {
 
             @Override
             public void onClose(Status status, Metadata trailers) {
-              if (dropResponse || (cutAfter >= 0 && delivered.get() >= cutAfter)) {
+              if (holdResponse || dropResponse || (cutAfter >= 0 && delivered.get() >= cutAfter)) {
                 return;
               }
               in.close(status, trailers);

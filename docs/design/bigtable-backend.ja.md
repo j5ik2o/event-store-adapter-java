@@ -9,6 +9,7 @@ Java の Bigtable 保存先が、ハブの Bigtable プロファイル（共通�
 - `BigtableStorageConfig` は、journal 表と head 表の ID、保持方針（core の `RetentionPolicy`。既定は保持なし）、`envelopeLimitBytes`（既定 1048576、17 から 8388608）を持ちます。`build()` は、変更フィードの要求（BT-17）、TTL の方針（BT-13）、方針が null、表 ID の欠落や空、2 つの表に同じ ID、範囲外の上限を、通信の前に設定エラーにします。Bigtable の保持はスナップショットの件数だけを数えるので core の `RetentionPolicy` を使い回し、core の契約は変えません。
 - `BigtableStorage.open(BigtableDataClient, BigtableTableAdminClient, BigtableStorageConfig)` は配置を照合して保存先を返します。`BigtableStorage.initialize(BigtableDataClient, BigtableStorageConfig)` は設定行 2 つだけを書きます。2 つのクライアント（認証、1 つのクラスタに固定した app profile、指標、エミュレーターの接続先）は呼び出し側が作って所有し、保存先は作成も、閉じることも、設定もせず、表も作りません。クライアントが公開シグネチャに現れるので、`google-cloud-bigtable:2.85.0` は `api` の依存です。`grpc-api` は Spanner と同じ版（1.83.0）に解決されます。
 - `BigtableEventStore.create` が同期のインターフェイスを、`createAsync` が非同期のインターフェイスを提供します。他の保存先と同じく、呼び出しスレッドで実行して完了済みの future を返します。
+- `createOffloaded(storage, config, execution)` は、操作の全体をアプリケーションが所有する `BlockingExecution` に渡します。検証、直列化、SDK の呼び出しと待機、journal への書き出し、head の条件付き更新、復元、末尾の通知、保持、通知先は、そのワーカーで受け付けた順に実行します。順序は同じ実行資源のストアの間だけで、実行資源やプロセスをまたぐ書き手の間は head の条件付き更新が決めます。操作の開始後に結果を取り消しても操作は止まらず、追記は確定することがあります。クライアントは `drained()` の完了後に呼び出し側が閉じます。データのクライアントを先に閉じると、閉じた後に次の SDK の呼び出しを行う受け付け済みの操作は、SDK の `RejectedExecutionException` で失敗し、`STORAGE` エラーには変換しません（#829）。試験は `BigtableOffloadedEventStoreTest` にあります。
 
 ## 2. 規則・実装・試験
 
