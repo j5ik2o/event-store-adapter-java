@@ -16,9 +16,10 @@ class BigtableEmulatorLimitTest {
   void aReadFailsNamingTheWaitWhenTheEmulatorStopsAnswering() throws IOException {
     Duration limit = Duration.ofSeconds(2);
     // The kernel accepts the client's connection into the backlog, and nothing ever answers.
-    try (ServerSocket silent = new ServerSocket(0);
-        BigtableDataClient data =
-            BigtableEmulator.newDataClient("localhost", silent.getLocalPort(), null)) {
+    ServerSocket silent = new ServerSocket(0);
+    BigtableDataClient data =
+        BigtableEmulator.newDataClient("localhost", silent.getLocalPort(), null);
+    try {
       IllegalStateException failure =
           assertTimeoutPreemptively(
               Duration.ofSeconds(20),
@@ -32,6 +33,11 @@ class BigtableEmulatorLimitTest {
           failure.getMessage().contains("ReadRow on esa_journal")
               && failure.getMessage().contains("within 2 s"),
           failure.getMessage());
+    } finally {
+      // Resetting the connection first ends the abandoned read, so the client closes without
+      // waiting on it.
+      silent.close();
+      data.close();
     }
   }
 }
