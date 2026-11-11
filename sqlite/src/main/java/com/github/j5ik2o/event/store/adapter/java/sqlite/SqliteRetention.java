@@ -60,7 +60,7 @@ final class SqliteRetention {
           }
           SqliteTransactions.commit(c);
           return Optional.empty();
-        } catch (SQLException | RuntimeException failure) {
+        } catch (SQLException | RuntimeException | Error failure) {
           SqliteTransactions.rollbackQuietly(c, failure);
           throw failure;
         }

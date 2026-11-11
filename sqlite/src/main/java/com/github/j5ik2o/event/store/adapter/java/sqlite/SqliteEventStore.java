@@ -2,6 +2,7 @@ package com.github.j5ik2o.event.store.adapter.java.sqlite;
 
 import com.github.j5ik2o.event.store.adapter.java.core.AggregateId;
 import com.github.j5ik2o.event.store.adapter.java.core.AsyncEventStore;
+import com.github.j5ik2o.event.store.adapter.java.core.BlockingExecution;
 import com.github.j5ik2o.event.store.adapter.java.core.ConfigurationException;
 import com.github.j5ik2o.event.store.adapter.java.core.EventEnvelope;
 import com.github.j5ik2o.event.store.adapter.java.core.EventStore;
@@ -19,8 +20,8 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
-import java.util.function.Supplier;
 import javax.annotation.Nonnull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -59,7 +60,47 @@ public final class SqliteEventStore {
   @Nonnull
   public static <P, A> AsyncEventStore<P, A> createAsync(
       SqliteStorage storage, EventStoreConfig<P, A> config) {
-    return new Async<>(create(storage, config));
+    return new CallerThread<>(create(storage, config));
+  }
+
+  /**
+   * Creates an asynchronous event store whose operations run on the worker of an application-owned
+   * execution. Only admission runs on the calling thread. Validation, serialization, SQL,
+   * deserialization, retention, logging and the retention failure listener run on the worker, in
+   * accepted FIFO order. A full or closed execution returns a future failed with {@link
+   * java.util.concurrent.RejectedExecutionException} and runs nothing. / アプリケーションが所有する実行資源の
+   * ワーカーで操作を実行する非同期のイベントストアを作ります。呼び出しスレッドでは受け付けだけを行います。検証、直列化、SQL、復元、保持、ログ、
+   * 保持失敗の通知先は、ワーカーで受け付けた順に実行します。満杯または閉じた実行資源では {@link
+   * java.util.concurrent.RejectedExecutionException} で失敗した Future を返し、何も実行しません。
+   *
+   * <p>The store borrows the storage and the execution and closes neither. Every offloaded store on
+   * one {@code storage} must use the same execution; FIFO order holds only then. Until {@link
+   * BlockingExecution#drained()} completes, do not use that storage through {@link #create}, {@link
+   * #createAsync} or another execution, and do not close it. The library does not detect a
+   * violation. Cancelling a returned future before its operation starts skips the operation;
+   * afterwards it abandons only the result and does not stop or roll back the operation. Keep
+   * inputs unchanged until the operation ends. / ストアは保存先と実行資源を借りるだけで、どちらも閉じません。1つの {@code storage}
+   * を使うoffloadのストアがすべて同じ実行資源を使うときだけ、FIFOの順序が成り立ちます。{@link BlockingExecution#drained()}
+   * が完了するまで、その保存先を {@link #create}、{@link
+   * #createAsync}、別の実行資源から使わず、閉じないでください。ライブラリは違反を検出しません。操作の開始前に Future
+   * を取り消すと操作を飛ばします。開始後の取消しは結果を捨てるだけで、操作を止めることも巻き戻すこともしません。入力は操作が終わるまで変更しないでください。
+   *
+   * @param storage opened storage / 開いた保存先
+   * @param config event store settings / イベントストアの設定
+   * @param execution application-owned execution / アプリケーションが所有する実行資源
+   * @param <P> event payload type / イベントのペイロード型
+   * @param <A> aggregate type / 集約の型
+   * @return async event store / 非同期イベントストア
+   * @throws ConfigurationException when an argument is null; nothing runs / 引数が null のとき。何も実行しません
+   */
+  @Nonnull
+  public static <P, A> AsyncEventStore<P, A> createOffloaded(
+      SqliteStorage storage, EventStoreConfig<P, A> config, BlockingExecution execution) {
+    EventStore<P, A> sync = create(storage, config);
+    if (execution == null) {
+      throw new ConfigurationException("blocking execution is required");
+    }
+    return new Offloaded<>(sync, execution);
   }
 
   private static final class Sync<P, A> implements EventStore<P, A> {
@@ -182,15 +223,17 @@ public final class SqliteEventStore {
     }
   }
 
-  private static final class Async<P, A> implements AsyncEventStore<P, A> {
+  private abstract static class Async<P, A> implements AsyncEventStore<P, A> {
     private final EventStore<P, A> sync;
 
     Async(EventStore<P, A> sync) {
       this.sync = sync;
     }
 
+    abstract <T> CompletableFuture<T> run(Callable<T> operation);
+
     public CompletableFuture<Void> persistEvent(EventEnvelope<P> event) {
-      return complete(() -> {
+      return run(() -> {
         sync.persistEvent(event);
         return null;
       });
@@ -198,7 +241,7 @@ public final class SqliteEventStore {
 
     public CompletableFuture<Void> persistEventAndSnapshot(
         EventEnvelope<P> event, SnapshotEnvelope<A> snapshot) {
-      return complete(() -> {
+      return run(() -> {
         sync.persistEventAndSnapshot(event, snapshot);
         return null;
       });
@@ -206,22 +249,41 @@ public final class SqliteEventStore {
 
     public CompletableFuture<Optional<SnapshotReadResult<A>>> getLatestSnapshotById(
         AggregateId id) {
-      return complete(() -> sync.getLatestSnapshotById(id));
+      return run(() -> sync.getLatestSnapshotById(id));
     }
 
     public CompletableFuture<List<EventEnvelope<P>>> getEventsByIdSinceSeqNr(
         AggregateId id, long seqNr) {
-      return complete(() -> sync.getEventsByIdSinceSeqNr(id, seqNr));
+      return run(() -> sync.getEventsByIdSinceSeqNr(id, seqNr));
+    }
+  }
+
+  private static final class CallerThread<P, A> extends Async<P, A> {
+    CallerThread(EventStore<P, A> sync) {
+      super(sync);
     }
 
-    private <T> CompletableFuture<T> complete(Supplier<T> action) {
+    <T> CompletableFuture<T> run(Callable<T> operation) {
       CompletableFuture<T> result = new CompletableFuture<>();
       try {
-        result.complete(action.get());
+        result.complete(operation.call());
       } catch (Exception failure) {
         result.completeExceptionally(failure);
       }
       return result;
+    }
+  }
+
+  private static final class Offloaded<P, A> extends Async<P, A> {
+    private final BlockingExecution execution;
+
+    Offloaded(EventStore<P, A> sync, BlockingExecution execution) {
+      super(sync);
+      this.execution = execution;
+    }
+
+    <T> CompletableFuture<T> run(Callable<T> operation) {
+      return execution.submit(operation);
     }
   }
 }

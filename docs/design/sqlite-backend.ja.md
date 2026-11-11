@@ -9,6 +9,8 @@ Java の SQLite 保存先が、ハブの SQLite プロファイル（共通契�
 - `SqliteStorageConfig`: 保持方式（既定 `RetentionPolicy.none()`）と書き込みロックの待ち時間（既定 5 秒）。TTL・null・負の値・`Integer.MAX_VALUE` ミリ秒超は `build()` が設定エラーにする。変更フィードを求める設定項目は持たない。
 - `SqliteStorage`: 1 つのローカルファイルと、JDBC 接続を 1 本所有する。`initialize`（未初期化の空ファイルだけ）、`open`（既存ファイルを開いて照合。初期化はしない）、`close`（冪等）。各操作は `ReentrantLock` で直列化する。
 - `SqliteEventStore`: `create`（同期）と `createAsync`（呼び出しスレッドで実行して完了済みの Future を返す。メモリ保存先と同じ形）。
+- `createOffloaded(storage, config, execution)` は、操作の全体をアプリケーションが所有する `BlockingExecution` に渡す。検証、直列化、トランザクション、復元、保持、通知先は、そのワーカーで受け付けた順に実行する。1 つの `SqliteStorage` を使う offload のストアはすべて同じ実行資源を使い、`drained()` が完了するまで、その保存先を別の方法で使ったり閉じたりしない。ライブラリは違反を検出しない。試験は `SqliteOffloadedEventStoreTest`。
+- トランザクションの中で `Error` が起きたときも、伝える前に巻き戻す。接続はその後の操作に使える。
 - 利用者が `Connection` や `DataSource` を渡す形は採らない。共有キャッシュの無効化や pragma の確認を、すべての接続で保証するため。
 - 公開 API に `java.sql` の型は出さない。依存 `org.xerial:sqlite-jdbc:3.53.4.0` は `implementation`。
 

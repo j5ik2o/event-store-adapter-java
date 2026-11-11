@@ -174,7 +174,7 @@ DynamoDBの非同期生成には設定照合の通信があるため、factory�
 
 ### SQLite
 
-SQLiteは、同じホスト上のローカルファイル1つにイベントを保存します。5.1.0から使えます。新規または空のファイルは `SqliteStorage.initialize` で一度だけ初期化し、`SqliteStorage.open` で開きます。開く操作はファイルを初期化しません。ファイルがないときは `STORAGE` エラー、未初期化または設定と一致しないときは `CONFIGURATION` エラーで失敗します。`SqliteStorage` はJDBC接続を1本所有し、閉じる必要があります。同じファイルを、同じプロセスまたは同じホストの複数プロセスの複数の `SqliteStorage` から使えます。各オブジェクトは自分の操作を直列化します。`lockWait`（既定5秒）以内に書き込みロックを取れない書込みは `STORAGE` エラーで失敗し、何も確定しません。SQLiteの非同期APIはロック待ちを含めて呼出しスレッドで実行し、完了済みのfutureを返します。ファイルをネットワークファイルシステムに置かないでください。ファイルの形式と運用は [SQLITE_DATABASE_SCHEMA](docs/SQLITE_DATABASE_SCHEMA.ja.md) を参照してください。
+SQLiteは、同じホスト上のローカルファイル1つにイベントを保存します。5.1.0から使えます。新規または空のファイルは `SqliteStorage.initialize` で一度だけ初期化し、`SqliteStorage.open` で開きます。開く操作はファイルを初期化しません。ファイルがないときは `STORAGE` エラー、未初期化または設定と一致しないときは `CONFIGURATION` エラーで失敗します。`SqliteStorage` はJDBC接続を1本所有し、閉じる必要があります。同じファイルを、同じプロセスまたは同じホストの複数プロセスの複数の `SqliteStorage` から使えます。各オブジェクトは自分の操作を直列化します。`lockWait`（既定5秒）以内に書き込みロックを取れない書込みは `STORAGE` エラーで失敗し、何も確定しません。`createAsync` で作るSQLiteの非同期APIはロック待ちを含めて呼出しスレッドで実行し、完了済みのfutureを返します。`SqliteEventStore.createOffloaded(sqlite, config, execution)` は、アプリケーションが所有する `BlockingExecution.singleWorker(queueCapacity)` のワーカーで、操作の全体を受け付けた順に実行します。その待ち行列が満杯または閉じているときは `RejectedExecutionException` で失敗します。1つの `SqliteStorage` を使うoffloadのストアには1つの実行資源を使い、`execution.close()` と `execution.drained()` が完了してから保存先を閉じてください。ファイルをネットワークファイルシステムに置かないでください。ファイルの形式と運用は [SQLITE_DATABASE_SCHEMA](docs/SQLITE_DATABASE_SCHEMA.ja.md) を参照してください。
 
 ```java
 import com.github.j5ik2o.event.store.adapter.java.sqlite.*;
@@ -263,7 +263,7 @@ Optional<String> bigtableName = UserAccountExample.restore(bigtableStore, bigtab
 
 ### 失敗と通知
 
-確定後の保持失敗でも書込みは成功します。最終失敗はWARNログと、任意の `EventStoreConfig.Builder.retentionFailureListener` に1回通知します。通知には集約ID・方式・元原因があり、Memory・SQLite・Spannerはロックやトランザクションの解放後に通知します。同期実装、Memory非同期、SQLite非同期、Spanner非同期、Bigtable非同期は呼出しスレッドで通知します。DynamoDB非同期は、ストアごとに1つの専用通知executorで1回通知します。そのdaemonスレッド名は `eswa-retention-notify-N` で、呼出しスレッドでもSDKのスレッドでもなく、listenerが戻ってから公開futureを完了します。executorの待ち行列は無制限なので、listenerはブロックしない実装にします。listenerがブロックすると、そのストアの後続の通知とそれを待つ公開futureが遅れます。通知先の失敗でも、確定済み書込みを失敗にしません。DynamoDB非同期では `Error` も同様です。同期実装では、listenerの `Error` は確定後に呼出し側へ伝播します。Bigtableは、確定後に新しい末尾のイベントをjournalへ書き出せなかった失敗も、ロガー `com.github.j5ik2o.event.store.adapter.java.bigtable.journal` にWARNで記録します。この失敗ではリスナーを呼ばず、追記は確定したままです。ログやリスナーが `Error` を投げても、確定済みの追記は変わりません。
+確定後の保持失敗でも書込みは成功します。最終失敗はWARNログと、任意の `EventStoreConfig.Builder.retentionFailureListener` に1回通知します。通知には集約ID・方式・元原因があり、Memory・SQLite・Spannerはロックやトランザクションの解放後に通知します。同期実装、Memory非同期、SQLite非同期、Spanner非同期、Bigtable非同期は呼出しスレッドで通知します。offloadのSQLiteは、その `BlockingExecution` のワーカーで通知します。DynamoDB非同期は、ストアごとに1つの専用通知executorで1回通知します。そのdaemonスレッド名は `eswa-retention-notify-N` で、呼出しスレッドでもSDKのスレッドでもなく、listenerが戻ってから公開futureを完了します。executorの待ち行列は無制限なので、listenerはブロックしない実装にします。listenerがブロックすると、そのストアの後続の通知とそれを待つ公開futureが遅れます。通知先の失敗でも、確定済み書込みを失敗にしません。DynamoDB非同期では `Error` も同様です。同期実装では、listenerの `Error` は確定後に呼出し側へ伝播します。Bigtableは、確定後に新しい末尾のイベントをjournalへ書き出せなかった失敗も、ロガー `com.github.j5ik2o.event.store.adapter.java.bigtable.journal` にWARNで記録します。この失敗ではリスナーを呼ばず、追記は確定したままです。ログやリスナーが `Error` を投げても、確定済みの追記は変わりません。
 
 ## エラー
 
