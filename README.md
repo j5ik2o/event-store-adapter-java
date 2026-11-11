@@ -19,7 +19,7 @@ Developers changing this repository: see [CONTRIBUTING](CONTRIBUTING.md).
 
 ### Versions
 
-The latest published artifact version is `5.2.0`. This version splits the library into one artifact for the core (with Memory) and one for each storage driver. The package and class names do not change. This library follows [common contract v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md); its major version 5 matches the contract revision. The distributed conformance data has version **1.3.0**, a separate number.
+The latest published artifact version is `5.2.0`. This version splits the library into one artifact for the core (with Memory) and one for each storage driver. The package and class names do not change. This library follows [common contract v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md); its major version 5 matches the contract revision. The distributed conformance data has version **1.4.0**, a separate number.
 
 Version 2.0.0 was released before the decision to align versions, and its contents are the same as 5.0.0. Use 5.1.0 or later.
 
@@ -200,6 +200,8 @@ try (SqliteStorage sqlite = SqliteStorage.open(file, settings)) {
 
 Spanner stores events in five tables of one Cloud Spanner database that use the GoogleSQL dialect. It is available from 5.1.0. You create the tables and one configuration row yourself with the DDL in [SPANNER_DATABASE_SCHEMA](docs/SPANNER_DATABASE_SCHEMA.md); the library never runs DDL. `SpannerStorage.open(DatabaseClient, SpannerStorageConfig)` only verifies the layout. It fails with a `CONFIGURATION` error when a table, a column, a primary key, the configuration row or the row deletion policy is missing or does not match, and with a `STORAGE` error when the database cannot be read. You build and own the `DatabaseClient`, including credentials and the emulator host; the library never closes it. Writes run in a SERIALIZABLE read-write transaction. An aborted transaction is retried with the same envelope up to `transactionRetryLimit` times (default 5, the first attempt is not counted), then fails with a `STORAGE` error. When the commit response is lost, the append fails with a `STORAGE` error whose outcome is unknown; sending the same envelope again then fails with an `OPTIMISTIC_LOCK` error if the first commit went through. Reads use one strong read-only transaction. The retention policy is `SpannerRetentionPolicy.none()`, `delete(n)` or `ttl(n, graceDays)`; the grace period is counted in days and must equal `ttl_grace_days` in the configuration row and the `INTERVAL n DAY` of the row deletion policy. The asynchronous Spanner API runs on the calling thread and returns completed futures. No change feed is provided; `SpannerStorageConfig.Builder.changeFeed(true)` fails with a `CONFIGURATION` error. The tables use the same layout as the JavaScript v5 implementation.
 
+Eligible ABORTED retries wait after transaction cleanup. A valid server RetryInfo takes precedence, rounded up to whole milliseconds with a 1ms floor. A server delay above 60 seconds stops with a STORAGE error instead of retrying early. Without a valid hint, equal jitter uses caps of 50, 100, 200, 400, 800, then 1000ms. Exhausted retries do not wait. These waits block the calling thread, including the asynchronous facade, and add no total deadline or Future.cancel guarantee. Interruption stops further attempts with the interrupt flag preserved. See the [accepted wait contract](https://github.com/j5ik2o/event-store-adapter/blob/ea561f8d2a1d008a9196e8b189268741fbc0c9ff/docs/adr/0009-bound-manual-spanner-aborted-retry-waits.md).
+
 ```java
 import com.github.j5ik2o.event.store.adapter.java.spanner.*;
 import com.google.cloud.spanner.DatabaseClient;
@@ -273,7 +275,7 @@ See [MIGRATION_GUIDE](docs/MIGRATION_GUIDE.md) for API changes and the old-versi
 
 ## Conformance
 
-The distributed conformance data (version 1.3.0) is in [conformance/](conformance/README.md).
+The distributed conformance data (version 1.4.0) is in [conformance/](conformance/README.md).
 
 [Memory usage tests](src/test/java/com/github/j5ik2o/event/store/adapter/java/examples/UserAccountExampleTest.java), [DynamoDB usage tests](src/test/java/com/github/j5ik2o/event/store/adapter/java/dynamodbtest/DynamoDbPublicApiUsageTest.java) [SQLite usage tests](src/test/java/com/github/j5ik2o/event/store/adapter/java/examples/SqliteUserAccountExampleTest.java) [Spanner usage tests](src/test/java/com/github/j5ik2o/event/store/adapter/java/examples/SpannerUserAccountExampleTest.java) and [Bigtable usage tests](src/test/java/com/github/j5ik2o/event/store/adapter/java/examples/BigtableUserAccountExampleTest.java) compile and run the example through the public factories. DynamoDB tests use the pinned DynamoDB Local image, Spanner tests use the pinned Cloud Spanner emulator image and Bigtable tests use the pinned Cloud Bigtable emulator image; Docker is required for all three. SQLite tests use temporary local files; Docker is not required.
 
