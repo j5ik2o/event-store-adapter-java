@@ -301,6 +301,7 @@ class BlockingExecutionTest {
               return 3;
             });
         release.countDown();
+        get(callback);
         if (source.equals("failing operation")) {
           assertInstanceOf(
               IllegalStateException.class,
@@ -309,7 +310,6 @@ class BlockingExecutionTest {
         } else {
           assertEquals(1, get(first), source);
         }
-        get(callback);
         assertEquals(2, get(second), source);
         assertEquals(3, get(third), source);
       } finally {
