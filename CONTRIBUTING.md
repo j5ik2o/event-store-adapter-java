@@ -47,5 +47,5 @@ python3 -m unittest discover -s .github/tests -v
 - The version is kept in the `version` file, which the build reads.
 - The Bump-Version workflow is started manually, with the inputs `level`, `force_bump` and `version`. The bump level comes from the Conventional Commits type of the commit subjects: `!` or `BREAKING CHANGE` is major, `feat` and `revert` are minor, and anything else is patch (`.github/semver-level.py`).
 - Bump-Version pushes a `vX.Y.Z` tag, creates a GitHub Release, and sets `version` to the next SNAPSHOT version.
-- Pushing a `vX.Y.Z` tag starts the Release workflow, which publishes to Sonatype (Maven Central). When CI succeeds on `main`, the Snapshot workflow publishes the snapshot.
+- Pushing a `vX.Y.Z` tag starts the Release workflow, which publishes to Sonatype (Maven Central). Snapshot builds are not published; use a released version.
 - Dependency updates are made by Renovate (`renovate.json`).
