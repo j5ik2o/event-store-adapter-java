@@ -11,13 +11,18 @@ import static com.github.j5ik2o.event.store.adapter.java.bigtable.BigtableTestFi
 import static com.github.j5ik2o.event.store.adapter.java.bigtable.BigtableTestFixtures.snapshot;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.github.j5ik2o.event.store.adapter.java.core.AggregateId;
 import com.github.j5ik2o.event.store.adapter.java.core.AsyncEventStore;
 import com.github.j5ik2o.event.store.adapter.java.core.ContractViolationException;
 import com.github.j5ik2o.event.store.adapter.java.core.OptimisticLockException;
 import com.github.j5ik2o.event.store.adapter.java.core.RetentionPolicy;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 /** The asynchronous store uses the same storage and surfaces errors through the future. */
@@ -62,5 +67,41 @@ class BigtableAsyncEventStoreTest {
 
     assertInstanceOf(ContractViolationException.class, e.getCause());
     assertEquals(1, EMULATOR.rows(t.head).size(), "only the configuration row");
+  }
+
+  @Test
+  void operationsRunOnTheCallingThreadAndReturnCompletedFutures() {
+    BigtableEmulator.Tables t = noneStore();
+    AtomicReference<Thread> ranOn = new AtomicReference<>();
+    BigtableStorageHooks hooks =
+        new BigtableStorageHooks() {
+          @Override
+          public void beforeCommit(AggregateId aggregateId, long seqNr) {
+            ranOn.set(Thread.currentThread());
+          }
+        };
+    AsyncEventStore<String, String> async =
+        BigtableEventStore.createAsync(open(t, RetentionPolicy.none(), hooks), config());
+
+    CompletableFuture<Void> write = async.persistEvent(event(1));
+
+    assertTrue(write.isDone() && !write.isCompletedExceptionally());
+    assertSame(Thread.currentThread(), ranOn.get());
+  }
+
+  @Test
+  void anErrorEscapesSynchronouslyOnTheCallingThread() {
+    BigtableEmulator.Tables t = noneStore();
+    BigtableStorageHooks hooks =
+        new BigtableStorageHooks() {
+          @Override
+          public void beforeCommit(AggregateId aggregateId, long seqNr) {
+            throw new AssertionError("injected");
+          }
+        };
+    AsyncEventStore<String, String> async =
+        BigtableEventStore.createAsync(open(t, RetentionPolicy.none(), hooks), config());
+
+    assertThrows(AssertionError.class, () -> async.persistEvent(event(1)));
   }
 }
