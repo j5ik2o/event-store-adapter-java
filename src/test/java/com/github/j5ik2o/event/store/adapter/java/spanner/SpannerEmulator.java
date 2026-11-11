@@ -318,15 +318,8 @@ public final class SpannerEmulator {
 
   private static <T> T within(Duration limit, String what, Callable<T> call) {
     Future<T> pending = CALLS.submit(call);
-    long started = System.nanoTime();
     try {
-      T value = pending.get(limit.toMillis(), TimeUnit.MILLISECONDS);
-      System.err.println(
-          "EMULATOR-CALL-MS "
-              + what.split(" ")[0]
-              + " "
-              + (System.nanoTime() - started) / 1_000_000);
-      return value;
+      return pending.get(limit.toMillis(), TimeUnit.MILLISECONDS);
     } catch (TimeoutException late) {
       pending.cancel(true);
       throw new IllegalStateException(
