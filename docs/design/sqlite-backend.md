@@ -10,7 +10,7 @@ This record maps the Java SQLite backend to the hub's SQLite profile for common 
 - `SqliteStorage` owns one local file and one Java Database Connectivity (JDBC) connection. `initialize` accepts only an uninitialized empty file. `open` validates an existing file without initializing it. `close` is idempotent. A `ReentrantLock` serializes operations on this storage instance.
 - `SqliteEventStore.create` provides the synchronous interface. `createAsync` runs operations on the calling thread and returns completed futures, as the memory backend does.
 - `createOffloaded(storage, config, execution)` submits each whole operation to an application-owned `BlockingExecution`. Validation, serialization, the transaction, deserialization, retention and the listener run on its worker in accepted order. Every offloaded store on one `SqliteStorage` must use the same execution, and the storage must not be used another way or closed until `drained()` completes. The library does not detect a violation. Tests are in `SqliteOffloadedEventStoreTest`.
-- An `Error` inside a transaction rolls it back before it propagates, so the connection stays usable for later operations.
+- An `Error` inside the transaction of an append, a read or retention rolls it back before it propagates, so the connection stays usable for later operations.
 - Callers do not supply a `Connection` or `DataSource`. The backend controls every connection so it can disable shared caches and verify the pragma settings.
 - The public API exposes no `java.sql` types. `org.xerial:sqlite-jdbc:3.53.4.0` is an `implementation` dependency.
 
