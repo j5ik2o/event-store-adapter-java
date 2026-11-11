@@ -37,10 +37,7 @@ public final class SpannerEmulator {
   private static final String INSTANCE = "test-instance";
   private static final String DATABASE = "test-database";
 
-  /**
-   * How long one helper call waits for the emulator. The client's own deadlines run up to an hour,
-   * so without this a container that disappears mid-run stalls the test instead of failing it.
-   */
+  // The Spanner client's default deadlines for DDL, commit and streaming queries are one hour.
   private static final Duration LIMIT = Duration.ofSeconds(60);
 
   private static final ExecutorService CALLS =

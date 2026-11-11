@@ -43,11 +43,8 @@ class SpannerEmulatorLimitTest {
     }
   }
 
-  /**
-   * Answers the connection check a Spanner client makes when it is built, then leaves every other
-   * call open without a response, like an emulator that disappeared behind a kept connection.
-   */
   private static final class SilentEmulator implements AutoCloseable {
+    // A Spanner client built with an emulator host calls this and fails without an answer in 10 s.
     private static final String CONNECTION_CHECK =
         "google.spanner.admin.instance.v1.InstanceAdmin/ListInstanceConfigs";
     private static final MethodDescriptor.Marshaller<byte[]> BYTES =
