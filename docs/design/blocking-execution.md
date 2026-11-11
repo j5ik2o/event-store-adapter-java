@@ -1,6 +1,6 @@
 # Explicit blocking execution: core resource
 
-`BlockingExecution` implements the core resource from the adopted [ADR0010](https://github.com/j5ik2o/event-store-adapter/blob/e4c0fdafe7fd6f9b6c92ff12a5f99485b5e406b1/docs/adr/0010-explicit-execution-for-async-operations.md). It is the first core unit of #818. `SqliteEventStore.createOffloaded` and `BigtableEventStore.createOffloaded` are backend factories; the Spanner factory is follow-up work. Existing factories keep their behavior.
+`BlockingExecution` implements the core resource from the adopted [ADR0010](https://github.com/j5ik2o/event-store-adapter/blob/e4c0fdafe7fd6f9b6c92ff12a5f99485b5e406b1/docs/adr/0010-explicit-execution-for-async-operations.md). It is the first core unit of #818. `SqliteEventStore.createOffloaded`, `SpannerEventStore.createOffloaded` and `BigtableEventStore.createOffloaded` are the backend factories. Existing factories keep their behavior.
 
 Create a resource explicitly with `BlockingExecution.singleWorker(Q)`, where Q is positive. The application owns it. One non-daemon worker executes entire operations in accepted FIFO order, with one active position and Q pending positions. `submit(Callable<T>)` is the minimal backend integration boundary; pass the complete synchronous operation including validation, serialization, transaction resolution, post-commit work, retention, listeners and cleanup. Admission does not inspect payloads or invoke operation code. Full or closed admission returns a failed `CompletableFuture` with `RejectedExecutionException`. There is no global pool, caller execution fallback, or wait for queue space. Short synchronized bookkeeping can wait for the monitor; this is not a hard latency guarantee.
 
@@ -14,4 +14,4 @@ Callbacks may run inline on the completing worker, or on a caller attaching to a
 
 Ordinary operation exceptions remain the cause of the failed result. Controlled `Error` attempts exceptional result completion, unwinds cleanup, and is rethrown to the worker's uncaught handler. After that handler returns, a replacement worker continues accepted FIFO work. If replacement fails, pending results and drain fail diagnostically and admission closes. Fatal VM failure cannot guarantee recovery or cleanup.
 
-This unit has no storage SDK dependency and does not close storage. Spanner operations and their opt-in factory, wrapper runtime, long-running load and the full D8 matrix remain gates in #818. Core test results are not independent review, CI completion, or publication approval.
+This unit has no storage SDK dependency and does not close storage. Wrapper runtime, long-running load and the full D8 matrix remain gates in #818. Core test results are not independent review, CI completion, or publication approval.

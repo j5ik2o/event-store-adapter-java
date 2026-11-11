@@ -10,10 +10,19 @@ import com.google.cloud.spanner.ResultSet;
 import com.google.cloud.spanner.Spanner;
 import com.google.cloud.spanner.SpannerOptions;
 import com.google.cloud.spanner.Statement;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.utility.DockerImageName;
@@ -28,6 +37,16 @@ public final class SpannerEmulator {
   private static final String PROJECT = "test-project";
   private static final String INSTANCE = "test-instance";
   private static final String DATABASE = "test-database";
+
+  // The Spanner client's default deadlines for DDL, commit and streaming queries are one hour.
+  private static final Duration LIMIT = Duration.ofSeconds(60);
+
+  private static final ExecutorService CALLS =
+      Executors.newCachedThreadPool(task -> {
+        Thread thread = new Thread(task, "spanner-emulator-call");
+        thread.setDaemon(true);
+        return thread;
+      });
 
   private static SpannerEmulator shared;
 
@@ -66,16 +85,25 @@ public final class SpannerEmulator {
               .setCredentials(NoCredentials.getInstance())
               .build()
               .getService();
-      spanner
-          .getInstanceAdminClient()
-          .createInstance(
-              InstanceInfo.newBuilder(InstanceId.of(PROJECT, INSTANCE))
-                  .setInstanceConfigId(InstanceConfigId.of(PROJECT, "emulator-config"))
-                  .setNodeCount(1)
-                  .setDisplayName(INSTANCE)
-                  .build())
-          .get();
-      spanner.getDatabaseAdminClient().createDatabase(INSTANCE, DATABASE, List.of()).get();
+      Spanner started = spanner;
+      within(
+          LIMIT,
+          "instance creation",
+          () ->
+              started
+                  .getInstanceAdminClient()
+                  .createInstance(
+                      InstanceInfo.newBuilder(InstanceId.of(PROJECT, INSTANCE))
+                          .setInstanceConfigId(InstanceConfigId.of(PROJECT, "emulator-config"))
+                          .setNodeCount(1)
+                          .setDisplayName(INSTANCE)
+                          .build())
+                  .get());
+      within(
+          LIMIT,
+          "database creation",
+          () ->
+              started.getDatabaseAdminClient().createDatabase(INSTANCE, DATABASE, List.of()).get());
       return new SpannerEmulator(
           container,
           spanner,
@@ -100,6 +128,26 @@ public final class SpannerEmulator {
   /** A client for a database that does not exist on the emulator. */
   public DatabaseClient clientForMissingDatabase() {
     return spanner.getDatabaseClient(DatabaseId.of(PROJECT, INSTANCE, "no-such-database"));
+  }
+
+  /**
+   * A new SDK service for the shared database, owned and closed by the caller.
+   *
+   * @param settings changes applied to the options before the service is built
+   */
+  public Spanner newService(Consumer<SpannerOptions.Builder> settings) {
+    SpannerOptions.Builder options =
+        SpannerOptions.newBuilder()
+            .setProjectId(PROJECT)
+            .setEmulatorHost(container.getHost() + ":" + container.getMappedPort(9010))
+            .setCredentials(NoCredentials.getInstance());
+    settings.accept(options);
+    return options.build().getService();
+  }
+
+  /** The client of a service from {@link #newService} for the shared database. */
+  public static DatabaseClient client(Spanner service) {
+    return service.getDatabaseClient(DatabaseId.of(PROJECT, INSTANCE, DATABASE));
   }
 
   /** One row of the configuration table. A null value is written as SQL NULL. */
@@ -233,19 +281,26 @@ public final class SpannerEmulator {
 
   /** Runs DDL against the shared database and waits for it to finish. */
   public void ddl(String... statements) {
-    try {
-      spanner
-          .getDatabaseAdminClient()
-          .updateDatabaseDdl(INSTANCE, DATABASE, Arrays.asList(statements), null)
-          .get();
-    } catch (Exception failure) {
-      throw new IllegalStateException(failure);
-    }
+    ddl(spanner, LIMIT, statements);
+  }
+
+  static void ddl(Spanner spanner, Duration limit, String... statements) {
+    within(
+        limit,
+        "DDL (" + statements.length + (statements.length == 1 ? " statement)" : " statements)"),
+        () ->
+            spanner
+                .getDatabaseAdminClient()
+                .updateDatabaseDdl(INSTANCE, DATABASE, Arrays.asList(statements), null)
+                .get());
   }
 
   /** Runs one DML statement in its own transaction, independent from the library. */
   public void execute(String dml) {
-    client.readWriteTransaction().run(tx -> tx.executeUpdate(Statement.of(dml)));
+    within(
+        LIMIT,
+        "DML " + dml,
+        () -> client.readWriteTransaction().run(tx -> tx.executeUpdate(Statement.of(dml))));
   }
 
   public long count(String prefix, String table) {
@@ -253,19 +308,54 @@ public final class SpannerEmulator {
   }
 
   public List<Long> longs(String sql) {
-    List<Long> result = new ArrayList<>();
-    try (ResultSet rs = client.singleUse().executeQuery(Statement.of(sql))) {
-      while (rs.next()) {
-        result.add(rs.getLong(0));
-      }
-    }
-    return result;
+    return within(
+        LIMIT,
+        "query " + sql,
+        () -> {
+          List<Long> result = new ArrayList<>();
+          try (ResultSet rs = client.singleUse().executeQuery(Statement.of(sql))) {
+            while (rs.next()) {
+              result.add(rs.getLong(0));
+            }
+          }
+          return result;
+        });
   }
 
   /** The first column of the first row as a string, or null when there is no row. */
   public String string(String sql) {
-    try (ResultSet rs = client.singleUse().executeQuery(Statement.of(sql))) {
-      return rs.next() ? rs.getString(0) : null;
+    return within(
+        LIMIT,
+        "query " + sql,
+        () -> {
+          try (ResultSet rs = client.singleUse().executeQuery(Statement.of(sql))) {
+            return rs.next() ? rs.getString(0) : null;
+          }
+        });
+  }
+
+  private static <T> T within(Duration limit, String what, Callable<T> call) {
+    Future<T> pending = CALLS.submit(call);
+    try {
+      return pending.get(limit.toMillis(), TimeUnit.MILLISECONDS);
+    } catch (TimeoutException late) {
+      pending.cancel(true);
+      throw new IllegalStateException(
+          "the Spanner emulator did not finish "
+              + what
+              + " within "
+              + limit.getSeconds()
+              + " s; the emulator container may have stopped",
+          late);
+    } catch (InterruptedException interrupted) {
+      pending.cancel(true);
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("interrupted while waiting for " + what, interrupted);
+    } catch (ExecutionException failed) {
+      Throwable cause = failed.getCause();
+      if (cause instanceof RuntimeException) throw (RuntimeException) cause;
+      if (cause instanceof Error) throw (Error) cause;
+      throw new IllegalStateException(what + " failed on the Spanner emulator", cause);
     }
   }
 }
