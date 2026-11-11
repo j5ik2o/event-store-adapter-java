@@ -30,8 +30,20 @@ final class SpannerTransactions {
    */
   static <T> T runReadWrite(
       SpannerStorage storage, @Nullable AggregateId hookId, String failureMessage, Body<T> body) {
-    int retries = 0;
+    return runReadWrite(storage, hookId, failureMessage, body, SpannerRetryWait.DEFAULT);
+  }
+
+  static <T> T runReadWrite(
+      SpannerStorage storage,
+      @Nullable AggregateId hookId,
+      String failureMessage,
+      Body<T> body,
+      SpannerRetryWait wait) {
+    int retriesStarted = 0;
+    SpannerException lastAbort = null;
     while (true) {
+      wait.checkInterrupted(failureMessage, lastAbort);
+      if (lastAbort != null) retriesStarted++;
       boolean committed = false;
       T result;
       try (TransactionManager manager =
@@ -47,11 +59,12 @@ final class SpannerTransactions {
         throw failure;
       } catch (SpannerException failure) {
         if (failure.getErrorCode() == ErrorCode.ABORTED || failure instanceof AbortedException) {
-          if (retries >= storage.config.transactionRetryLimit()) {
+          if (retriesStarted >= storage.config.transactionRetryLimit()) {
             throw new StorageException(
                 failureMessage + ": transaction aborted more than the retry limit", failure);
           }
-          retries++;
+          wait.await(failure, retriesStarted + 1, failureMessage);
+          lastAbort = failure;
           continue;
         }
         throw new StorageException(failureMessage, failure);
