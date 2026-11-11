@@ -22,6 +22,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.utility.DockerImageName;
@@ -127,6 +128,26 @@ public final class SpannerEmulator {
   /** A client for a database that does not exist on the emulator. */
   public DatabaseClient clientForMissingDatabase() {
     return spanner.getDatabaseClient(DatabaseId.of(PROJECT, INSTANCE, "no-such-database"));
+  }
+
+  /**
+   * A new SDK service for the shared database, owned and closed by the caller.
+   *
+   * @param settings changes applied to the options before the service is built
+   */
+  public Spanner newService(Consumer<SpannerOptions.Builder> settings) {
+    SpannerOptions.Builder options =
+        SpannerOptions.newBuilder()
+            .setProjectId(PROJECT)
+            .setEmulatorHost(container.getHost() + ":" + container.getMappedPort(9010))
+            .setCredentials(NoCredentials.getInstance());
+    settings.accept(options);
+    return options.build().getService();
+  }
+
+  /** The client of a service from {@link #newService} for the shared database. */
+  public static DatabaseClient client(Spanner service) {
+    return service.getDatabaseClient(DatabaseId.of(PROJECT, INSTANCE, DATABASE));
   }
 
   /** One row of the configuration table. A null value is written as SQL NULL. */
