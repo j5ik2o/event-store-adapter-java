@@ -26,8 +26,7 @@ class SpannerEmulatorLimitTest {
   @Test
   void ddlFailsNamingTheWaitWhenTheEmulatorStopsAnswering() throws IOException {
     Duration limit = Duration.ofSeconds(2);
-    try (SilentEmulator silent = new SilentEmulator();
-        Spanner spanner = silent.client()) {
+    try (SilentEmulator silent = new SilentEmulator()) {
       IllegalStateException failure =
           assertTimeoutPreemptively(
               Duration.ofSeconds(20),
@@ -36,7 +35,7 @@ class SpannerEmulatorLimitTest {
                       IllegalStateException.class,
                       () ->
                           SpannerEmulator.ddl(
-                              spanner, limit, "CREATE TABLE t (k INT64) PRIMARY KEY (k)")));
+                              silent.spanner, limit, "CREATE TABLE t (k INT64) PRIMARY KEY (k)")));
       assertTrue(
           failure.getMessage().contains("DDL (1 statement)")
               && failure.getMessage().contains("within 2 s"),
@@ -69,6 +68,7 @@ class SpannerEmulatorLimitTest {
         };
 
     private final Server server;
+    final Spanner spanner;
 
     SilentEmulator() throws IOException {
       server =
@@ -100,20 +100,20 @@ class SpannerEmulatorLimitTest {
                   })
               .build()
               .start();
-    }
-
-    Spanner client() {
-      return SpannerOptions.newBuilder()
-          .setProjectId("test-project")
-          .setEmulatorHost("localhost:" + server.getPort())
-          .setCredentials(NoCredentials.getInstance())
-          .build()
-          .getService();
+      spanner =
+          SpannerOptions.newBuilder()
+              .setProjectId("test-project")
+              .setEmulatorHost("localhost:" + server.getPort())
+              .setCredentials(NoCredentials.getInstance())
+              .build()
+              .getService();
     }
 
     @Override
     public void close() {
+      // Ending the calls left open first lets the client close without waiting on them.
       server.shutdownNow();
+      spanner.close();
     }
   }
 }
