@@ -265,6 +265,61 @@ class BlockingExecutionTest {
   }
 
   @Test
+  void interruptLeftByOneCommandNeverFailsLaterQueuedCommands() throws Exception {
+    for (String source : new String[] {"operation", "failing operation", "worker callback"}) {
+      BlockingExecution execution = BlockingExecution.singleWorker(2);
+      CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+      try {
+        CompletableFuture<Integer> first =
+            execution.submit(() -> {
+              entered.countDown();
+              await(release);
+              if (!source.equals("worker callback")) {
+                Thread.currentThread().interrupt();
+              }
+              if (source.equals("failing operation") && Thread.currentThread().isInterrupted()) {
+                throw new IllegalStateException("interrupted");
+              }
+              return 1;
+            });
+        await(entered);
+        CompletableFuture<?> callback =
+            first.handle((value, failure) -> {
+              if (source.equals("worker callback")) {
+                Thread.currentThread().interrupt();
+              }
+              return null;
+            });
+        CompletableFuture<Integer> second =
+            execution.submit(() -> {
+              Thread.sleep(1);
+              return 2;
+            });
+        CompletableFuture<Integer> third =
+            execution.submit(() -> {
+              Thread.sleep(1);
+              return 3;
+            });
+        release.countDown();
+        if (source.equals("failing operation")) {
+          assertInstanceOf(
+              IllegalStateException.class,
+              assertThrows(ExecutionException.class, () -> get(first)).getCause(),
+              source);
+        } else {
+          assertEquals(1, get(first), source);
+        }
+        get(callback);
+        assertEquals(2, get(second), source);
+        assertEquals(3, get(third), source);
+      } finally {
+        release.countDown();
+        drain(execution);
+      }
+    }
+  }
+
+  @Test
   void fatalRethrowsAfterCleanupAndReplacesWorkerInFifoOrder() throws Exception {
     CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
     CountDownLatch handlerEntered = new CountDownLatch(1), handlerRelease = new CountDownLatch(1);
