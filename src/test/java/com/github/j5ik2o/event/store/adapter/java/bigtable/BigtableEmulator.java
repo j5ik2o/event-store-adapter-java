@@ -99,9 +99,9 @@ public final class BigtableEmulator {
           });
       return new BigtableEmulator(container, data, admin);
     } catch (Exception failure) {
+      container.stop();
       if (data != null) data.close();
       if (admin != null) admin.close();
-      container.stop();
       throw new IllegalStateException("failed to start the Bigtable emulator", failure);
     }
   }
@@ -155,10 +155,12 @@ public final class BigtableEmulator {
     }
   }
 
+  // Stopping the container first resets the connections, so a call abandoned by within() ends and
+  // the clients close without waiting on it.
   private void stop() {
+    container.stop();
     data.close();
     admin.close();
-    container.stop();
   }
 
   /** The clients handed to the library. The library never owns or closes them. */

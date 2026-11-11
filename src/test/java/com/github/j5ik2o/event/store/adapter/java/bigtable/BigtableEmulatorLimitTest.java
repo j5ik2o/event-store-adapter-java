@@ -22,7 +22,7 @@ class BigtableEmulatorLimitTest {
     try {
       IllegalStateException failure =
           assertTimeoutPreemptively(
-              Duration.ofSeconds(20),
+              Duration.ofSeconds(10),
               () ->
                   assertThrows(
                       IllegalStateException.class,
