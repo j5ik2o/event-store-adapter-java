@@ -49,5 +49,5 @@ python3 -m unittest discover -s .github/tests -v
 - 版は `version` ファイルに持ち、ビルドが読みます。
 - Bump-Version ワークフローは手動で起動します。入力は `level`・`force_bump`・`version` です。版を上げる段階は、コミットの件名の Conventional Commits の型で決まります。`!` か `BREAKING CHANGE` は major、`feat` と `revert` は minor、それ以外は patch です（`.github/semver-level.py`）。
 - Bump-Version は `vX.Y.Z` のタグを push し、GitHub Release を作り、`version` を次の SNAPSHOT 版にします。
-- `vX.Y.Z` のタグを push すると Release ワークフローが起動し、Sonatype（Maven Central）へ公開します。`main` で CI が成功すると、Snapshot ワークフローがスナップショットを公開します。
+- `vX.Y.Z` のタグを push すると Release ワークフローが起動し、Sonatype（Maven Central）へ公開します。Snapshot（試験版）は公開しません。正式版を使ってください。
 - 依存の更新は Renovate が行います（`renovate.json`）。
