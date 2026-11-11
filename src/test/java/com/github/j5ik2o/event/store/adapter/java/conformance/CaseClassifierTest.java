@@ -135,7 +135,7 @@ class CaseClassifierTest {
             .filter(c -> CaseClassifier.exclusion(c, Backend.DYNAMODB).isEmpty())
             .map(ConformanceCase::id)
             .collect(Collectors.toSet());
-    assertEquals(106, targets.size());
+    assertEquals(110, targets.size());
     assertEquals(targets, required.get(Backend.DYNAMODB));
     Set<String> connections =
         data.cases().stream()

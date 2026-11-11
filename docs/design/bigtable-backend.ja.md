@@ -2,7 +2,7 @@
 
 # Bigtable 保存先の設計記録
 
-Java の Bigtable 保存先が、ハブの Bigtable プロファイル（共通契約 v5）の規則をどう実装し、何の試験で確かめているかを対応づける記録です。規範（ハブの `docs/spec`）と配布データ（`conformance/` 1.3.0）は変更していません。利用者向けの形式の説明は [BIGTABLE_DATABASE_SCHEMA](../BIGTABLE_DATABASE_SCHEMA.ja.md) にあります。
+Java の Bigtable 保存先が、ハブの Bigtable プロファイル（共通契約 v5）の規則をどう実装し、何の試験で確かめているかを対応づける記録です。規範（ハブの `docs/spec`）と配布データ（`conformance/` 1.4.0）は変更していません。利用者向けの形式の説明は [BIGTABLE_DATABASE_SCHEMA](../BIGTABLE_DATABASE_SCHEMA.ja.md) にあります。
 
 ## 1. 公開型と資源の所有
 

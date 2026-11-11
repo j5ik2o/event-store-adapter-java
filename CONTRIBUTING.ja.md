@@ -12,7 +12,7 @@
 
 すべての言語の実装で共有する仕様は、ハブのリポジトリにあります: [docs/spec](https://github.com/j5ik2o/event-store-adapter/tree/main/docs/spec)。共有する設計判断は [docs/adr](https://github.com/j5ik2o/event-store-adapter/tree/main/docs/adr) にあります。
 
-一部のファイルはハブから固定して写したもので、CI が SHA-256 で照合します: `conformance/`（データの版 1.3.0）・`api-surface/surface.json`・`user-docs/template.json`・`tools/user-docs/check.py`。[conformance/README.md](conformance/README.md) と [api-surface/README.md](api-surface/README.md) を参照してください。これらのファイルは、このリポジトリで編集しません。
+一部のファイルはハブから固定して写したもので、CI が SHA-256 で照合します: `conformance/`（データの版 1.4.0）・`api-surface/surface.json`・`user-docs/template.json`・`tools/user-docs/check.py`。[conformance/README.md](conformance/README.md) と [api-surface/README.md](api-surface/README.md) を参照してください。これらのファイルは、このリポジトリで編集しません。
 
 ## ローカルの準備
 

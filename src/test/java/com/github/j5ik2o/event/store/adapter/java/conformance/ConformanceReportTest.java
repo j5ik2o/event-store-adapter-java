@@ -50,7 +50,7 @@ class ConformanceReportTest {
   void jsonHasTheRequiredTopLevelFields() {
     JsonNode json = report.toJson();
 
-    assertEquals("1.3.0", json.get("data_version").asText());
+    assertEquals("1.4.0", json.get("data_version").asText());
     assertTrue(json.at("/manifest/result").isTextual(), json.at("/manifest").toString());
     assertEquals("java", json.get("language").asText());
     assertEquals("2.0.0-SNAPSHOT", json.get("implementation_version").asText());
@@ -70,17 +70,17 @@ class ConformanceReportTest {
     assertEquals(66, findCount(json, "memory", "passed"));
     assertEquals(15, findCount(json, "dynamodb-local", "passed"));
     assertEquals(0, findCount(json, "memory", "failed"));
-    assertEquals(102, findCount(json, "memory", "not-applicable"));
+    assertEquals(106, findCount(json, "memory", "not-applicable"));
     assertEquals(0, findCount(json, "memory", "unverified"));
     assertEquals(1, findCount(json, "memory", "unrepresentable"));
     assertEquals(67, findCount(json, "sqlite", "passed"));
     assertEquals(0, findCount(json, "sqlite", "failed"));
-    assertEquals(101, findCount(json, "sqlite", "not-applicable"));
+    assertEquals(105, findCount(json, "sqlite", "not-applicable"));
     assertEquals(0, findCount(json, "sqlite", "unverified"));
     assertEquals(1, findCount(json, "sqlite", "unrepresentable"));
     assertEquals(0, findCount(json, "dynamodb-local", "failed"));
     assertEquals(63, findCount(json, "dynamodb-local", "not-applicable"));
-    assertEquals(91, findCount(json, "dynamodb-local", "unverified"));
+    assertEquals(95, findCount(json, "dynamodb-local", "unverified"));
     assertEquals(0, findCount(json, "dynamodb-local", "unrepresentable"));
   }
 
@@ -216,7 +216,7 @@ class ConformanceReportTest {
   void targetListsIncludeUnverifiedApplicableCasesAndReasonsAreCountedSeparately() {
     JsonNode json = report.toJson();
     assertEquals(66, json.at("/target_cases/memory").size());
-    assertEquals(106, json.at("/target_cases/dynamodb-local").size());
+    assertEquals(110, json.at("/target_cases/dynamodb-local").size());
     assertEquals(67, json.at("/target_cases/sqlite").size());
     assertTrue(
         json.at("/target_cases/dynamodb-local")
@@ -325,7 +325,7 @@ class ConformanceReportTest {
   void missingCommitIsJsonNull() throws IOException {
     ConformanceReport noCommit =
         new ConformanceReport(
-            "1.3.0",
+            "1.4.0",
             ManifestVerifier.verify(ConformanceTestFiles.REAL_ROOT),
             "2.0.0-SNAPSHOT",
             null,
@@ -348,10 +348,10 @@ class ConformanceReportTest {
       throws IOException {
     Path copy = ConformanceTestFiles.copyOfRealData(tempDir);
     ConformanceTestFiles.replaceInFile(
-        copy.resolve("manifest.json"), "\"version\": \"1.3.0\"", "\"version\": \"9.9.9\"");
+        copy.resolve("manifest.json"), "\"version\": \"1.4.0\"", "\"version\": \"9.9.9\"");
     ConformanceReport tampered =
         new ConformanceReport(
-            "1.3.0",
+            "1.4.0",
             ManifestVerifier.verify(copy),
             "2.0.0-SNAPSHOT",
             null,
@@ -360,9 +360,9 @@ class ConformanceReportTest {
 
     JsonNode manifest = tampered.toJson().get("manifest");
     assertEquals("9.9.9", manifest.get("version").asText());
-    assertEquals("1.3.0", manifest.get("expected_version").asText());
+    assertEquals("1.4.0", manifest.get("expected_version").asText());
     assertFalse(manifest.get("version_matches").asBoolean());
-    assertEquals("1.3.0", report.toJson().at("/manifest/version").asText());
+    assertEquals("1.4.0", report.toJson().at("/manifest/version").asText());
     assertTrue(report.toJson().at("/manifest/version_matches").asBoolean());
   }
 }
