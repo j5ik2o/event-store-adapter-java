@@ -14,8 +14,16 @@ import com.google.cloud.bigtable.data.v2.models.RowMutation;
 import com.google.cloud.bigtable.data.v2.stub.metrics.NoopMetricsProvider;
 import com.google.protobuf.ByteString;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.utility.DockerImageName;
@@ -32,6 +40,17 @@ public final class BigtableEmulator {
   public static final String INSTANCE = "test-instance";
   public static final String STORE_ID = "5f0c8b8e-3c1a-4d7e-9a4b-2f6d1c0e7a11";
   private static final int PORT = 8086;
+
+  // The Bigtable client's default deadlines run from one minute (MutateRow) to hours (ReadRows).
+  // Staying under the shortest one makes this limit, not the client's, name the wait.
+  private static final Duration LIMIT = Duration.ofSeconds(30);
+
+  private static final ExecutorService CALLS =
+      Executors.newCachedThreadPool(task -> {
+        Thread thread = new Thread(task, "bigtable-emulator-call");
+        thread.setDaemon(true);
+        return thread;
+      });
 
   private static BigtableEmulator shared;
 
@@ -70,12 +89,19 @@ public final class BigtableEmulator {
       int port = container.getMappedPort(PORT);
       data = newDataClient(host, port, null);
       admin = newAdminClient(host, port, null);
-      waitUntilListTablesSucceeds(admin);
+      BigtableTableAdminClient started = admin;
+      within(
+          LIMIT,
+          "ListTables polling at startup",
+          () -> {
+            waitUntilListTablesSucceeds(started);
+            return null;
+          });
       return new BigtableEmulator(container, data, admin);
     } catch (Exception failure) {
+      container.stop();
       if (data != null) data.close();
       if (admin != null) admin.close();
-      container.stop();
       throw new IllegalStateException("failed to start the Bigtable emulator", failure);
     }
   }
@@ -129,10 +155,12 @@ public final class BigtableEmulator {
     }
   }
 
+  // Stopping the container first resets the connections, so a call abandoned by within() ends and
+  // the clients close without waiting on it.
   private void stop() {
+    container.stop();
     data.close();
     admin.close();
-    container.stop();
   }
 
   /** The clients handed to the library. The library never owns or closes them. */
@@ -186,16 +214,24 @@ public final class BigtableEmulator {
   public Tables createTables() {
     int n = tables.incrementAndGet();
     Tables created = new Tables("esa_journal_" + n, "esa_head_" + n);
-    admin.createTable(
-        CreateTableRequest.of(created.journal)
-            .addFamily("event", GCRules.GCRULES.maxVersions(1))
-            .addFamily("history", GCRules.GCRULES.maxVersions(1))
-            .addFamily("config"));
-    admin.createTable(
-        CreateTableRequest.of(created.head)
-            .addFamily("head", GCRules.GCRULES.maxVersions(1))
-            .addFamily("snapshot", GCRules.GCRULES.maxVersions(1))
-            .addFamily("config"));
+    within(
+        LIMIT,
+        "CreateTable " + created.journal,
+        () ->
+            admin.createTable(
+                CreateTableRequest.of(created.journal)
+                    .addFamily("event", GCRules.GCRULES.maxVersions(1))
+                    .addFamily("history", GCRules.GCRULES.maxVersions(1))
+                    .addFamily("config")));
+    within(
+        LIMIT,
+        "CreateTable " + created.head,
+        () ->
+            admin.createTable(
+                CreateTableRequest.of(created.head)
+                    .addFamily("head", GCRules.GCRULES.maxVersions(1))
+                    .addFamily("snapshot", GCRules.GCRULES.maxVersions(1))
+                    .addFamily("config")));
     return created;
   }
 
@@ -224,26 +260,46 @@ public final class BigtableEmulator {
 
   /** A raw cell write at timestamp 0, independent from the library. */
   public void put(String table, ByteString key, String family, String qualifier, ByteString value) {
-    data.mutateRow(
+    mutateRow(
+        table,
         RowMutation.create(table, key)
             .setCell(family, ByteString.copyFromUtf8(qualifier), 0L, value));
   }
 
   /** A raw delete of a whole row, independent from the library. */
   public void deleteRow(String table, ByteString key) {
-    data.mutateRow(RowMutation.create(table, key).deleteRow());
+    mutateRow(table, RowMutation.create(table, key).deleteRow());
+  }
+
+  private void mutateRow(String table, RowMutation mutation) {
+    within(
+        LIMIT,
+        "MutateRow on " + table,
+        () -> {
+          data.mutateRow(mutation);
+          return null;
+        });
   }
 
   /** A raw read of one row, or null when the row does not exist. */
   public Row row(String table, ByteString key) {
-    return data.readRow(table, key);
+    return row(data, LIMIT, table, key);
+  }
+
+  static Row row(BigtableDataClient data, Duration limit, String table, ByteString key) {
+    return within(limit, "ReadRow on " + table, () -> data.readRow(table, key));
   }
 
   /** Every row of a table in key order, including the configuration row. */
   public List<Row> rows(String table) {
-    List<Row> result = new ArrayList<>();
-    data.readRows(Query.create(table)).forEach(result::add);
-    return result;
+    return within(
+        LIMIT,
+        "ReadRows on " + table,
+        () -> {
+          List<Row> result = new ArrayList<>();
+          data.readRows(Query.create(table)).forEach(result::add);
+          return result;
+        });
   }
 
   /** The newest cell value of a column as a string, or null when the column has no cell. */
@@ -266,5 +322,30 @@ public final class BigtableEmulator {
   public int cellCount(String table, ByteString key, String family, String qualifier) {
     Row row = row(table, key);
     return row == null ? 0 : row.getCells(family, ByteString.copyFromUtf8(qualifier)).size();
+  }
+
+  private static <T> T within(Duration limit, String what, Callable<T> call) {
+    Future<T> pending = CALLS.submit(call);
+    try {
+      return pending.get(limit.toMillis(), TimeUnit.MILLISECONDS);
+    } catch (TimeoutException late) {
+      pending.cancel(true);
+      throw new IllegalStateException(
+          "the Bigtable emulator did not finish "
+              + what
+              + " within "
+              + limit.getSeconds()
+              + " s; the emulator container may have stopped",
+          late);
+    } catch (InterruptedException interrupted) {
+      pending.cancel(true);
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("interrupted while waiting for " + what, interrupted);
+    } catch (ExecutionException failed) {
+      Throwable cause = failed.getCause();
+      if (cause instanceof RuntimeException) throw (RuntimeException) cause;
+      if (cause instanceof Error) throw (Error) cause;
+      throw new IllegalStateException(what + " failed on the Bigtable emulator", cause);
+    }
   }
 }
