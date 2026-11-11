@@ -10,7 +10,7 @@ This guide is for developers who change this repository. It is the Java implemen
 
 The specification shared by all language implementations is in the hub repository: [docs/spec](https://github.com/j5ik2o/event-store-adapter/tree/main/docs/spec). The shared design decisions are in [docs/adr](https://github.com/j5ik2o/event-store-adapter/tree/main/docs/adr).
 
-Some files are fixed copies from the hub, and CI checks them with SHA-256: `conformance/` (data version 1.4.0), `api-surface/surface.json`, `user-docs/template.json` and `tools/user-docs/check.py`. See [conformance/README.md](conformance/README.md) and [api-surface/README.md](api-surface/README.md). Do not edit these files in this repository.
+Some files are fixed copies from the hub, and CI checks them with SHA-256: `conformance/` (data version 1.5.0), `api-surface/surface.json`, `user-docs/template.json` and `tools/user-docs/check.py`. See [conformance/README.md](conformance/README.md) and [api-surface/README.md](api-surface/README.md). Do not edit these files in this repository.
 
 ## Local setup
 

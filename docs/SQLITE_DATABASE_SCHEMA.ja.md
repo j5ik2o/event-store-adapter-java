@@ -2,7 +2,7 @@
 
 # SQLite の保存先のスキーマ
 
-`com.github.j5ik2o.event.store.adapter.java.sqlite` が使う配置です。`5.0.1` には含まれず、次の版から使えます。[共通契約 v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md) と [SQLite プロファイル](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/storage/sqlite.md) に従います。適合データは 1.4.0 です。保存する `layout_version` は **1** で、保存形式の別の番号です。Rust 実装と同じ配置のファイルを使います。
+`com.github.j5ik2o.event.store.adapter.java.sqlite` が使う配置です。`5.0.1` には含まれず、次の版から使えます。[共通契約 v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md) と [SQLite プロファイル](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/storage/sqlite.md) に従います。適合データは 1.5.0 です。保存する `layout_version` は **1** で、保存形式の別の番号です。Rust 実装と同じ配置のファイルを使います。
 
 公開型は [README](../README.ja.md)、版の違いは [MIGRATION_GUIDE](MIGRATION_GUIDE.ja.md) を参照してください。設計記録は [sqlite-backend](design/sqlite-backend.ja.md) です。
 

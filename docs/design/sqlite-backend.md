@@ -2,7 +2,7 @@
 
 [日本語](sqlite-backend.ja.md)
 
-This record maps the Java SQLite backend to the hub's SQLite profile for common contract v5. The specification and conformance data 1.4.0 remain the reference. The user-facing format is described in [SQLite storage schema](../SQLITE_DATABASE_SCHEMA.md).
+This record maps the Java SQLite backend to the hub's SQLite profile for common contract v5. The specification and conformance data 1.5.0 remain the reference. The user-facing format is described in [SQLite storage schema](../SQLITE_DATABASE_SCHEMA.md).
 
 ## 1. Public types and connection ownership
 

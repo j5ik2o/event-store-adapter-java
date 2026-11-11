@@ -33,7 +33,7 @@ class ConformanceDataLoaderTest {
     assertEquals(173, data.cases().size());
     Set<String> ids = new HashSet<>();
     data.cases().forEach(c -> assertTrue(ids.add(c.id()), "duplicated id: " + c.id()));
-    assertEquals("1.4.0", data.dataVersion());
+    assertEquals("1.5.0", data.dataVersion());
     assertNotNull(data.coverageExclusions());
   }
 
@@ -41,7 +41,7 @@ class ConformanceDataLoaderTest {
   void unknownVersionFailsOnCopy(@TempDir Path tempDir) throws IOException {
     Path copy = ConformanceTestFiles.copyOfRealData(tempDir);
     ConformanceTestFiles.replaceInFile(
-        copy.resolve("values/aid.json"), "\"version\": \"1.4.0\"", "\"version\": \"9.9.9\"");
+        copy.resolve("values/aid.json"), "\"version\": \"1.5.0\"", "\"version\": \"9.9.9\"");
 
     assertThrows(Exception.class, () -> ConformanceDataLoader.load(copy));
   }
@@ -116,7 +116,7 @@ class ConformanceDataLoaderTest {
     Path copy = ConformanceTestFiles.copyOfRealData(tempDir);
     Files.writeString(
         copy.resolve("values/aid.json"),
-        "{\"format\":\"values\",\"version\":\"1.4.0\",\"cases\":{}}");
+        "{\"format\":\"values\",\"version\":\"1.5.0\",\"cases\":{}}");
 
     IOException e = assertThrows(IOException.class, () -> ConformanceDataLoader.load(copy));
 

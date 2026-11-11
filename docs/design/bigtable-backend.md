@@ -2,7 +2,7 @@
 
 [日本語](bigtable-backend.ja.md)
 
-This record maps the Java Bigtable backend to the hub's Bigtable profile for common contract v5. The specification and conformance data 1.4.0 remain the reference. The user-facing format is described in [Bigtable storage schema](../BIGTABLE_DATABASE_SCHEMA.md).
+This record maps the Java Bigtable backend to the hub's Bigtable profile for common contract v5. The specification and conformance data 1.5.0 remain the reference. The user-facing format is described in [Bigtable storage schema](../BIGTABLE_DATABASE_SCHEMA.md).
 
 ## 1. Public types and resource ownership
 
