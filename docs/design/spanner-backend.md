@@ -2,7 +2,7 @@
 
 [日本語](spanner-backend.ja.md)
 
-This record maps the Java Spanner backend to the hub's Spanner profile for common contract v5. The specification and conformance data 1.4.0 remain the reference. The user-facing format is described in [Spanner storage schema](../SPANNER_DATABASE_SCHEMA.md).
+This record maps the Java Spanner backend to the hub's Spanner profile for common contract v5. The specification and conformance data 1.5.0 remain the reference. The user-facing format is described in [Spanner storage schema](../SPANNER_DATABASE_SCHEMA.md).
 
 ## 1. Public types and resource ownership
 

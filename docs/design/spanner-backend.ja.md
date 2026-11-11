@@ -2,7 +2,7 @@
 
 # Spanner 保存先の設計記録
 
-Java の Spanner 保存先が、ハブの Spanner プロファイル（共通契約 v5）の規則をどう実装し、何の試験で確かめているかを対応づける記録です。規範（ハブの `docs/spec`）と配布データ（`conformance/` 1.4.0）は変更していません。利用者向けの形式の説明は [SPANNER_DATABASE_SCHEMA](../SPANNER_DATABASE_SCHEMA.ja.md) にあります。
+Java の Spanner 保存先が、ハブの Spanner プロファイル（共通契約 v5）の規則をどう実装し、何の試験で確かめているかを対応づける記録です。規範（ハブの `docs/spec`）と配布データ（`conformance/` 1.5.0）は変更していません。利用者向けの形式の説明は [SPANNER_DATABASE_SCHEMA](../SPANNER_DATABASE_SCHEMA.ja.md) にあります。
 
 ## 1. 公開型と資源の所有
 

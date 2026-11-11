@@ -50,7 +50,7 @@ class ConformanceReportTest {
   void jsonHasTheRequiredTopLevelFields() {
     JsonNode json = report.toJson();
 
-    assertEquals("1.4.0", json.get("data_version").asText());
+    assertEquals("1.5.0", json.get("data_version").asText());
     assertTrue(json.at("/manifest/result").isTextual(), json.at("/manifest").toString());
     assertEquals("java", json.get("language").asText());
     assertEquals("2.0.0-SNAPSHOT", json.get("implementation_version").asText());
@@ -325,7 +325,7 @@ class ConformanceReportTest {
   void missingCommitIsJsonNull() throws IOException {
     ConformanceReport noCommit =
         new ConformanceReport(
-            "1.4.0",
+            "1.5.0",
             ManifestVerifier.verify(ConformanceTestFiles.REAL_ROOT),
             "2.0.0-SNAPSHOT",
             null,
@@ -348,10 +348,10 @@ class ConformanceReportTest {
       throws IOException {
     Path copy = ConformanceTestFiles.copyOfRealData(tempDir);
     ConformanceTestFiles.replaceInFile(
-        copy.resolve("manifest.json"), "\"version\": \"1.4.0\"", "\"version\": \"9.9.9\"");
+        copy.resolve("manifest.json"), "\"version\": \"1.5.0\"", "\"version\": \"9.9.9\"");
     ConformanceReport tampered =
         new ConformanceReport(
-            "1.4.0",
+            "1.5.0",
             ManifestVerifier.verify(copy),
             "2.0.0-SNAPSHOT",
             null,
@@ -360,9 +360,9 @@ class ConformanceReportTest {
 
     JsonNode manifest = tampered.toJson().get("manifest");
     assertEquals("9.9.9", manifest.get("version").asText());
-    assertEquals("1.4.0", manifest.get("expected_version").asText());
+    assertEquals("1.5.0", manifest.get("expected_version").asText());
     assertFalse(manifest.get("version_matches").asBoolean());
-    assertEquals("1.4.0", report.toJson().at("/manifest/version").asText());
+    assertEquals("1.5.0", report.toJson().at("/manifest/version").asText());
     assertTrue(report.toJson().at("/manifest/version_matches").asBoolean());
   }
 }

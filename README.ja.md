@@ -21,7 +21,7 @@ CQRS/Event Sourcing向けのイベントストアです。Memory、DynamoDB、SQ
 
 ### バージョン
 
-公開済みの最新の成果物版は `5.2.0` です。この版から、ライブラリを core（Memory を含む）と保存先ごとのドライバの成果物に分けています。パッケージ名とクラス名は変わりません。[共通契約 v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md) に従います。メジャーの番号 5 は、共通契約の版と同じです。配布適合データの版は **1.4.0** で、別の番号です。
+公開済みの最新の成果物版は `5.2.0` です。この版から、ライブラリを core（Memory を含む）と保存先ごとのドライバの成果物に分けています。パッケージ名とクラス名は変わりません。[共通契約 v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md) に従います。メジャーの番号 5 は、共通契約の版と同じです。配布適合データの版は **1.5.0** で、別の番号です。
 
 2.0.0 は版をそろえる決定の前に出した版で、中身は 5.0.0 と同じです。5.1.0 以降を使ってください。
 
@@ -275,7 +275,7 @@ APIの変更と「旧版で読む→利用者が変換→新版へ書き直す�
 
 ## 適合
 
-配布する適合データ（版1.4.0）は [conformance/](conformance/README.md) にあります。
+配布する適合データ（版1.5.0）は [conformance/](conformance/README.md) にあります。
 
 [Memory利用試験](src/test/java/com/github/j5ik2o/event/store/adapter/java/examples/UserAccountExampleTest.java)、[DynamoDB利用試験](src/test/java/com/github/j5ik2o/event/store/adapter/java/dynamodbtest/DynamoDbPublicApiUsageTest.java)、[SQLite利用試験](src/test/java/com/github/j5ik2o/event/store/adapter/java/examples/SqliteUserAccountExampleTest.java)、[Spanner利用試験](src/test/java/com/github/j5ik2o/event/store/adapter/java/examples/SpannerUserAccountExampleTest.java)、[Bigtable利用試験](src/test/java/com/github/j5ik2o/event/store/adapter/java/examples/BigtableUserAccountExampleTest.java)は、この例を公開factoryでコンパイル・実行します。DynamoDB試験は固定されたDynamoDB Localイメージ、Spanner試験は固定されたCloud Spannerエミュレーターのイメージ、Bigtable試験は固定されたCloud Bigtableエミュレーターのイメージを使うため、いずれもDockerが必要です。SQLite試験は一時的なローカルファイルを使うためDockerは不要です。
 
