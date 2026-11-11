@@ -34,6 +34,7 @@ import com.google.cloud.spanner.ErrorCode;
 import com.google.cloud.spanner.Spanner;
 import com.google.cloud.spanner.SpannerException;
 import com.google.cloud.spanner.SpannerExceptionFactory;
+import io.grpc.Context;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -46,6 +47,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -791,6 +793,33 @@ class SpannerOffloadedEventStoreTest {
   }
 
   @Test
+  void aCancelledGrpcContextOfTheCallerDoesNotReachTheWorker() throws Exception {
+    String prefix = noneStore();
+    SpannerStorage storage = open(prefix, SpannerRetentionPolicy.none());
+    BlockingExecution execution = BlockingExecution.singleWorker(2);
+    AtomicReference<CompletableFuture<Void>> offloaded = new AtomicReference<>();
+    AtomicReference<CompletableFuture<Void>> onCaller = new AtomicReference<>();
+    Context.CancellableContext cancelled = Context.current().withCancellation();
+    cancelled.cancel(null);
+    try {
+      AsyncEventStore<String, String> store =
+          SpannerEventStore.createOffloaded(storage, config(name -> {}), execution);
+      AsyncEventStore<String, String> callerThread =
+          SpannerEventStore.createAsync(storage, config(name -> {}));
+      cancelled.run(() -> {
+        onCaller.set(callerThread.persistEvent(event(1)));
+        offloaded.set(store.persistEvent(event(1)));
+      });
+
+      assertInstanceOf(StorageException.class, failureOf(onCaller.get()));
+      get(offloaded.get());
+    } finally {
+      drain(execution);
+    }
+    assertEquals(list(1), journal(prefix));
+  }
+
+  @Test
   void theStoreLeavesTheClientOpenAfterDrain() throws Exception {
     String prefix = noneStore();
     Spanner service = EMULATOR.newService(options -> {});
@@ -837,8 +866,8 @@ class SpannerOffloadedEventStoreTest {
       service.close();
       gate.release();
 
-      failureOf(accepted);
-      failureOf(queued);
+      assertInstanceOf(IllegalStateException.class, failureOf(accepted));
+      assertInstanceOf(IllegalStateException.class, failureOf(queued));
       execution.close();
       get(execution.drained().toCompletableFuture());
     } finally {

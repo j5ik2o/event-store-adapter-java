@@ -75,12 +75,15 @@ public final class SpannerEventStore {
    * java.util.concurrent.RejectedExecutionException} で失敗した Future を返し、何も実行しません。
    *
    * <p>The store borrows the storage, its {@code DatabaseClient} and the execution, and closes none
-   * of them. FIFO order holds only among operations admitted to the same execution. Close the
-   * client only after {@link BlockingExecution#drained()} completes. Cancelling a returned future
-   * before its operation starts skips the operation; afterwards it abandons only the result and
-   * does not stop the operation, its retries or its commit. A cancelled or timed-out write may
-   * still commit. Keep inputs unchanged until the operation ends. / ストアは保存先、その {@code
-   * DatabaseClient}、実行資源を借りるだけで、どれも閉じません。FIFO の順序は同じ実行資源に受け付けた操作の間だけで成り立ちます。クライアントは {@link
+   * of them. FIFO order holds only among operations admitted to the same execution. Thread-local
+   * state of the caller, such as an {@code io.grpc.Context} deadline, does not reach the worker.
+   * Close the {@code Spanner} instance that owns the client only after {@link
+   * BlockingExecution#drained()} completes. Cancelling a returned future before its operation
+   * starts skips the operation; afterwards it abandons only the result and does not stop the
+   * operation, its retries or its commit. A cancelled or timed-out write may still commit. Keep
+   * inputs unchanged until the operation ends. / ストアは保存先、その {@code
+   * DatabaseClient}、実行資源を借りるだけで、どれも閉じません。FIFO の順序は同じ実行資源に受け付けた操作の間だけで成り立ちます。{@code io.grpc.Context}
+   * の期限など、呼び出し側のスレッドローカルな状態はワーカーに引き継がれません。クライアントを所有する {@code Spanner} は {@link
    * BlockingExecution#drained()} が完了してから閉じてください。操作の開始前に Future
    * を取り消すと操作を飛ばします。開始後の取消しは結果を捨てるだけで、操作、その再試行、コミットを止めません。取り消した書き込みや待ちきれなかった書き込みも確定することがあります。入力は操作が終わるまで変更しないでください。
    *

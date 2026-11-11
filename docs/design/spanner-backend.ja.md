@@ -10,7 +10,7 @@ Java の Spanner 保存先が、ハブの Spanner プロファイル（共通契
 - `SpannerStorageConfig` は、表の接頭辞、保持方式（既定は保持なし）、`transactionRetryLimit`（既定 5、初回は数えない）を持ちます。`build()` は、不正な接頭辞、1 未満の保持件数、1 日未満の猶予、負の上限、`changeFeed(true)` を設定エラーにします（SPN-D8）。
 - `SpannerStorage.open(DatabaseClient, SpannerStorageConfig)` は配置を照合して保存先を返します。`DatabaseClient`（認証やエミュレーターの接続先を含む）は利用者が作って所有し、保存先は作らず・閉じず・設定しません。`DatabaseClient` が公開シグネチャに現れるため、`google-cloud-spanner:6.124.0` は `api` の依存です。
 - `SpannerEventStore.create` は同期のインターフェイスを提供します。`createAsync` は、メモリや SQLite と同じく呼び出しスレッドで実行し、完了済みの Future を返します。
-- `createOffloaded(storage, config, execution)` は、操作の全体をアプリケーションが所有する `BlockingExecution` に渡します。検証、直列化、中断時の再試行と待機を含むすべてのトランザクションの試行、結果の走査、復元、保持、通知先は、そのワーカーで受け付けた順に実行します。開始後の操作を取り消しても、結果を捨てるだけです。ストアは実行資源も `DatabaseClient` も閉じません。クライアントは `drained()` が完了してから閉じてください。試験は `SpannerOffloadedEventStoreTest` にあります。
+- `createOffloaded(storage, config, execution)` は、操作の全体をアプリケーションが所有する `BlockingExecution` に渡します。検証、直列化、中断時の再試行と待機を含むすべてのトランザクションの試行、結果の走査、復元、保持、通知先は、そのワーカーで受け付けた順に実行します。開始後の操作を取り消しても、結果を捨てるだけです。`io.grpc.Context` の期限など、呼出し側のスレッドローカルな状態はワーカーに写しません。ストアは実行資源も `DatabaseClient` も閉じません。クライアントを所有する `Spanner` は `drained()` が完了してから閉じてください。試験は `SpannerOffloadedEventStoreTest` にあります。
 
 ## 2. 規則・実装・試験
 
