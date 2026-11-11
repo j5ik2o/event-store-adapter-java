@@ -42,7 +42,8 @@ public final class BigtableEmulator {
   private static final int PORT = 8086;
 
   // The Bigtable client's default deadlines run from one minute (MutateRow) to hours (ReadRows).
-  private static final Duration LIMIT = Duration.ofSeconds(60);
+  // Staying under the shortest one makes this limit, not the client's, name the wait.
+  private static final Duration LIMIT = Duration.ofSeconds(30);
 
   private static final ExecutorService CALLS =
       Executors.newCachedThreadPool(task -> {
