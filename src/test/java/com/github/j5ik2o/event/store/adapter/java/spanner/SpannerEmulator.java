@@ -10,6 +10,7 @@ import com.google.cloud.spanner.ResultSet;
 import com.google.cloud.spanner.Spanner;
 import com.google.cloud.spanner.SpannerOptions;
 import com.google.cloud.spanner.Statement;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -233,6 +234,10 @@ public final class SpannerEmulator {
 
   /** Runs DDL against the shared database and waits for it to finish. */
   public void ddl(String... statements) {
+    ddl(spanner, null, statements);
+  }
+
+  static void ddl(Spanner spanner, Duration limit, String... statements) {
     try {
       spanner
           .getDatabaseAdminClient()
