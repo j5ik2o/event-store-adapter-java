@@ -8,9 +8,11 @@ import static com.github.j5ik2o.event.store.adapter.java.sqlite.SqliteTestFixtur
 import static com.github.j5ik2o.event.store.adapter.java.sqlite.SqliteTestFixtures.snapshot;
 import static com.github.j5ik2o.event.store.adapter.java.sqlite.SqliteTestFixtures.store;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.github.j5ik2o.event.store.adapter.java.core.AggregateId;
 import com.github.j5ik2o.event.store.adapter.java.core.AsyncEventStore;
 import com.github.j5ik2o.event.store.adapter.java.core.ContractViolationException;
 import com.github.j5ik2o.event.store.adapter.java.core.EventStore;
@@ -19,7 +21,9 @@ import com.github.j5ik2o.event.store.adapter.java.core.OptimisticLockException;
 import com.github.j5ik2o.event.store.adapter.java.core.RetentionPolicy;
 import com.github.j5ik2o.event.store.adapter.java.core.StorageException;
 import java.nio.file.Path;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -76,5 +80,45 @@ class SqliteAsyncEventStoreTest {
                 CompletionException.class, () -> async.getEventsByIdSinceSeqNr(AID, 0).join()));
 
     assertTrue(failure instanceof StorageException);
+  }
+
+  @Test
+  void operationsRunOnTheCallingThreadAndReturnCompletedFutures() {
+    Path file = initialized(directory, RetentionPolicy.none());
+    AtomicReference<Thread> ranOn = new AtomicReference<>();
+    SqliteStorageHooks hooks =
+        new SqliteStorageHooks() {
+          @Override
+          public void afterBeginImmediate(AggregateId aggregateId) {
+            ranOn.set(Thread.currentThread());
+          }
+        };
+    try (SqliteStorage storage =
+        SqliteStorage.open(file, settings(RetentionPolicy.none()), hooks)) {
+      AsyncEventStore<String, String> async = SqliteEventStore.createAsync(storage, config());
+
+      CompletableFuture<Void> write = async.persistEvent(event(1));
+
+      assertTrue(write.isDone() && !write.isCompletedExceptionally());
+      assertSame(Thread.currentThread(), ranOn.get());
+    }
+  }
+
+  @Test
+  void anErrorEscapesSynchronouslyOnTheCallingThread() {
+    Path file = initialized(directory, RetentionPolicy.none());
+    SqliteStorageHooks hooks =
+        new SqliteStorageHooks() {
+          @Override
+          public void beforeCommit(AggregateId aggregateId) {
+            throw new AssertionError("injected");
+          }
+        };
+    try (SqliteStorage storage =
+        SqliteStorage.open(file, settings(RetentionPolicy.none()), hooks)) {
+      AsyncEventStore<String, String> async = SqliteEventStore.createAsync(storage, config());
+
+      assertThrows(AssertionError.class, () -> async.persistEvent(event(1)));
+    }
   }
 }

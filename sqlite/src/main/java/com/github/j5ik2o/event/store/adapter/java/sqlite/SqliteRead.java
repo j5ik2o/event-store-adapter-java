@@ -68,7 +68,7 @@ final class SqliteRead {
       } catch (SQLException failure) {
         SqliteTransactions.rollbackQuietly(c, failure);
         throw SqliteTransactions.storage("failed to read the latest snapshot from sqlite", failure);
-      } catch (RuntimeException failure) {
+      } catch (RuntimeException | Error failure) {
         SqliteTransactions.rollbackQuietly(c, failure);
         throw failure;
       }
@@ -117,7 +117,7 @@ final class SqliteRead {
       } catch (SQLException failure) {
         SqliteTransactions.rollbackQuietly(c, failure);
         throw SqliteTransactions.storage("failed to read events from sqlite", failure);
-      } catch (RuntimeException failure) {
+      } catch (RuntimeException | Error failure) {
         SqliteTransactions.rollbackQuietly(c, failure);
         throw failure;
       }

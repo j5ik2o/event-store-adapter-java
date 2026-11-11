@@ -51,7 +51,7 @@ final class SqliteAppend {
       } catch (SQLException failure) {
         SqliteTransactions.rollbackQuietly(c, failure);
         throw SqliteTransactions.storage("failed to append to sqlite", failure);
-      } catch (RuntimeException failure) {
+      } catch (RuntimeException | Error failure) {
         SqliteTransactions.rollbackQuietly(c, failure);
         throw failure;
       }
