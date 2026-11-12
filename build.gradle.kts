@@ -424,6 +424,9 @@ tasks {
     check {
         dependsOn(subprojects.map { "${it.path}:check" })
         dependsOn(coreDynamoDbOnlyTest)
+        dependsOn(coreSqliteOnlyTest)
+        dependsOn(coreSpannerOnlyTest)
+        dependsOn(coreBigtableOnlyTest)
     }
 
     register<Jar>("sourcesJar") {
