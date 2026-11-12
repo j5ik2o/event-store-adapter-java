@@ -38,6 +38,7 @@ python3 -m unittest discover -s .github/tests -v
 - CI は `-PtestJavaVersion` を 11・17・19 にしてテストを実行します。
 - CI は、`conformance/manifest.json`・`api-surface/surface.json`・`user-docs/template.json`・`tools/user-docs/check.py` の SHA-256 も `sha256sum -c` で照合し、workflow ファイルを actionlint v1.7.12 で検査します。期待値は `ci.yml` にあります。
 - 適合の報告は、テストが `build/reports/conformance/` に書き出します。
+- `createOffloaded` の長時間の負荷試験は、`EVENT_STORE_SOAK_SECONDS` を設定しない限り飛ばします。保存先ごとに、その秒数のあいだ複数の集約に 4 操作を流し、終わったら全集約を読み戻して、スレッドとヒープを確かめます。CI では実行しません。例: `EVENT_STORE_SOAK_SECONDS=900 ./gradlew test --tests '*OffloadedSoakTest'`。結果は `build/test-results/test/TEST-*OffloadedSoakTest.xml` の標準出力にある `SOAK` で始まる行です。
 
 ## 設計の経緯
 
