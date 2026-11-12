@@ -1,6 +1,7 @@
 package com.github.j5ik2o.event.store.adapter.java.sqlite;
 
 import static com.github.j5ik2o.event.store.adapter.java.sqlite.SqliteTestFixtures.AID;
+import static com.github.j5ik2o.event.store.adapter.java.sqlite.SqliteTestFixtures.count;
 import static com.github.j5ik2o.event.store.adapter.java.sqlite.SqliteTestFixtures.event;
 import static com.github.j5ik2o.event.store.adapter.java.sqlite.SqliteTestFixtures.execute;
 import static com.github.j5ik2o.event.store.adapter.java.sqlite.SqliteTestFixtures.initialized;
@@ -18,6 +19,7 @@ import static org.junit.jupiter.api.DynamicTest.dynamicTest;
 import com.github.j5ik2o.event.store.adapter.java.core.AggregateId;
 import com.github.j5ik2o.event.store.adapter.java.core.AsyncEventStore;
 import com.github.j5ik2o.event.store.adapter.java.core.BlockingExecution;
+import com.github.j5ik2o.event.store.adapter.java.core.ConcurrentAdmission;
 import com.github.j5ik2o.event.store.adapter.java.core.ConfigurationException;
 import com.github.j5ik2o.event.store.adapter.java.core.ContractViolationException;
 import com.github.j5ik2o.event.store.adapter.java.core.EventEnvelope;
@@ -32,9 +34,12 @@ import com.github.j5ik2o.event.store.adapter.java.core.SnapshotReadResult;
 import com.github.j5ik2o.event.store.adapter.java.core.StorageException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -453,6 +458,135 @@ class SqliteOffloadedEventStoreTest {
   }
 
   @Test
+  void concurrentCallersRunInTheOneOrderInWhichTheirAdmissionsWereAccepted() throws Exception {
+    Path file = file("concurrent-admission", RetentionPolicy.none());
+    int callers = 4;
+    int rounds = 50;
+    List<String> serialized = Collections.synchronizedList(new ArrayList<>());
+    BlockingExecution execution = BlockingExecution.singleWorker(callers * rounds);
+    try (SqliteStorage storage = SqliteStorage.open(file, settings(RetentionPolicy.none()))) {
+      AsyncEventStore<String, String> store =
+          SqliteEventStore.createOffloaded(
+              storage, ConcurrentAdmission.recordingPayloads(serialized), execution);
+      List<ConcurrentAdmission.Admission> admissions =
+          ConcurrentAdmission.admit(
+              callers,
+              rounds,
+              (caller, round) -> store.persistEvent(ConcurrentAdmission.event(caller, round)));
+      for (ConcurrentAdmission.Admission admission : admissions) {
+        get(admission.result);
+      }
+      ConcurrentAdmission.assertRanInOneAdmissionOrder(admissions, serialized);
+    } finally {
+      drain(execution);
+    }
+    assertEquals((long) callers * rounds, count(file, "journal"));
+  }
+
+  @Test
+  void theRawApiBeforeTheOffloadedStoreAndAfterDrainSharesOneOrderWithIt() throws Exception {
+    Path file = file("raw-compliant", RetentionPolicy.none());
+    BlockingExecution execution = BlockingExecution.singleWorker(4);
+    try (SqliteStorage storage = SqliteStorage.open(file, settings(RetentionPolicy.none()))) {
+      EventStore<String, String> raw = SqliteEventStore.create(storage, config(name -> {}));
+      AsyncEventStore<String, String> rawAsync =
+          SqliteEventStore.createAsync(storage, config(name -> {}));
+      raw.persistEvent(event(1));
+      get(rawAsync.persistEvent(event(2)));
+      AsyncEventStore<String, String> offloaded =
+          SqliteEventStore.createOffloaded(storage, config(name -> {}), execution);
+      CompletableFuture<Void> third = offloaded.persistEvent(event(3));
+      CompletableFuture<Void> fourth = offloaded.persistEvent(event(4));
+      CompletableFuture<List<EventEnvelope<String>>> read =
+          offloaded.getEventsByIdSinceSeqNr(AID, 0);
+      drain(execution);
+
+      get(third);
+      get(fourth);
+      assertEquals(List.of(1L, 2L, 3L, 4L), seqNrs(get(read)));
+      raw.persistEvent(event(5));
+      get(rawAsync.persistEvent(event(6)));
+      assertEquals(List.of(1L, 2L, 3L, 4L, 5L, 6L), seqNrs(raw.getEventsByIdSinceSeqNr(AID, 0)));
+    } finally {
+      drain(execution);
+    }
+    assertEquals(List.of(1L, 2L, 3L, 4L, 5L, 6L), longs(file, JOURNAL));
+  }
+
+  @TestFactory
+  Stream<DynamicTest> theRawApiDuringAcceptedWorkOvertakesItAndTheConflictReportsIt() {
+    EventEnvelope<String> rawEvent =
+        EventEnvelope.<String>builder()
+            .aggregateId(AID)
+            .seqNr(1)
+            .occurredAt(Instant.EPOCH)
+            .manifest("event")
+            .payload("raw-1")
+            .build();
+    Map<String, Consumer<SqliteStorage>> rawWrites = new LinkedHashMap<>();
+    rawWrites.put(
+        "create",
+        storage -> SqliteEventStore.create(storage, config(name -> {})).persistEvent(rawEvent));
+    rawWrites.put(
+        "createAsync",
+        storage ->
+            SqliteEventStore.createAsync(storage, config(name -> {}))
+                .persistEvent(rawEvent)
+                .join());
+    return rawWrites.entrySet().stream()
+        .map(rawWrite ->
+            dynamicTest(
+                rawWrite.getKey(),
+                () -> {
+                  Path file = file("raw-" + rawWrite.getKey(), RetentionPolicy.none());
+                  Gate gate = new Gate("payload.serialize");
+                  BlockingExecution execution = BlockingExecution.singleWorker(2);
+                  try (SqliteStorage storage =
+                      SqliteStorage.open(file, settings(RetentionPolicy.none()))) {
+                    AsyncEventStore<String, String> offloaded =
+                        SqliteEventStore.createOffloaded(storage, config(gate), execution);
+                    CompletableFuture<Void> accepted = offloaded.persistEvent(event(1));
+                    gate.awaitEntered();
+                    CompletableFuture<List<EventEnvelope<String>>> queued =
+                        offloaded.getEventsByIdSinceSeqNr(AID, 0);
+
+                    rawWrite.getValue().accept(storage);
+                    gate.release();
+
+                    assertInstanceOf(OptimisticLockException.class, failureOf(accepted));
+                    List<EventEnvelope<String>> read = get(queued);
+                    assertEquals(List.of(1L), seqNrs(read));
+                    assertEquals("raw-1", read.get(0).payload());
+                  } finally {
+                    gate.release();
+                    drain(execution);
+                  }
+                }));
+  }
+
+  @Test
+  void theRawApiDuringAcceptedWorkCanLetAnAcceptedWriteSucceedWithoutAnyReport() throws Exception {
+    Path file = file("raw-unreported", RetentionPolicy.none());
+    Gate gate = new Gate("payload.serialize");
+    BlockingExecution execution = BlockingExecution.singleWorker(1);
+    try (SqliteStorage storage = SqliteStorage.open(file, settings(RetentionPolicy.none()))) {
+      AsyncEventStore<String, String> offloaded =
+          SqliteEventStore.createOffloaded(storage, config(gate), execution);
+      CompletableFuture<Void> accepted = offloaded.persistEvent(event(2));
+      gate.awaitEntered();
+
+      SqliteEventStore.create(storage, config(name -> {})).persistEvent(event(1));
+      gate.release();
+
+      get(accepted);
+    } finally {
+      gate.release();
+      drain(execution);
+    }
+    assertEquals(List.of(1L, 2L), longs(file, JOURNAL));
+  }
+
+  @Test
   void closingStorageBeforeDrainFailsAcceptedWork() throws Exception {
     Path file = file("early-close", RetentionPolicy.none());
     Gate gate = new Gate("payload.serialize");
@@ -568,19 +702,28 @@ class SqliteOffloadedEventStoreTest {
   }
 
   @Test
-  void aCallbackMayAdmitAnotherOperationWithinCapacity() throws Exception {
+  void aCallbackOnTheWorkerMayAdmitAnotherOperationWithinCapacity() throws Exception {
     Path file = file("reentrant", RetentionPolicy.none());
+    Gate gate = new Gate("beforeCommit");
     BlockingExecution execution = BlockingExecution.singleWorker(1);
-    try (SqliteStorage storage = SqliteStorage.open(file, settings(RetentionPolicy.none()))) {
+    try (SqliteStorage storage =
+        SqliteStorage.open(file, settings(RetentionPolicy.none()), hooks(gate))) {
       AsyncEventStore<String, String> store =
-          SqliteEventStore.createOffloaded(storage, config(name -> {}), execution);
+          SqliteEventStore.createOffloaded(storage, config(gate), execution);
+      CompletableFuture<Void> write = store.persistEvent(event(1));
+      Thread worker = gate.awaitEntered();
+      List<Thread> callbackThreads = Collections.synchronizedList(new ArrayList<>());
       CompletableFuture<List<EventEnvelope<String>>> chained =
-          store
-              .persistEvent(event(1))
-              .thenCompose(ignored -> store.getEventsByIdSinceSeqNr(AID, 0));
+          write.thenCompose(ignored -> {
+            callbackThreads.add(Thread.currentThread());
+            return store.getEventsByIdSinceSeqNr(AID, 0);
+          });
+      gate.release();
 
       assertEquals(List.of(1L), seqNrs(get(chained)));
+      assertEquals(List.of(worker), callbackThreads, "the callback admitted from the worker");
     } finally {
+      gate.release();
       drain(execution);
     }
   }

@@ -42,6 +42,34 @@ class BlockingExecutionTest {
   }
 
   @Test
+  void concurrentCallersShareTheOneOrderInWhichTheirAdmissionsWereAccepted() throws Exception {
+    int callers = 8;
+    int rounds = 100;
+    BlockingExecution execution = BlockingExecution.singleWorker(callers * rounds);
+    List<String> executed = Collections.synchronizedList(new ArrayList<>());
+    CountDownLatch admitted = new CountDownLatch(1);
+    try {
+      CompletableFuture<Boolean> holdingTheWorker =
+          execution.submit(() -> admitted.await(10, TimeUnit.SECONDS));
+      List<ConcurrentAdmission.Admission> admissions =
+          ConcurrentAdmission.admit(
+              callers,
+              rounds,
+              (caller, round) ->
+                  execution.submit(() -> executed.add(ConcurrentAdmission.key(caller, round))));
+      admitted.countDown();
+      assertTrue(get(holdingTheWorker), "every admission queued behind the held worker");
+      for (ConcurrentAdmission.Admission admission : admissions) {
+        get(admission.result);
+      }
+      ConcurrentAdmission.assertRanInOneAdmissionOrder(admissions, executed);
+    } finally {
+      admitted.countDown();
+      drain(execution);
+    }
+  }
+
+  @Test
   void positiveCapacityAndEmptyClose() throws Exception {
     assertThrows(IllegalArgumentException.class, () -> BlockingExecution.singleWorker(0));
     assertThrows(IllegalArgumentException.class, () -> BlockingExecution.singleWorker(-1));

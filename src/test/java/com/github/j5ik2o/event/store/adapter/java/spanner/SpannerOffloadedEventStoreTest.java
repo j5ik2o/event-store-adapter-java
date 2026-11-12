@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.DynamicTest.dynamicTest;
 import com.github.j5ik2o.event.store.adapter.java.core.AggregateId;
 import com.github.j5ik2o.event.store.adapter.java.core.AsyncEventStore;
 import com.github.j5ik2o.event.store.adapter.java.core.BlockingExecution;
+import com.github.j5ik2o.event.store.adapter.java.core.ConcurrentAdmission;
 import com.github.j5ik2o.event.store.adapter.java.core.ConfigurationException;
 import com.github.j5ik2o.event.store.adapter.java.core.ContractViolationException;
 import com.github.j5ik2o.event.store.adapter.java.core.EventEnvelope;
@@ -29,12 +30,14 @@ import com.github.j5ik2o.event.store.adapter.java.core.PayloadSerializer;
 import com.github.j5ik2o.event.store.adapter.java.core.SerializationException;
 import com.github.j5ik2o.event.store.adapter.java.core.SnapshotReadResult;
 import com.github.j5ik2o.event.store.adapter.java.core.StorageException;
-import com.google.api.gax.retrying.RetrySettings;
+import com.google.api.gax.rpc.ApiCallContext;
 import com.google.cloud.spanner.ErrorCode;
 import com.google.cloud.spanner.Spanner;
 import com.google.cloud.spanner.SpannerException;
 import com.google.cloud.spanner.SpannerExceptionFactory;
+import com.google.cloud.spanner.SpannerOptions;
 import io.grpc.Context;
+import io.grpc.MethodDescriptor;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -617,20 +620,28 @@ class SpannerOffloadedEventStoreTest {
   }
 
   @Test
-  void aCallbackMayAdmitAnotherOperationWithinCapacity() throws Exception {
+  void aCallbackOnTheWorkerMayAdmitAnotherOperationWithinCapacity() throws Exception {
     String prefix = noneStore();
+    Gate gate = new Gate("beforeCommit");
     BlockingExecution execution = BlockingExecution.singleWorker(1);
     try {
       AsyncEventStore<String, String> store =
           SpannerEventStore.createOffloaded(
-              open(prefix, SpannerRetentionPolicy.none()), config(name -> {}), execution);
+              open(prefix, SpannerRetentionPolicy.none(), hooks(gate)), config(gate), execution);
+      CompletableFuture<Void> write = store.persistEvent(event(1));
+      Thread worker = gate.awaitEntered();
+      List<Thread> callbackThreads = Collections.synchronizedList(new ArrayList<>());
       CompletableFuture<List<EventEnvelope<String>>> chained =
-          store
-              .persistEvent(event(1))
-              .thenCompose(ignored -> store.getEventsByIdSinceSeqNr(AID, 0));
+          write.thenCompose(ignored -> {
+            callbackThreads.add(Thread.currentThread());
+            return store.getEventsByIdSinceSeqNr(AID, 0);
+          });
+      gate.release();
 
       assertEquals(list(1), seqNrs(get(chained)));
+      assertEquals(List.of(worker), callbackThreads, "the callback admitted from the worker");
     } finally {
+      gate.release();
       drain(execution);
     }
   }
@@ -754,42 +765,115 @@ class SpannerOffloadedEventStoreTest {
     assertEquals(list(1), journal(prefix));
   }
 
-  @Test
-  void anSdkDeadlineFailsTheFutureWithAStorageErrorAndLaterWorkRuns() throws Exception {
-    String prefix = noneStore();
-    Duration expired = Duration.ofNanos(1);
-    Spanner service =
-        EMULATOR.newService(options ->
-            options
-                .getSpannerStubSettingsBuilder()
-                .executeSqlSettings()
-                .setRetrySettings(
-                    RetrySettings.newBuilder()
-                        .setInitialRpcTimeoutDuration(expired)
-                        .setMaxRpcTimeoutDuration(expired)
-                        .setTotalTimeoutDuration(expired)
-                        .setMaxAttempts(1)
-                        .build()));
-    BlockingExecution execution = BlockingExecution.singleWorker(2);
-    try {
-      SpannerStorage storage =
-          SpannerStorage.open(
-              SpannerEmulator.client(service), settings(prefix, SpannerRetentionPolicy.none()));
-      AsyncEventStore<String, String> store =
-          SpannerEventStore.createOffloaded(storage, config(name -> {}), execution);
-      CompletableFuture<Void> timedOut = store.persistEvent(event(1));
-      CompletableFuture<List<EventEnvelope<String>>> read = store.getEventsByIdSinceSeqNr(AID, 0);
+  /**
+   * Once {@code calls} is armed, counts the calls of one RPC and gives the call at index {@code
+   * expiredCall} an expired deadline. Arming after the storage opens keeps its layout check intact.
+   */
+  private static Spanner serviceExpiring(String rpc, int expiredCall, AtomicInteger calls) {
+    return EMULATOR.newService(options ->
+        options.setCallContextConfigurator(
+            new SpannerOptions.CallContextConfigurator() {
+              @Override
+              public <ReqT, RespT> ApiCallContext configure(
+                  ApiCallContext context, ReqT request, MethodDescriptor<ReqT, RespT> method) {
+                if (calls.get() < 0 || !method.getFullMethodName().endsWith("/" + rpc)) {
+                  return null;
+                }
+                return calls.getAndIncrement() == expiredCall
+                    ? context.withTimeoutDuration(Duration.ofNanos(1))
+                    : null;
+              }
+            }));
+  }
 
-      Throwable failure = failureOf(timedOut);
-      assertInstanceOf(StorageException.class, failure);
-      SpannerException cause = assertInstanceOf(SpannerException.class, failure.getCause());
-      assertEquals(ErrorCode.DEADLINE_EXCEEDED, cause.getErrorCode());
-      assertEquals(List.of(), get(read));
+  /**
+   * The ExecuteSql case expires the second DML, the head write, after the journal insert of the
+   * same transaction ran, so the empty journal afterwards shows that the insert rolled back.
+   */
+  @TestFactory
+  Stream<DynamicTest> anSdkDeadlineOnAQueryADmlOrTheCommitFailsOnlyThatResultAndLaterWorkRuns() {
+    return Stream.of("ExecuteStreamingSql", "ExecuteSql", "Commit")
+        .map(rpc ->
+            dynamicTest(
+                rpc,
+                () -> {
+                  String prefix = noneStore();
+                  int expiredCall = rpc.equals("ExecuteSql") ? 1 : 0;
+                  AtomicInteger calls = new AtomicInteger(-1);
+                  List<String> reached = Collections.synchronizedList(new ArrayList<>());
+                  Spanner service = serviceExpiring(rpc, expiredCall, calls);
+                  BlockingExecution execution = BlockingExecution.singleWorker(2);
+                  List<Long> readAfterward;
+                  try {
+                    AsyncEventStore<String, String> store =
+                        SpannerEventStore.createOffloaded(
+                            SpannerStorage.open(
+                                SpannerEmulator.client(service),
+                                settings(prefix, SpannerRetentionPolicy.none()),
+                                hooks(reached::add)),
+                            config(name -> {}),
+                            execution);
+                    AsyncEventStore<String, String> healthy =
+                        SpannerEventStore.createOffloaded(
+                            open(prefix, SpannerRetentionPolicy.none()),
+                            config(name -> {}),
+                            execution);
+                    calls.set(0);
+                    CompletableFuture<?> timedOut =
+                        rpc.equals("ExecuteStreamingSql")
+                            ? store.getEventsByIdSinceSeqNr(AID, 0)
+                            : store.persistEvent(event(1));
+                    CompletableFuture<List<EventEnvelope<String>>> later =
+                        healthy.getEventsByIdSinceSeqNr(AID, 0);
+
+                    Throwable failure = failureOf(timedOut);
+                    assertInstanceOf(StorageException.class, failure);
+                    SpannerException cause =
+                        assertInstanceOf(SpannerException.class, failure.getCause());
+                    assertEquals(ErrorCode.DEADLINE_EXCEEDED, cause.getErrorCode());
+                    assertEquals(expiredCall + 1, calls.get(), "the expired call was the last one");
+                    assertEquals(
+                        rpc.equals("Commit"),
+                        reached.contains("beforeCommit"),
+                        "the write reached the commit only when the commit had the deadline");
+                    readAfterward = seqNrs(get(later));
+                  } finally {
+                    drain(execution);
+                    service.close();
+                  }
+                  assertEquals(journal(prefix), readAfterward);
+                  if (!rpc.equals("Commit")) {
+                    assertEquals(List.of(), readAfterward);
+                  }
+                }));
+  }
+
+  @Test
+  void concurrentCallersRunInTheOneOrderInWhichTheirAdmissionsWereAccepted() throws Exception {
+    String prefix = noneStore();
+    int callers = 4;
+    int rounds = 20;
+    List<String> serialized = Collections.synchronizedList(new ArrayList<>());
+    BlockingExecution execution = BlockingExecution.singleWorker(callers * rounds);
+    try {
+      AsyncEventStore<String, String> store =
+          SpannerEventStore.createOffloaded(
+              open(prefix, SpannerRetentionPolicy.none()),
+              ConcurrentAdmission.recordingPayloads(serialized),
+              execution);
+      List<ConcurrentAdmission.Admission> admissions =
+          ConcurrentAdmission.admit(
+              callers,
+              rounds,
+              (caller, round) -> store.persistEvent(ConcurrentAdmission.event(caller, round)));
+      for (ConcurrentAdmission.Admission admission : admissions) {
+        get(admission.result);
+      }
+      ConcurrentAdmission.assertRanInOneAdmissionOrder(admissions, serialized);
     } finally {
       drain(execution);
-      service.close();
     }
-    assertEquals(List.of(), journal(prefix));
+    assertEquals(callers * rounds, journal(prefix).size());
   }
 
   @Test
