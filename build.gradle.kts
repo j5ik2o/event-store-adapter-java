@@ -235,6 +235,25 @@ val testJavaLauncher = javaToolchains.launcherFor {
     languageVersion.set(testJavaVersion.map(JavaLanguageVersion::of))
 }
 
+val googleSdkSets =
+    mapOf(
+        "5.1" to mapOf("google-cloud-spanner" to "6.124.0", "google-cloud-bigtable" to "2.85.0"),
+        "5.2" to mapOf("google-cloud-spanner" to "6.127.0", "google-cloud-bigtable" to "2.88.0"),
+    )
+val googleSdkSet =
+    providers.gradleProperty("googleSdkSet").orNull?.let { name ->
+        googleSdkSets[name]
+            ?: throw GradleException("googleSdkSet must be one of ${googleSdkSets.keys}, not '$name'")
+    }
+
+// Only the test runtime changes: the library stays compiled against the declared SDK, as the
+// published jar is, and runs on the SDK that a user who pins the selected release set has.
+configurations.testRuntimeClasspath {
+    googleSdkSet?.forEach { (module, version) ->
+        resolutionStrategy.force("com.google.cloud:$module:$version")
+    }
+}
+
 val coreDynamoDbOnlyTestSourceSet =
     sourceSets.create("coreDynamoDbOnlyTest") {
         java.srcDir("src/coreDynamoDbOnlyTest/java")
@@ -284,6 +303,10 @@ tasks {
             events = setOf(TestLogEvent.STARTED, TestLogEvent.SKIPPED, TestLogEvent.PASSED, TestLogEvent.FAILED)
             exceptionFormat = TestExceptionFormat.FULL
         }
+    }
+
+    named<Test>("test") {
+        googleSdkSet?.forEach { (module, version) -> systemProperty("googleSdkSet.$module", version) }
     }
 
     named<Javadoc>("javadoc") {
