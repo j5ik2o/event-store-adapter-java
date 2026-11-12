@@ -3,11 +3,13 @@ package com.github.j5ik2o.event.store.adapter.java.spanner;
 import com.google.cloud.NoCredentials;
 import com.google.cloud.spanner.DatabaseClient;
 import com.google.cloud.spanner.DatabaseId;
+import com.google.cloud.spanner.ErrorCode;
 import com.google.cloud.spanner.InstanceConfigId;
 import com.google.cloud.spanner.InstanceId;
 import com.google.cloud.spanner.InstanceInfo;
 import com.google.cloud.spanner.ResultSet;
 import com.google.cloud.spanner.Spanner;
+import com.google.cloud.spanner.SpannerException;
 import com.google.cloud.spanner.SpannerOptions;
 import com.google.cloud.spanner.Statement;
 import java.time.Duration;
@@ -288,11 +290,32 @@ public final class SpannerEmulator {
     within(
         limit,
         "DDL (" + statements.length + (statements.length == 1 ? " statement)" : " statements)"),
-        () ->
-            spanner
-                .getDatabaseAdminClient()
-                .updateDatabaseDdl(INSTANCE, DATABASE, Arrays.asList(statements), null)
-                .get());
+        () -> {
+          while (true) {
+            try {
+              return spanner
+                  .getDatabaseAdminClient()
+                  .updateDatabaseDdl(INSTANCE, DATABASE, Arrays.asList(statements), null)
+                  .get();
+            } catch (ExecutionException rejected) {
+              if (!heldByAnOpenTransaction(rejected.getCause())) {
+                throw rejected;
+              }
+              Thread.sleep(100);
+            }
+          }
+        });
+  }
+
+  /**
+   * The emulator rejects DDL while a read-write transaction is open. Spanner SDK 6.124.0 does not
+   * roll back a transaction whose commit failed, so one an earlier test left stays open until the
+   * emulator ends it.
+   */
+  private static boolean heldByAnOpenTransaction(Throwable failure) {
+    return failure instanceof SpannerException
+        && ((SpannerException) failure).getErrorCode() == ErrorCode.FAILED_PRECONDITION
+        && failure.getMessage().contains("concurrent schema change operation or read-write");
   }
 
   /** Runs one DML statement in its own transaction, independent from the library. */
