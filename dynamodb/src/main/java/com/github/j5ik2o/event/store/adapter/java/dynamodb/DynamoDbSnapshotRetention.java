@@ -118,6 +118,9 @@ final class DynamoDbSnapshotRetention {
                     ? markHistory(client, candidates(), 0)
                     : deleteBatches(client, batches(), 0))
         .handle((ignored, failure) -> {
+          // An Error is not a retention failure: it fails the write without a notification.
+          if (failure != null && EventStoreExceptions.unwrap(failure) instanceof Error)
+            return CompletableFuture.<Void>failedFuture(EventStoreExceptions.unwrap(failure));
           // SDK terminal failures and invalid responses have already been notified.
           // Only request startup and asynchronous wait failures reach this handler.
           if (failure != null) notifyFailureAsync(failure);
@@ -256,6 +259,8 @@ final class DynamoDbSnapshotRetention {
         alreadyMarked = true;
         return;
       }
+      // An Error reaches retainAsync through the returned future instead of the listener.
+      if (EventStoreExceptions.unwrap(context.exception()) instanceof Error) return;
       fail(context.exception());
     }
 
