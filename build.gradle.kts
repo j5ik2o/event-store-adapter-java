@@ -218,6 +218,9 @@ configure<SpotlessExtension> {
             "src/main/java/**/*.java",
             "src/test/java/**/*.java",
             "src/coreDynamoDbOnlyTest/java/**/*.java",
+            "src/coreSqliteOnlyTest/java/**/*.java",
+            "src/coreSpannerOnlyTest/java/**/*.java",
+            "src/coreBigtableOnlyTest/java/**/*.java",
         )
     }
 }
@@ -279,6 +282,99 @@ val coreDynamoDbOnlyTest =
         javaLauncher.set(testJavaLauncher)
         testClassesDirs = coreDynamoDbOnlyTestSourceSet.output.classesDirs
         classpath = coreDynamoDbOnlyTestSourceSet.runtimeClasspath
+        useJUnitPlatform()
+        outputs.upToDateWhen { false }
+        testLogging {
+            showStandardStreams = true
+            events = setOf(TestLogEvent.STARTED, TestLogEvent.SKIPPED, TestLogEvent.PASSED, TestLogEvent.FAILED)
+            exceptionFormat = TestExceptionFormat.FULL
+        }
+    }
+
+val coreSqliteOnlyTestSourceSet =
+    sourceSets.create("coreSqliteOnlyTest") {
+        java.srcDir("src/coreSqliteOnlyTest/java")
+        resources.srcDir("src/coreSqliteOnlyTest/resources")
+    }
+
+dependencies {
+    "coreSqliteOnlyTestImplementation"(project(":core"))
+    "coreSqliteOnlyTestImplementation"(project(":sqlite"))
+    "coreSqliteOnlyTestImplementation"("org.junit.jupiter:junit-jupiter-api:5.14.4")
+    "coreSqliteOnlyTestRuntimeOnly"("org.junit.jupiter:junit-jupiter-engine:5.14.4")
+    "coreSqliteOnlyTestRuntimeOnly"("org.junit.platform:junit-platform-launcher")
+}
+
+val coreSqliteOnlyTest =
+    tasks.register<Test>("coreSqliteOnlyTest") {
+        description =
+            "Checks the SQLite public entry point with only core and sqlite on the classpath."
+        group = "verification"
+        javaLauncher.set(testJavaLauncher)
+        testClassesDirs = coreSqliteOnlyTestSourceSet.output.classesDirs
+        classpath = coreSqliteOnlyTestSourceSet.runtimeClasspath
+        useJUnitPlatform()
+        outputs.upToDateWhen { false }
+        testLogging {
+            showStandardStreams = true
+            events = setOf(TestLogEvent.STARTED, TestLogEvent.SKIPPED, TestLogEvent.PASSED, TestLogEvent.FAILED)
+            exceptionFormat = TestExceptionFormat.FULL
+        }
+    }
+
+val coreSpannerOnlyTestSourceSet =
+    sourceSets.create("coreSpannerOnlyTest") {
+        java.srcDir("src/coreSpannerOnlyTest/java")
+        resources.srcDir("src/coreSpannerOnlyTest/resources")
+    }
+
+dependencies {
+    "coreSpannerOnlyTestImplementation"(project(":core"))
+    "coreSpannerOnlyTestImplementation"(project(":spanner"))
+    "coreSpannerOnlyTestImplementation"("org.junit.jupiter:junit-jupiter-api:5.14.4")
+    "coreSpannerOnlyTestRuntimeOnly"("org.junit.jupiter:junit-jupiter-engine:5.14.4")
+    "coreSpannerOnlyTestRuntimeOnly"("org.junit.platform:junit-platform-launcher")
+}
+
+val coreSpannerOnlyTest =
+    tasks.register<Test>("coreSpannerOnlyTest") {
+        description =
+            "Checks the Spanner public entry point with only core and spanner on the classpath."
+        group = "verification"
+        javaLauncher.set(testJavaLauncher)
+        testClassesDirs = coreSpannerOnlyTestSourceSet.output.classesDirs
+        classpath = coreSpannerOnlyTestSourceSet.runtimeClasspath
+        useJUnitPlatform()
+        outputs.upToDateWhen { false }
+        testLogging {
+            showStandardStreams = true
+            events = setOf(TestLogEvent.STARTED, TestLogEvent.SKIPPED, TestLogEvent.PASSED, TestLogEvent.FAILED)
+            exceptionFormat = TestExceptionFormat.FULL
+        }
+    }
+
+val coreBigtableOnlyTestSourceSet =
+    sourceSets.create("coreBigtableOnlyTest") {
+        java.srcDir("src/coreBigtableOnlyTest/java")
+        resources.srcDir("src/coreBigtableOnlyTest/resources")
+    }
+
+dependencies {
+    "coreBigtableOnlyTestImplementation"(project(":core"))
+    "coreBigtableOnlyTestImplementation"(project(":bigtable"))
+    "coreBigtableOnlyTestImplementation"("org.junit.jupiter:junit-jupiter-api:5.14.4")
+    "coreBigtableOnlyTestRuntimeOnly"("org.junit.jupiter:junit-jupiter-engine:5.14.4")
+    "coreBigtableOnlyTestRuntimeOnly"("org.junit.platform:junit-platform-launcher")
+}
+
+val coreBigtableOnlyTest =
+    tasks.register<Test>("coreBigtableOnlyTest") {
+        description =
+            "Checks the Bigtable public entry point with only core and bigtable on the classpath."
+        group = "verification"
+        javaLauncher.set(testJavaLauncher)
+        testClassesDirs = coreBigtableOnlyTestSourceSet.output.classesDirs
+        classpath = coreBigtableOnlyTestSourceSet.runtimeClasspath
         useJUnitPlatform()
         outputs.upToDateWhen { false }
         testLogging {
