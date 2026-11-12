@@ -178,6 +178,7 @@ public final class OffloadedSoak {
     long drainNanos;
     final AtomicLong workerCompleted = new AtomicLong();
     long pendingAtClose;
+    long rejectedBeforeClose;
     boolean drainedAtClose;
     long serializerCallsOnWorker;
     long serializerCallsOffWorker;
@@ -207,8 +208,12 @@ public final class OffloadedSoak {
               settings.seed));
       out.append(
           String.format(
-              "SOAK accepted=%d completed=%d rejected=%d throughput=%.1f ops/s%n",
-              acceptedTotal(), completed.get(), rejected.get(), completed.get() / loadSeconds));
+              "SOAK accepted=%d completed=%d rejected=%d rejectedBeforeClose=%d throughput=%.1f ops/s%n",
+              acceptedTotal(),
+              completed.get(),
+              rejected.get(),
+              rejectedBeforeClose,
+              completed.get() / loadSeconds));
       for (Op op : Op.values()) {
         out.append(String.format("SOAK   %s=%d%n", op, accepted.get(op.ordinal())));
       }
@@ -339,40 +344,53 @@ public final class OffloadedSoak {
         new Thread(() -> sampleUntil(deadline, start, settings, report), "soak-sampler");
     sampler.setDaemon(true);
     sampler.start();
-    producers.forEach(Thread::start);
-    TimeUnit.NANOSECONDS.sleep(deadline - System.nanoTime());
-    sampler.interrupt();
-    sampler.join(STALL.toMillis());
-    long drainStart = System.nanoTime();
-    if (execution != null) {
-      report.pendingAtClose = report.acceptedTotal() - report.workerCompleted.get();
-      execution.close();
-      report.drainedAtClose = execution.drained().toCompletableFuture().isDone();
-      TimeUnit.MILLISECONDS.sleep(100);
-    }
-    stop.set(true);
-    if (!stoppedSubmitting.await(STALL.toMillis(), TimeUnit.MILLISECONDS)) {
-      report.anomalies.add("producers did not stop submitting: " + workerStacks());
-    }
-    report.loadNanos = System.nanoTime() - start;
-    for (Thread producer : producers) {
-      producer.join(STALL.plus(STALL).toMillis());
-      if (producer.isAlive()) {
-        report.anomalies.add(producer.getName() + " did not finish: " + workerStacks());
+    boolean drained = true;
+    try {
+      producers.forEach(Thread::start);
+      TimeUnit.NANOSECONDS.sleep(deadline - System.nanoTime());
+      sampler.interrupt();
+      sampler.join(STALL.toMillis());
+      long drainStart = System.nanoTime();
+      if (execution != null) {
+        report.rejectedBeforeClose = report.rejected.get();
+        report.pendingAtClose = report.acceptedTotal() - report.workerCompleted.get();
+        execution.close();
+        report.drainedAtClose = execution.drained().toCompletableFuture().isDone();
+        TimeUnit.MILLISECONDS.sleep(100);
+      }
+      stop.set(true);
+      if (!stoppedSubmitting.await(STALL.toMillis(), TimeUnit.MILLISECONDS)) {
+        report.anomalies.add("producers did not stop submitting: " + workerStacks());
+      }
+      report.loadNanos = System.nanoTime() - start;
+      for (Thread producer : producers) {
+        producer.join(STALL.plus(STALL).toMillis());
+        if (producer.isAlive()) {
+          report.anomalies.add(producer.getName() + " did not finish: " + workerStacks());
+        }
+      }
+      if (execution != null) {
+        try {
+          execution.drained().toCompletableFuture().get(STALL.getSeconds(), TimeUnit.SECONDS);
+        } catch (ExecutionException | TimeoutException e) {
+          drained = false;
+          report.anomalies.add("drain did not complete: " + e + " " + workerStacks());
+        }
+        report.drainNanos = System.nanoTime() - drainStart;
+        CompletableFuture<Void> late = store.persistEvent(event(owned.get(0).get(0), 1));
+        if (!late.isCompletedExceptionally() || !rejectedNow(late)) {
+          report.anomalies.add("closed execution accepted an operation");
+        }
+        awaitNoWorker(report);
+      }
+    } finally {
+      stop.set(true);
+      if (execution != null) {
+        execution.close();
       }
     }
-    if (execution != null) {
-      try {
-        execution.drained().toCompletableFuture().get(STALL.getSeconds(), TimeUnit.SECONDS);
-      } catch (ExecutionException | TimeoutException e) {
-        report.anomalies.add("drain did not complete: " + e + " " + workerStacks());
-      }
-      report.drainNanos = System.nanoTime() - drainStart;
-      CompletableFuture<Void> late = store.persistEvent(event(owned.get(0).get(0), 1));
-      if (!late.isCompletedExceptionally() || !rejectedNow(late)) {
-        report.anomalies.add("closed execution accepted an operation");
-      }
-      awaitNoWorker(report);
+    if (!drained) {
+      return report;
     }
 
     for (List<Aggregate> aggregates : owned) {
@@ -413,8 +431,8 @@ public final class OffloadedSoak {
     if (!offloaded) {
       return;
     }
-    if (report.rejected.get() == 0) {
-      throw new AssertionError("the queue never filled");
+    if (report.rejectedBeforeClose == 0) {
+      throw new AssertionError("the queue never filled before close");
     }
     if (report.pendingAtClose == 0 || report.drainedAtClose) {
       throw new AssertionError(
