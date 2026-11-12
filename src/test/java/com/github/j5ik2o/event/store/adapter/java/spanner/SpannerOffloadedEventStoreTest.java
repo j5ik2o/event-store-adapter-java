@@ -8,10 +8,14 @@ import static com.github.j5ik2o.event.store.adapter.java.spanner.SpannerTestFixt
 import static com.github.j5ik2o.event.store.adapter.java.spanner.SpannerTestFixtures.open;
 import static com.github.j5ik2o.event.store.adapter.java.spanner.SpannerTestFixtures.settings;
 import static com.github.j5ik2o.event.store.adapter.java.spanner.SpannerTestFixtures.snapshot;
+import static com.github.j5ik2o.event.store.adapter.java.spanner.SpannerTestFixtures.store;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.DynamicTest.dynamicTest;
@@ -23,6 +27,7 @@ import com.github.j5ik2o.event.store.adapter.java.core.ConcurrentAdmission;
 import com.github.j5ik2o.event.store.adapter.java.core.ConfigurationException;
 import com.github.j5ik2o.event.store.adapter.java.core.ContractViolationException;
 import com.github.j5ik2o.event.store.adapter.java.core.EventEnvelope;
+import com.github.j5ik2o.event.store.adapter.java.core.EventStore;
 import com.github.j5ik2o.event.store.adapter.java.core.EventStoreConfig;
 import com.github.j5ik2o.event.store.adapter.java.core.JsonPayloadSerializer;
 import com.github.j5ik2o.event.store.adapter.java.core.OptimisticLockException;
@@ -30,6 +35,7 @@ import com.github.j5ik2o.event.store.adapter.java.core.PayloadSerializer;
 import com.github.j5ik2o.event.store.adapter.java.core.SerializationException;
 import com.github.j5ik2o.event.store.adapter.java.core.SnapshotReadResult;
 import com.github.j5ik2o.event.store.adapter.java.core.StorageException;
+import com.github.j5ik2o.event.store.adapter.java.core.UnrecoverableExecution;
 import com.google.api.gax.rpc.ApiCallContext;
 import com.google.cloud.spanner.ErrorCode;
 import com.google.cloud.spanner.Spanner;
@@ -41,7 +47,9 @@ import io.grpc.MethodDescriptor;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -573,6 +581,155 @@ class SpannerOffloadedEventStoreTest {
       drain(execution);
     }
     assertEquals(list(1), journal(prefix));
+  }
+
+  @Test
+  void closeAdmissionAndCancellationRacingNeverStrandAnAcceptedWrite() throws Exception {
+    SpannerStorage storage = open(noneStore(), SpannerRetentionPolicy.none());
+    EventStore<String, String> readBack = store(storage);
+    for (int i = 0; i < 20; i++) {
+      boolean cancel = i % 2 == 0;
+      AggregateId leaderId = AggregateId.of("Order", "leader-" + i);
+      AggregateId racedId = AggregateId.of("Order", "raced-" + i);
+      Gate gate = new Gate("payload.serialize");
+      BlockingExecution execution = BlockingExecution.singleWorker(1);
+      CountDownLatch race = new CountDownLatch(1);
+      AtomicReference<CompletableFuture<Void>> raced = new AtomicReference<>();
+      AtomicReference<Throwable> threadFailure = new AtomicReference<>();
+      Thread producer = null, closer = null;
+      try {
+        AsyncEventStore<String, String> store =
+            SpannerEventStore.createOffloaded(storage, config(gate), execution);
+        CompletableFuture<Void> leader = store.persistEvent(event(leaderId, 1));
+        gate.awaitEntered();
+        producer =
+            new Thread(() -> {
+              try {
+                race.await();
+                raced.set(store.persistEvent(event(racedId, 1)));
+                if (cancel) {
+                  raced.get().cancel(true);
+                }
+              } catch (Throwable failure) {
+                threadFailure.set(failure);
+              }
+            });
+        closer =
+            new Thread(() -> {
+              try {
+                race.await();
+                execution.close();
+              } catch (Throwable failure) {
+                threadFailure.set(failure);
+              }
+            });
+        producer.start();
+        closer.start();
+        race.countDown();
+        gate.release();
+        producer.join(5000);
+        closer.join(5000);
+        assertFalse(producer.isAlive());
+        assertFalse(closer.isAlive());
+        assertNull(threadFailure.get());
+        drain(execution);
+
+        get(leader);
+        assertEquals(List.of(1L), seqNrs(readBack.getEventsByIdSinceSeqNr(leaderId, 0)));
+        CompletableFuture<Void> result = raced.get();
+        assertNotNull(result);
+        assertTrue(result.isDone(), "the raced write is not stranded after drain");
+        List<Long> stored = seqNrs(readBack.getEventsByIdSinceSeqNr(racedId, 0));
+        if (result.isCancelled()) {
+          assertTrue(stored.size() <= 1, "a cancelled write ran at most once: " + stored);
+        } else if (result.isCompletedExceptionally()) {
+          assertInstanceOf(RejectedExecutionException.class, failureOf(result));
+          assertEquals(List.of(), stored, "a rejected write never ran");
+        } else {
+          assertEquals(List.of(1L), stored, "an accepted write that was not cancelled ran");
+        }
+      } finally {
+        race.countDown();
+        gate.release();
+        if (producer != null) producer.join(5000);
+        if (closer != null) closer.join(5000);
+        drain(execution);
+      }
+    }
+  }
+
+  @TestFactory
+  Stream<DynamicTest> aFailedCancelOfAQueuedWriteNeverSkipsIt() {
+    Map<String, Consumer<CompletableFuture<Void>>> interferences = new LinkedHashMap<>();
+    interferences.put("complete", result -> result.complete(null));
+    interferences.put(
+        "completeExceptionally",
+        result -> result.completeExceptionally(new IllegalStateException("consumer")));
+    interferences.put(
+        "orTimeout",
+        result -> {
+          result.orTimeout(1, TimeUnit.MILLISECONDS);
+          assertThrows(ExecutionException.class, () -> result.get(3, TimeUnit.SECONDS));
+        });
+    return interferences.entrySet().stream()
+        .map(interference ->
+            dynamicTest(
+                interference.getKey(),
+                () -> {
+                  String prefix = noneStore();
+                  Gate gate = new Gate("beforeCommit");
+                  BlockingExecution execution = BlockingExecution.singleWorker(1);
+                  try {
+                    AsyncEventStore<String, String> store =
+                        SpannerEventStore.createOffloaded(
+                            open(prefix, SpannerRetentionPolicy.none(), hooks(gate)),
+                            config(gate),
+                            execution);
+                    CompletableFuture<Void> first = store.persistEvent(event(1));
+                    gate.awaitEntered();
+                    CompletableFuture<Void> queued = store.persistEvent(event(2));
+
+                    interference.getValue().accept(queued);
+                    assertFalse(queued.cancel(false));
+                    gate.release();
+
+                    get(first);
+                    drain(execution);
+                  } finally {
+                    gate.release();
+                    drain(execution);
+                  }
+                  assertEquals(list(1, 2), journal(prefix));
+                }));
+  }
+
+  @Test
+  void anUnrecoverableWorkerFailsAcceptedWorkAndDrainWithoutRunningIt() throws Exception {
+    String prefix = noneStore();
+    AssertionError recovery = new AssertionError("replacement denied");
+    Gate gate = new Gate("beforeCommit", new AssertionError("fatal"));
+    BlockingExecution execution = UnrecoverableExecution.withoutReplacement(2, recovery);
+    try {
+      AsyncEventStore<String, String> store =
+          SpannerEventStore.createOffloaded(
+              open(prefix, SpannerRetentionPolicy.none(), hooks(gate)), config(gate), execution);
+      CompletableFuture<Void> fatal = store.persistEvent(event(1));
+      gate.awaitEntered();
+      CompletableFuture<Void> second = store.persistEvent(event(AggregateId.of("Order", "2"), 1));
+      CompletableFuture<Void> third = store.persistEvent(event(AggregateId.of("Order", "3"), 1));
+      execution.close();
+      gate.release();
+
+      assertInstanceOf(AssertionError.class, failureOf(fatal));
+      assertSame(recovery, failureOf(second));
+      assertSame(recovery, failureOf(third));
+      assertSame(recovery, failureOf(execution.drained().toCompletableFuture()));
+      assertInstanceOf(RejectedExecutionException.class, failureOf(store.persistEvent(event(4))));
+    } finally {
+      gate.release();
+      execution.close();
+    }
+    assertEquals(list(), journal(prefix), "no stranded write ran");
   }
 
   @TestFactory
