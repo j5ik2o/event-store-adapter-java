@@ -36,6 +36,7 @@ python3 -m unittest discover -s .github/tests -v
 ```
 
 - CI は `-PtestJavaVersion` を 11・17・19 にしてテストを実行します。
+- `-PgoogleSdkSet=5.1` または `-PgoogleSdkSet=5.2` を付けると、5.1.0 または 5.2.0 の公開版が依存する Spanner と Bigtable の SDK でテストを実行します（5.1 は Spanner 6.124.0 と Bigtable 2.85.0、5.2 は Spanner 6.127.0 と Bigtable 2.88.0）。変わるのはテストの実行時クラスパスだけで、ライブラリは宣言した SDK でコンパイルします。読み込んだ SDK が選んだ組と違うと `GoogleSdkSetTest` が失敗します。CI は `createOffloaded` のテストを両方の組で実行します。例: `./gradlew test -PgoogleSdkSet=5.1 --tests '*OffloadedEventStoreTest'`。
 - CI は、`conformance/manifest.json`・`api-surface/surface.json`・`user-docs/template.json`・`tools/user-docs/check.py` の SHA-256 も `sha256sum -c` で照合し、workflow ファイルを actionlint v1.7.12 で検査します。期待値は `ci.yml` にあります。
 - 適合の報告は、テストが `build/reports/conformance/` に書き出します。
 - `createOffloaded` の長時間の負荷試験は、`EVENT_STORE_SOAK_SECONDS` を設定しない限り飛ばします。保存先ごとに、その秒数のあいだ複数の集約に 4 操作を流し、終わったら全集約を読み戻して、スレッドとヒープを確かめます。CI では実行しません。例: `EVENT_STORE_SOAK_SECONDS=900 ./gradlew test --tests '*OffloadedSoakTest'`。結果は `build/test-results/test/TEST-*OffloadedSoakTest.xml` の標準出力にある `SOAK` で始まる行です。

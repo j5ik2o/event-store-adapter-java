@@ -34,6 +34,7 @@ python3 -m unittest discover -s .github/tests -v
 ```
 
 - CI runs the tests with `-PtestJavaVersion` set to 11, 17 and 19.
+- `-PgoogleSdkSet=5.1` or `-PgoogleSdkSet=5.2` runs the tests on the Spanner and Bigtable SDK versions that release 5.1.0 or 5.2.0 depends on (5.1: Spanner 6.124.0 and Bigtable 2.85.0; 5.2: Spanner 6.127.0 and Bigtable 2.88.0). Only the test runtime classpath changes, so the library is still compiled against the declared SDK. `GoogleSdkSetTest` fails when the loaded SDK is not the selected one. CI runs the `createOffloaded` tests on both sets. Example: `./gradlew test -PgoogleSdkSet=5.1 --tests '*OffloadedEventStoreTest'`.
 - CI also checks the SHA-256 of `conformance/manifest.json`, `api-surface/surface.json`, `user-docs/template.json` and `tools/user-docs/check.py` with `sha256sum -c`, and checks the workflow files with actionlint v1.7.12. The expected values are in `ci.yml`.
 - The conformance report is written to `build/reports/conformance/` by the tests.
 - The long-running load test of `createOffloaded` is skipped unless `EVENT_STORE_SOAK_SECONDS` is set. It runs the four operations on several aggregates for that many seconds per storage, then reads every aggregate back and checks threads and heap. CI does not run it. Example: `EVENT_STORE_SOAK_SECONDS=900 ./gradlew test --tests '*OffloadedSoakTest'`. The results are the `SOAK` lines in the standard output of `build/test-results/test/TEST-*OffloadedSoakTest.xml`.
