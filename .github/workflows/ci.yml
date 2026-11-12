@@ -86,6 +86,46 @@ jobs:
           name: conformance-report-jdk${{ matrix.java }}
           path: build/reports/conformance/
           if-no-files-found: warn
+  google-sdk-sets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: lint
+    strategy:
+      matrix:
+        sdk-set: [ "5.1", "5.2" ]
+    name: "Run createOffloaded tests on the ${{ matrix.sdk-set }} Google SDK set"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 11
+      - name: Set up Gradle runtime
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 25
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+      - name: Pull the Cloud Spanner emulator image
+        run: docker pull gcr.io/cloud-spanner-emulator/emulator:1.5.58@sha256:c6f3402f2599684f295a0fdefb6fbbbfb18a0e43e309ff5456ccb452a4570a79
+      - name: Pull the Cloud Bigtable emulator image
+        run: docker pull gcr.io/google.com/cloudsdktool/google-cloud-cli@sha256:8d8573471c489a409f03891d2c24d177fa531276184f7002b9a2d853d1b3ed54
+      - name: Run tests
+        env:
+          SDK_SET: ${{ matrix.sdk-set }}
+        run: >-
+          ./gradlew test -PgoogleSdkSet="$SDK_SET"
+          --tests '*.GoogleSdkSetTest'
+          --tests '*.SpannerOffloadedEventStoreTest'
+          --tests '*.BigtableOffloadedEventStoreTest'
+          --tests '*.BlockingExecutionTest'
+      - name: Check that the SDK set check ran
+        # GoogleSdkSetTest skips itself when no set is selected.
+        run: >-
+          grep -E '<testsuite [^>]*tests="1" skipped="0"'
+          build/test-results/test/TEST-com.github.j5ik2o.event.store.adapter.java.GoogleSdkSetTest.xml
   release-tools:
     name: Check release tooling
     runs-on: ubuntu-latest
@@ -117,16 +157,17 @@ jobs:
     name: CI Success
     runs-on: ubuntu-latest
     timeout-minutes: 2
-    needs: [lint, test, release-tools]
+    needs: [lint, test, google-sdk-sets, release-tools]
     if: always()
     steps:
       - name: Check CI results
         env:
           LINT_RESULT: ${{ needs.lint.result }}
           TEST_RESULT: ${{ needs.test.result }}
+          GOOGLE_SDK_SETS_RESULT: ${{ needs.google-sdk-sets.result }}
           RELEASE_TOOLS_RESULT: ${{ needs.release-tools.result }}
         run: |
-          if [[ "$LINT_RESULT" != "success" || "$TEST_RESULT" != "success" || "$RELEASE_TOOLS_RESULT" != "success" ]]; then
-            echo "CI did not succeed: lint=$LINT_RESULT, test=$TEST_RESULT, release-tools=$RELEASE_TOOLS_RESULT"
+          if [[ "$LINT_RESULT" != "success" || "$TEST_RESULT" != "success" || "$GOOGLE_SDK_SETS_RESULT" != "success" || "$RELEASE_TOOLS_RESULT" != "success" ]]; then
+            echo "CI did not succeed: lint=$LINT_RESULT, test=$TEST_RESULT, google-sdk-sets=$GOOGLE_SDK_SETS_RESULT, release-tools=$RELEASE_TOOLS_RESULT"
             exit 1
           fi
