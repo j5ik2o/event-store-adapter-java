@@ -205,10 +205,16 @@ public final class DynamoDbEventStore {
                         sleeper,
                         retentionNotifier)
                     .retainAsync(client)
-                    .whenComplete((ignored, retentionFailure) -> result.complete(null));
+                    .whenComplete((ignored, fatal) -> {
+                      // Retention fails only with an Error; other failures were notified.
+                      if (fatal == null) result.complete(null);
+                      else result.completeExceptionally(EventStoreExceptions.unwrap(fatal));
+                    });
               } catch (RuntimeException retentionFailure) {
                 // Retention cannot change the success of the committed write.
                 result.complete(null);
+              } catch (Error fatal) {
+                result.completeExceptionally(fatal);
               }
             });
       } catch (RuntimeException failure) {
