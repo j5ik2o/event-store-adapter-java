@@ -1337,4 +1337,91 @@ class SpannerOffloadedEventStoreTest {
     assertEquals(list(1, 2, 3, 4), journal(prefix));
     assertEquals(list(3), history(prefix));
   }
+
+  private static final class Rpc {
+    final String method;
+    final Thread thread;
+
+    Rpc(String method, Thread thread) {
+      this.method = method;
+      this.thread = thread;
+    }
+
+    @Override
+    public String toString() {
+      return method + " on " + thread.getName();
+    }
+  }
+
+  /** A service that records the SDK method and the thread that starts each of its RPCs. */
+  private static Spanner serviceRecording(List<Rpc> rpcs) {
+    return EMULATOR.newService(options ->
+        options.setCallContextConfigurator(
+            new SpannerOptions.CallContextConfigurator() {
+              @Override
+              public <ReqT, RespT> ApiCallContext configure(
+                  ApiCallContext context, ReqT request, MethodDescriptor<ReqT, RespT> method) {
+                rpcs.add(new Rpc(method.getBareMethodName(), Thread.currentThread()));
+                return null;
+              }
+            }));
+  }
+
+  /**
+   * The SDK creates its session when the client is made, and {@link SpannerStorage#open} uses it on
+   * the caller. Every RPC an offloaded operation needs, its first one included, starts on the
+   * worker, and no session RPC starts while the operations run.
+   */
+  @Test
+  void everyRpcOfAnOffloadedOperationStartsOnTheWorkerAndNoneOnTheCaller() throws Exception {
+    String prefix = deleteStore(1);
+    List<Rpc> rpcs = Collections.synchronizedList(new ArrayList<>());
+    Spanner service = serviceRecording(rpcs);
+    BlockingExecution execution = BlockingExecution.singleWorker(8);
+    Thread worker;
+    List<Rpc> beforeAdmission;
+    List<Rpc> duringOperations;
+    try {
+      SpannerStorage storage =
+          SpannerStorage.open(
+              SpannerEmulator.client(service), settings(prefix, SpannerRetentionPolicy.delete(1)));
+      worker = get(execution.submit(Thread::currentThread));
+      int beforeOperations = rpcs.size();
+      AsyncEventStore<String, String> store =
+          SpannerEventStore.createOffloaded(storage, config(name -> {}), execution);
+      List<CompletableFuture<?>> admitted = new ArrayList<>();
+      admitted.add(store.persistEvent(event(1)));
+      admitted.add(store.persistEventAndSnapshot(event(2), snapshot(2)));
+      admitted.add(store.persistEventAndSnapshot(event(3), snapshot(3)));
+      admitted.add(store.getLatestSnapshotById(AID));
+      admitted.add(store.getEventsByIdSinceSeqNr(AID, 0));
+      for (CompletableFuture<?> operation : admitted) {
+        get(operation);
+      }
+      synchronized (rpcs) {
+        beforeAdmission = new ArrayList<>(rpcs.subList(0, beforeOperations));
+        duringOperations = new ArrayList<>(rpcs.subList(beforeOperations, rpcs.size()));
+      }
+    } finally {
+      drain(execution);
+      service.close();
+    }
+
+    assertNotSame(Thread.currentThread(), worker);
+    assertTrue(
+        beforeAdmission.stream().anyMatch(rpc -> rpc.method.equals("CreateSession")),
+        "the session was created before admission: " + beforeAdmission);
+    List<String> methods =
+        duringOperations.stream().map(rpc -> rpc.method).collect(Collectors.toList());
+    assertTrue(methods.contains("Commit"), methods.toString());
+    assertTrue(methods.contains("ExecuteSql"), methods.toString());
+    assertTrue(methods.contains("ExecuteStreamingSql"), methods.toString());
+    assertFalse(methods.contains("CreateSession"), methods.toString());
+    assertFalse(methods.contains("BatchCreateSessions"), methods.toString());
+    for (Rpc rpc : duringOperations) {
+      assertSame(worker, rpc.thread, rpc + " must start on the worker: " + duringOperations);
+    }
+    assertEquals(list(1, 2, 3), journal(prefix));
+    assertEquals(list(3), history(prefix));
+  }
 }

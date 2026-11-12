@@ -6,6 +6,7 @@ import static com.github.j5ik2o.event.store.adapter.java.sqlite.SqliteTestFixtur
 import static com.github.j5ik2o.event.store.adapter.java.sqlite.SqliteTestFixtures.execute;
 import static com.github.j5ik2o.event.store.adapter.java.sqlite.SqliteTestFixtures.initialized;
 import static com.github.j5ik2o.event.store.adapter.java.sqlite.SqliteTestFixtures.longs;
+import static com.github.j5ik2o.event.store.adapter.java.sqlite.SqliteTestFixtures.raw;
 import static com.github.j5ik2o.event.store.adapter.java.sqlite.SqliteTestFixtures.settings;
 import static com.github.j5ik2o.event.store.adapter.java.sqlite.SqliteTestFixtures.snapshot;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -38,6 +39,11 @@ import com.github.j5ik2o.event.store.adapter.java.core.StorageException;
 import com.github.j5ik2o.event.store.adapter.java.core.UnrecoverableExecution;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -45,12 +51,15 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -486,6 +495,147 @@ class SqliteOffloadedEventStoreTest {
       drain(execution);
     }
     assertEquals((long) callers * rounds, count(file, "journal"));
+  }
+
+  /** The payloads of the journal in the order SQLite inserted its rows. */
+  private static List<String> journalPayloads(Path file) throws SQLException {
+    PayloadSerializer<String> json = JsonPayloadSerializer.of(String.class);
+    List<String> payloads = new ArrayList<>();
+    try (Connection c = raw(file);
+        Statement s = c.createStatement();
+        ResultSet rs = s.executeQuery("SELECT payload FROM journal ORDER BY rowid")) {
+      while (rs.next()) {
+        payloads.add(json.deserialize(rs.getBytes(1)));
+      }
+    }
+    return payloads;
+  }
+
+  /**
+   * Under the documented condition every offloaded store of one storage uses one execution. Callers
+   * on several threads then write through two stores of that storage, and the one worker runs every
+   * operation on the one connection: no operation waits for the connection lock, none meets the
+   * SQLite write lock even with no lock wait, and the journal holds the writes in their admission
+   * order.
+   */
+  @Test
+  void concurrentCallersThroughStoresOfOneStorageAndOneExecutionNeverWaitForALock()
+      throws Exception {
+    RetentionPolicy keepOne = RetentionPolicy.delete(1);
+    Path file = file("one-connection", keepOne);
+    int callers = 4;
+    int rounds = 30;
+    List<String> serialized = Collections.synchronizedList(new ArrayList<>());
+    Set<Thread> ranOn = ConcurrentHashMap.newKeySet();
+    AtomicInteger lockWaits = new AtomicInteger();
+    AtomicReference<SqliteStorage> opened = new AtomicReference<>();
+    Consumer<String> observe =
+        point -> {
+          ranOn.add(Thread.currentThread());
+          if (opened.get().lock.hasQueuedThreads()) {
+            lockWaits.incrementAndGet();
+          }
+        };
+    BlockingExecution execution = BlockingExecution.singleWorker(callers * rounds);
+    try (SqliteStorage storage =
+        SqliteStorage.open(file, settings(keepOne, Duration.ZERO), hooks(observe))) {
+      opened.set(storage);
+      EventStoreConfig<String, String> recording =
+          ConcurrentAdmission.recordingPayloads(serialized);
+      List<AsyncEventStore<String, String>> stores =
+          List.of(
+              SqliteEventStore.createOffloaded(storage, recording, execution),
+              SqliteEventStore.createOffloaded(storage, recording, execution));
+      List<ConcurrentAdmission.Admission> admissions =
+          ConcurrentAdmission.admit(
+              callers,
+              rounds,
+              (caller, round) -> {
+                AsyncEventStore<String, String> store = stores.get(caller % stores.size());
+                EventEnvelope<String> event = ConcurrentAdmission.event(caller, round);
+                return round % 2 == 0
+                    ? store.persistEvent(event)
+                    : store.persistEventAndSnapshot(event, snapshot(event.seqNr()));
+              });
+      for (ConcurrentAdmission.Admission admission : admissions) {
+        get(admission.result);
+      }
+      ConcurrentAdmission.assertRanInOneAdmissionOrder(admissions, serialized);
+      ConcurrentAdmission.assertRanInOneAdmissionOrder(admissions, journalPayloads(file));
+    } finally {
+      drain(execution);
+    }
+    assertEquals(0, lockWaits.get(), "operations that waited for the connection lock");
+    assertEquals(1, ranOn.size(), "threads that used the connection: " + ranOn);
+    assertFalse(ranOn.contains(Thread.currentThread()));
+    assertEquals((long) callers * rounds, count(file, "journal"));
+    assertEquals(callers, count(file, "snapshot_history"));
+  }
+
+  @Test
+  void anotherExecutionOnTheSameStorageWaitsForTheConnectionLockOfTheFirst() throws Exception {
+    Path file = file("two-executions-lock", RetentionPolicy.none());
+    Gate gate = new Gate("afterBeginImmediate");
+    BlockingExecution first = BlockingExecution.singleWorker(1);
+    BlockingExecution second = BlockingExecution.singleWorker(1);
+    try (SqliteStorage storage =
+        SqliteStorage.open(file, settings(RetentionPolicy.none()), hooks(gate))) {
+      CompletableFuture<Void> holding =
+          SqliteEventStore.createOffloaded(storage, config(name -> {}), first)
+              .persistEvent(event(1));
+      gate.awaitEntered();
+
+      CompletableFuture<Void> waiting =
+          SqliteEventStore.createOffloaded(storage, config(name -> {}), second)
+              .persistEvent(event(AggregateId.of("Order", "2"), 1));
+      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+      while (!storage.lock.hasQueuedThreads() && System.nanoTime() < deadline) {
+        Thread.onSpinWait();
+      }
+      assertTrue(storage.lock.hasQueuedThreads(), "the second worker waits for the connection");
+      assertFalse(waiting.isDone());
+      gate.release();
+
+      get(holding);
+      get(waiting);
+    } finally {
+      gate.release();
+      drain(first);
+      drain(second);
+    }
+    assertEquals(2, count(file, "journal"));
+  }
+
+  @Test
+  void twoStoragesOfOneFileMeetTheSqliteWriteLockAndTheLaterWriterFails() throws Exception {
+    Path file = file("two-connections", RetentionPolicy.none());
+    Gate gate = new Gate("afterBeginImmediate");
+    BlockingExecution first = BlockingExecution.singleWorker(1);
+    BlockingExecution second = BlockingExecution.singleWorker(1);
+    try (SqliteStorage holder =
+            SqliteStorage.open(file, settings(RetentionPolicy.none()), hooks(gate));
+        SqliteStorage other =
+            SqliteStorage.open(file, settings(RetentionPolicy.none(), Duration.ZERO))) {
+      CompletableFuture<Void> holding =
+          SqliteEventStore.createOffloaded(holder, config(name -> {}), first)
+              .persistEvent(event(1));
+      gate.awaitEntered();
+
+      Throwable failure =
+          failureOf(
+              SqliteEventStore.createOffloaded(other, config(name -> {}), second)
+                  .persistEvent(event(AggregateId.of("Order", "2"), 1)));
+      gate.release();
+
+      assertInstanceOf(StorageException.class, failure);
+      assertEquals("sqlite write lock wait exceeded", failure.getMessage());
+      get(holding);
+    } finally {
+      gate.release();
+      drain(first);
+      drain(second);
+    }
+    assertEquals(List.of(1L), longs(file, JOURNAL));
   }
 
   @Test
