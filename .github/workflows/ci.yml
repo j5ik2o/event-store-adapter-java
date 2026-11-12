@@ -73,6 +73,18 @@ jobs:
         env:
           TEST_JAVA_VERSION: ${{ matrix.java }}
         run: ./gradlew coreDynamoDbOnlyTest -PtestJavaVersion="$TEST_JAVA_VERSION" --info
+      - name: Run core + SQLite only test
+        env:
+          TEST_JAVA_VERSION: ${{ matrix.java }}
+        run: ./gradlew coreSqliteOnlyTest -PtestJavaVersion="$TEST_JAVA_VERSION" --info
+      - name: Run core + Spanner only test
+        env:
+          TEST_JAVA_VERSION: ${{ matrix.java }}
+        run: ./gradlew coreSpannerOnlyTest -PtestJavaVersion="$TEST_JAVA_VERSION" --info
+      - name: Run core + Bigtable only test
+        env:
+          TEST_JAVA_VERSION: ${{ matrix.java }}
+        run: ./gradlew coreBigtableOnlyTest -PtestJavaVersion="$TEST_JAVA_VERSION" --info
       - name: Write conformance summary
         if: always()
         run: |
