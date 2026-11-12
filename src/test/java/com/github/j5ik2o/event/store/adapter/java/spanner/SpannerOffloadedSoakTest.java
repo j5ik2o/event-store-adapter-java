@@ -19,11 +19,13 @@ class SpannerOffloadedSoakTest {
     OffloadedSoak.Settings settings = OffloadedSoak.Settings.fromEnvironment("spanner");
     SpannerStorage storage = open(deleteStore(3), POLICY);
     BlockingExecution execution = BlockingExecution.singleWorker(16);
+    OffloadedSoak.WorkerProbe probe = new OffloadedSoak.WorkerProbe();
     OffloadedSoak.Report report =
         OffloadedSoak.run(
             settings,
-            SpannerEventStore.createOffloaded(storage, config(), execution),
+            SpannerEventStore.createOffloaded(storage, probe.config(), execution),
             execution,
+            probe,
             store(storage));
     System.out.println(report.summary(settings));
     OffloadedSoak.assertHealthy(report, true);
@@ -36,7 +38,7 @@ class SpannerOffloadedSoakTest {
     SpannerStorage storage = open(deleteStore(3), POLICY);
     OffloadedSoak.Report report =
         OffloadedSoak.run(
-            settings, SpannerEventStore.createAsync(storage, config()), null, store(storage));
+            settings, SpannerEventStore.createAsync(storage, config()), null, null, store(storage));
     System.out.println(report.summary(settings));
     OffloadedSoak.assertHealthy(report, false);
   }

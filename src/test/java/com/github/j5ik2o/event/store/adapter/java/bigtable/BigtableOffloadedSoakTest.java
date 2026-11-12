@@ -20,11 +20,13 @@ class BigtableOffloadedSoakTest {
     OffloadedSoak.Settings settings = OffloadedSoak.Settings.fromEnvironment("bigtable");
     BigtableStorage storage = open(deleteStore(3), POLICY);
     BlockingExecution execution = BlockingExecution.singleWorker(16);
+    OffloadedSoak.WorkerProbe probe = new OffloadedSoak.WorkerProbe();
     OffloadedSoak.Report report =
         OffloadedSoak.run(
             settings,
-            BigtableEventStore.createOffloaded(storage, config(), execution),
+            BigtableEventStore.createOffloaded(storage, probe.config(), execution),
             execution,
+            probe,
             store(storage));
     System.out.println(report.summary(settings));
     OffloadedSoak.assertHealthy(report, true);
@@ -37,7 +39,11 @@ class BigtableOffloadedSoakTest {
     BigtableStorage storage = open(deleteStore(3), POLICY);
     OffloadedSoak.Report report =
         OffloadedSoak.run(
-            settings, BigtableEventStore.createAsync(storage, config()), null, store(storage));
+            settings,
+            BigtableEventStore.createAsync(storage, config()),
+            null,
+            null,
+            store(storage));
     System.out.println(report.summary(settings));
     OffloadedSoak.assertHealthy(report, false);
   }

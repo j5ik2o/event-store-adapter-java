@@ -5,6 +5,9 @@ import com.github.j5ik2o.event.store.adapter.java.core.AsyncEventStore;
 import com.github.j5ik2o.event.store.adapter.java.core.BlockingExecution;
 import com.github.j5ik2o.event.store.adapter.java.core.EventEnvelope;
 import com.github.j5ik2o.event.store.adapter.java.core.EventStore;
+import com.github.j5ik2o.event.store.adapter.java.core.EventStoreConfig;
+import com.github.j5ik2o.event.store.adapter.java.core.JsonPayloadSerializer;
+import com.github.j5ik2o.event.store.adapter.java.core.PayloadSerializer;
 import com.github.j5ik2o.event.store.adapter.java.core.SnapshotEnvelope;
 import com.github.j5ik2o.event.store.adapter.java.core.SnapshotReadResult;
 import java.lang.management.ManagementFactory;
@@ -25,6 +28,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicLongArray;
 import java.util.concurrent.locks.LockSupport;
@@ -77,6 +81,42 @@ public final class OffloadedSoak {
           duration.compareTo(Duration.ofSeconds(30)) < 0 ? duration : Duration.ofSeconds(30);
       return new Settings(
           backend + "-caller-thread", shorter, 1, producers * aggregatesPerProducer, seed);
+    }
+  }
+
+  /**
+   * Counts serializer calls by thread, to catch any part of an operation that leaves the worker.
+   */
+  public static final class WorkerProbe {
+    final AtomicLong onWorker = new AtomicLong();
+    final AtomicLong offWorker = new AtomicLong();
+
+    public EventStoreConfig<String, String> config() {
+      return EventStoreConfig.<String, String>builder()
+          .payloadSerializer(probe(JsonPayloadSerializer.of(String.class)))
+          .snapshotSerializer(probe(JsonPayloadSerializer.of(String.class)))
+          .build();
+    }
+
+    private PayloadSerializer<String> probe(PayloadSerializer<String> json) {
+      return new PayloadSerializer<String>() {
+        @Override
+        public byte[] serialize(String value) {
+          record();
+          return json.serialize(value);
+        }
+
+        @Override
+        public String deserialize(byte[] bytes) {
+          record();
+          return json.deserialize(bytes);
+        }
+      };
+    }
+
+    private void record() {
+      boolean worker = Thread.currentThread().getName().equals(WORKER_THREAD);
+      (worker ? onWorker : offWorker).incrementAndGet();
     }
   }
 
@@ -136,8 +176,11 @@ public final class OffloadedSoak {
     Map<String, Integer> threadsAfter;
     long loadNanos;
     long drainNanos;
-    long unsettledAtClose;
+    final AtomicLong workerCompleted = new AtomicLong();
+    long pendingAtClose;
     boolean drainedAtClose;
+    long serializerCallsOnWorker;
+    long serializerCallsOffWorker;
     long eventsReadBack;
     int aggregates;
     Sample before;
@@ -171,8 +214,12 @@ public final class OffloadedSoak {
       }
       out.append(
           String.format(
-              "SOAK load=%.1fs unsettledAtClose=%d drainedAtClose=%b drain=%.3fs eventsReadBack=%d%n",
-              loadSeconds, unsettledAtClose, drainedAtClose, drainNanos / 1e9, eventsReadBack));
+              "SOAK load=%.1fs pendingAtClose=%d drainedAtClose=%b drain=%.3fs eventsReadBack=%d%n",
+              loadSeconds, pendingAtClose, drainedAtClose, drainNanos / 1e9, eventsReadBack));
+      out.append(
+          String.format(
+              "SOAK serializerCalls onWorker=%d offWorker=%d%n",
+              serializerCallsOnWorker, serializerCallsOffWorker));
       for (Op op : Op.values()) {
         long count = serviceCount.get(op.ordinal());
         out.append(
@@ -235,6 +282,7 @@ public final class OffloadedSoak {
       this.observed =
           future.whenComplete((value, failure) -> {
             completionTicket.set(TICKETS.incrementAndGet());
+            report.workerCompleted.incrementAndGet();
             long now = System.nanoTime();
             long previous = report.lastCompletionNanos.getAndSet(now);
             if (previous != 0) {
@@ -252,12 +300,14 @@ public final class OffloadedSoak {
   /**
    * Runs the load, closes {@code execution} at the deadline while the producers still fill its
    * queue, settles and drains every accepted operation, and reads every aggregate back through
-   * {@code readback}.
+   * {@code readback}. Pass null for {@code execution} and {@code probe} on the caller-thread
+   * factory.
    */
   public static Report run(
       Settings settings,
       AsyncEventStore<String, String> store,
       BlockingExecution execution,
+      WorkerProbe probe,
       EventStore<String, String> readback)
       throws InterruptedException {
     Report report = new Report();
@@ -268,6 +318,7 @@ public final class OffloadedSoak {
     List<List<Aggregate>> owned = new ArrayList<>();
     List<Thread> producers = new ArrayList<>();
     CountDownLatch stoppedSubmitting = new CountDownLatch(settings.producers);
+    AtomicBoolean stop = new AtomicBoolean();
     for (int p = 0; p < settings.producers; p++) {
       List<Aggregate> aggregates = new ArrayList<>();
       for (int a = 0; a < settings.aggregatesPerProducer; a++) {
@@ -279,7 +330,7 @@ public final class OffloadedSoak {
       Random random = new Random(settings.seed + p);
       Thread producer =
           new Thread(
-              () -> produce(store, aggregates, random, deadline, stoppedSubmitting, report),
+              () -> produce(store, aggregates, random, stop, stoppedSubmitting, report),
               "soak-producer-" + p);
       producers.add(producer);
     }
@@ -290,12 +341,16 @@ public final class OffloadedSoak {
     sampler.start();
     producers.forEach(Thread::start);
     TimeUnit.NANOSECONDS.sleep(deadline - System.nanoTime());
+    sampler.interrupt();
+    sampler.join(STALL.toMillis());
     long drainStart = System.nanoTime();
     if (execution != null) {
-      report.unsettledAtClose = report.acceptedTotal() - report.completed.get();
+      report.pendingAtClose = report.acceptedTotal() - report.workerCompleted.get();
       execution.close();
       report.drainedAtClose = execution.drained().toCompletableFuture().isDone();
+      TimeUnit.MILLISECONDS.sleep(100);
     }
+    stop.set(true);
     if (!stoppedSubmitting.await(STALL.toMillis(), TimeUnit.MILLISECONDS)) {
       report.anomalies.add("producers did not stop submitting: " + workerStacks());
     }
@@ -306,9 +361,6 @@ public final class OffloadedSoak {
         report.anomalies.add(producer.getName() + " did not finish: " + workerStacks());
       }
     }
-    sampler.interrupt();
-    sampler.join(STALL.toMillis());
-
     if (execution != null) {
       try {
         execution.drained().toCompletableFuture().get(STALL.getSeconds(), TimeUnit.SECONDS);
@@ -328,6 +380,10 @@ public final class OffloadedSoak {
         readBack(readback, aggregate, report);
       }
     }
+    if (probe != null) {
+      report.serializerCallsOnWorker = probe.onWorker.get();
+      report.serializerCallsOffWorker = probe.offWorker.get();
+    }
     report.after = sample(System.nanoTime() - start, report);
     report.threadsAfter = threadGroups();
     return report;
@@ -335,9 +391,14 @@ public final class OffloadedSoak {
 
   /**
    * Fails on any anomaly, on an accepted operation that did not complete, when the queue never
-   * filled, when a worker outlives drain, or when threads or the post-GC heap keep growing.
+   * filled or was empty at close, when any serializer call left the worker, when a worker outlives
+   * drain, or when threads or the post-GC heap keep growing.
    */
   public static void assertHealthy(Report report, boolean offloaded) {
+    if (offloaded && report.before.workerThreads != 1) {
+      throw new AssertionError(
+          "expected only this soak's worker before the load, found " + report.before.workerThreads);
+    }
     if (!report.anomalies.isEmpty()) {
       throw new AssertionError(
           "anomalies: " + report.anomalies.size() + " first " + report.anomalies.get(0));
@@ -354,6 +415,20 @@ public final class OffloadedSoak {
     }
     if (report.rejected.get() == 0) {
       throw new AssertionError("the queue never filled");
+    }
+    if (report.pendingAtClose == 0 || report.drainedAtClose) {
+      throw new AssertionError(
+          "close found no pending work: pending "
+              + report.pendingAtClose
+              + " drained "
+              + report.drainedAtClose);
+    }
+    if (report.serializerCallsOffWorker != 0 || report.serializerCallsOnWorker == 0) {
+      throw new AssertionError(
+          "serializer calls off the worker "
+              + report.serializerCallsOffWorker
+              + ", on it "
+              + report.serializerCallsOnWorker);
     }
     if (report.after.workerThreads != 0) {
       throw new AssertionError("worker alive after drain");
@@ -393,13 +468,14 @@ public final class OffloadedSoak {
       AsyncEventStore<String, String> store,
       List<Aggregate> aggregates,
       Random random,
-      long deadline,
+      AtomicBoolean stop,
       CountDownLatch stoppedSubmitting,
       Report report) {
     ArrayDeque<InFlight> inFlight = new ArrayDeque<>();
     long lastTicket = 0;
+    boolean submitting = true;
     try {
-      while (System.nanoTime() < deadline) {
+      while (!stop.get()) {
         lastTicket = settleDone(inFlight, lastTicket, report);
         Aggregate aggregate = aggregates.get(random.nextInt(aggregates.size()));
         Op op = choose(random);
@@ -418,12 +494,15 @@ public final class OffloadedSoak {
         advance(aggregate, op);
         inFlight.addLast(submitted);
       }
+      submitting = false;
       stoppedSubmitting.countDown();
       while (!inFlight.isEmpty()) {
         lastTicket = settle(inFlight.removeFirst(), lastTicket, report);
       }
     } catch (Throwable failure) {
-      stoppedSubmitting.countDown();
+      if (submitting) {
+        stoppedSubmitting.countDown();
+      }
       report.anomalies.add(Thread.currentThread().getName() + " failed: " + failure);
     }
   }
@@ -597,8 +676,19 @@ public final class OffloadedSoak {
       future.getNow(null);
       return false;
     } catch (Exception e) {
-      return e.getCause() instanceof RejectedExecutionException;
+      return e.getCause() instanceof RejectedExecutionException && fromAdmission(e.getCause());
     }
+  }
+
+  /** A storage may also throw RejectedExecutionException (#829); only admission is a rejection. */
+  private static boolean fromAdmission(Throwable rejection) {
+    for (StackTraceElement frame : rejection.getStackTrace()) {
+      if (frame.getClassName().equals(BlockingExecution.class.getName())
+          && frame.getMethodName().equals("submit")) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private static EventEnvelope<String> event(Aggregate aggregate, long seqNr) {

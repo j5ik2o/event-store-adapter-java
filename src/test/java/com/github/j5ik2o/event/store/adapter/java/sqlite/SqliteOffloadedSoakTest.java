@@ -26,11 +26,13 @@ class SqliteOffloadedSoakTest {
     Path file = initialized(Files.createDirectories(directory.resolve("offloaded")), POLICY);
     try (SqliteStorage storage = SqliteStorage.open(file, settings(POLICY))) {
       BlockingExecution execution = BlockingExecution.singleWorker(16);
+      OffloadedSoak.WorkerProbe probe = new OffloadedSoak.WorkerProbe();
       OffloadedSoak.Report report =
           OffloadedSoak.run(
               settings,
-              SqliteEventStore.createOffloaded(storage, config(), execution),
+              SqliteEventStore.createOffloaded(storage, probe.config(), execution),
               execution,
+              probe,
               store(storage));
       System.out.println(report.summary(settings));
       OffloadedSoak.assertHealthy(report, true);
@@ -45,7 +47,11 @@ class SqliteOffloadedSoakTest {
     try (SqliteStorage storage = SqliteStorage.open(file, settings(POLICY))) {
       OffloadedSoak.Report report =
           OffloadedSoak.run(
-              settings, SqliteEventStore.createAsync(storage, config()), null, store(storage));
+              settings,
+              SqliteEventStore.createAsync(storage, config()),
+              null,
+              null,
+              store(storage));
       System.out.println(report.summary(settings));
       OffloadedSoak.assertHealthy(report, false);
     }
