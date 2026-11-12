@@ -583,6 +583,35 @@ class DynamoDbSnapshotRetentionTest {
   }
 
   @Test
+  void asynchronousRetentionErrorFailsTheCommittedWriteWithThatError() {
+    for (String phase : List.of("query-throw", "query-future", "delete-throw", "delete-future")) {
+      Stub s = new Stub(RetentionPolicy.delete(1));
+      AssertionError fatal = new AssertionError(phase);
+      s.query =
+          request -> {
+            if (phase.equals("query-throw")) throw fatal;
+            if (phase.equals("query-future")) return CompletableFuture.failedFuture(fatal);
+            return CompletableFuture.completedFuture(
+                QueryResponse.builder().items(history(1)).build());
+          };
+      s.delete =
+          request -> {
+            if (phase.equals("delete-throw")) throw fatal;
+            return CompletableFuture.failedFuture(fatal);
+          };
+      CompletableFuture<Void> result =
+          s.asyncStore().persistEventAndSnapshot(event(2), snapshot(2));
+      ExecutionException failure =
+          assertThrows(ExecutionException.class, () -> result.get(10, TimeUnit.SECONDS), phase);
+      assertSame(fatal, failure.getCause(), phase);
+      assertEquals(1, s.commits.size(), phase);
+      assertEquals(1, s.queries.size(), phase);
+      assertEquals(phase.startsWith("delete") ? 1 : 0, s.deletes.size(), phase);
+      assertTrue(s.failures.isEmpty(), phase);
+    }
+  }
+
+  @Test
   void lastAllowedRetryWithoutUnprocessedItemsSucceedsWithoutNotification() {
     for (boolean async : List.of(false, true)) {
       Stub s = new Stub(RetentionPolicy.delete(1));
@@ -614,6 +643,7 @@ class DynamoDbSnapshotRetentionTest {
   }
 
   private static final class Stub {
+    final List<TransactWriteItemsRequest> commits = new ArrayList<>();
     final List<QueryRequest> queries = new ArrayList<>();
     final List<BatchWriteItemRequest> deletes = new ArrayList<>();
     final List<UpdateItemRequest> marks = new ArrayList<>();
@@ -673,6 +703,7 @@ class DynamoDbSnapshotRetentionTest {
           return CompletableFuture.completedFuture(
               BatchGetItemResponse.builder().responses(items).build());
         case "transactWriteItems":
+          commits.add((TransactWriteItemsRequest) args[0]);
           return commit.apply((TransactWriteItemsRequest) args[0]);
         case "query":
           queries.add((QueryRequest) args[0]);
