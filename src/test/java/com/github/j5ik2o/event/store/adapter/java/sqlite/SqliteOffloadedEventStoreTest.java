@@ -11,7 +11,10 @@ import static com.github.j5ik2o.event.store.adapter.java.sqlite.SqliteTestFixtur
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.DynamicTest.dynamicTest;
@@ -32,6 +35,7 @@ import com.github.j5ik2o.event.store.adapter.java.core.RetentionPolicy;
 import com.github.j5ik2o.event.store.adapter.java.core.SerializationException;
 import com.github.j5ik2o.event.store.adapter.java.core.SnapshotReadResult;
 import com.github.j5ik2o.event.store.adapter.java.core.StorageException;
+import com.github.j5ik2o.event.store.adapter.java.core.UnrecoverableExecution;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -47,6 +51,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -666,6 +671,156 @@ class SqliteOffloadedEventStoreTest {
       drain(execution);
     }
     assertEquals(List.of(1L), longs(file, JOURNAL));
+  }
+
+  @Test
+  void closeAdmissionAndCancellationRacingNeverStrandAnAcceptedWrite() throws Exception {
+    Path file = file("close-race", RetentionPolicy.none());
+    try (SqliteStorage storage = SqliteStorage.open(file, settings(RetentionPolicy.none()))) {
+      EventStore<String, String> readBack = SqliteEventStore.create(storage, config(name -> {}));
+      for (int i = 0; i < 50; i++) {
+        boolean cancel = i % 2 == 0;
+        AggregateId leaderId = AggregateId.of("Order", "leader-" + i);
+        AggregateId racedId = AggregateId.of("Order", "raced-" + i);
+        Gate gate = new Gate("payload.serialize");
+        BlockingExecution execution = BlockingExecution.singleWorker(1);
+        CountDownLatch race = new CountDownLatch(1);
+        AtomicReference<CompletableFuture<Void>> raced = new AtomicReference<>();
+        AtomicReference<Throwable> threadFailure = new AtomicReference<>();
+        Thread producer = null, closer = null;
+        try {
+          AsyncEventStore<String, String> store =
+              SqliteEventStore.createOffloaded(storage, config(gate), execution);
+          CompletableFuture<Void> leader = store.persistEvent(event(leaderId, 1));
+          gate.awaitEntered();
+          producer =
+              new Thread(() -> {
+                try {
+                  race.await();
+                  raced.set(store.persistEvent(event(racedId, 1)));
+                  if (cancel) {
+                    raced.get().cancel(true);
+                  }
+                } catch (Throwable failure) {
+                  threadFailure.set(failure);
+                }
+              });
+          closer =
+              new Thread(() -> {
+                try {
+                  race.await();
+                  execution.close();
+                } catch (Throwable failure) {
+                  threadFailure.set(failure);
+                }
+              });
+          producer.start();
+          closer.start();
+          race.countDown();
+          gate.release();
+          producer.join(5000);
+          closer.join(5000);
+          assertFalse(producer.isAlive());
+          assertFalse(closer.isAlive());
+          assertNull(threadFailure.get());
+          drain(execution);
+
+          get(leader);
+          assertEquals(List.of(1L), seqNrs(readBack.getEventsByIdSinceSeqNr(leaderId, 0)));
+          CompletableFuture<Void> result = raced.get();
+          assertNotNull(result);
+          assertTrue(result.isDone(), "the raced write is not stranded after drain");
+          List<Long> stored = seqNrs(readBack.getEventsByIdSinceSeqNr(racedId, 0));
+          if (result.isCancelled()) {
+            assertTrue(stored.size() <= 1, "a cancelled write ran at most once: " + stored);
+          } else if (result.isCompletedExceptionally()) {
+            assertInstanceOf(RejectedExecutionException.class, failureOf(result));
+            assertEquals(List.of(), stored, "a rejected write never ran");
+          } else {
+            assertEquals(List.of(1L), stored, "an accepted write that was not cancelled ran");
+          }
+        } finally {
+          race.countDown();
+          gate.release();
+          if (producer != null) producer.join(5000);
+          if (closer != null) closer.join(5000);
+          drain(execution);
+        }
+      }
+    }
+  }
+
+  @TestFactory
+  Stream<DynamicTest> aFailedCancelOfAQueuedWriteNeverSkipsIt() {
+    Map<String, Consumer<CompletableFuture<Void>>> interferences = new LinkedHashMap<>();
+    interferences.put("complete", result -> result.complete(null));
+    interferences.put(
+        "completeExceptionally",
+        result -> result.completeExceptionally(new IllegalStateException("consumer")));
+    interferences.put(
+        "orTimeout",
+        result -> {
+          result.orTimeout(1, TimeUnit.MILLISECONDS);
+          assertThrows(ExecutionException.class, () -> result.get(3, TimeUnit.SECONDS));
+        });
+    return interferences.entrySet().stream()
+        .map(interference ->
+            dynamicTest(
+                interference.getKey(),
+                () -> {
+                  Path file =
+                      file("failed-cancel-" + interference.getKey(), RetentionPolicy.none());
+                  Gate gate = new Gate("afterBeginImmediate");
+                  BlockingExecution execution = BlockingExecution.singleWorker(1);
+                  try (SqliteStorage storage =
+                      SqliteStorage.open(file, settings(RetentionPolicy.none()), hooks(gate))) {
+                    AsyncEventStore<String, String> store =
+                        SqliteEventStore.createOffloaded(storage, config(gate), execution);
+                    CompletableFuture<Void> first = store.persistEvent(event(1));
+                    gate.awaitEntered();
+                    CompletableFuture<Void> queued = store.persistEvent(event(2));
+
+                    interference.getValue().accept(queued);
+                    assertFalse(queued.cancel(false));
+                    gate.release();
+
+                    get(first);
+                    drain(execution);
+                  } finally {
+                    gate.release();
+                    drain(execution);
+                  }
+                  assertEquals(List.of(1L, 2L), longs(file, JOURNAL));
+                }));
+  }
+
+  @Test
+  void anUnrecoverableWorkerFailsAcceptedWorkAndDrainWithoutRunningIt() throws Exception {
+    Path file = file("unrecoverable", RetentionPolicy.none());
+    AssertionError recovery = new AssertionError("replacement denied");
+    Gate gate = new Gate("afterBeginImmediate", new AssertionError("fatal"));
+    BlockingExecution execution = UnrecoverableExecution.withoutReplacement(2, recovery);
+    try (SqliteStorage storage =
+        SqliteStorage.open(file, settings(RetentionPolicy.none()), hooks(gate))) {
+      AsyncEventStore<String, String> store =
+          SqliteEventStore.createOffloaded(storage, config(gate), execution);
+      CompletableFuture<Void> fatal = store.persistEvent(event(1));
+      gate.awaitEntered();
+      CompletableFuture<Void> second = store.persistEvent(event(AggregateId.of("Order", "2"), 1));
+      CompletableFuture<Void> third = store.persistEvent(event(AggregateId.of("Order", "3"), 1));
+      execution.close();
+      gate.release();
+
+      assertInstanceOf(AssertionError.class, failureOf(fatal));
+      assertSame(recovery, failureOf(second));
+      assertSame(recovery, failureOf(third));
+      assertSame(recovery, failureOf(execution.drained().toCompletableFuture()));
+      assertInstanceOf(RejectedExecutionException.class, failureOf(store.persistEvent(event(4))));
+    } finally {
+      gate.release();
+      execution.close();
+    }
+    assertEquals(List.of(), longs(file, JOURNAL), "no stranded write ran");
   }
 
   @TestFactory
