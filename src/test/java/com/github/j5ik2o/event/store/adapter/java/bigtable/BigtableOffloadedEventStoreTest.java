@@ -28,6 +28,7 @@ import ch.qos.logback.core.AppenderBase;
 import com.github.j5ik2o.event.store.adapter.java.core.AggregateId;
 import com.github.j5ik2o.event.store.adapter.java.core.AsyncEventStore;
 import com.github.j5ik2o.event.store.adapter.java.core.BlockingExecution;
+import com.github.j5ik2o.event.store.adapter.java.core.ConcurrentAdmission;
 import com.github.j5ik2o.event.store.adapter.java.core.ConfigurationException;
 import com.github.j5ik2o.event.store.adapter.java.core.ContractViolationException;
 import com.github.j5ik2o.event.store.adapter.java.core.EventEnvelope;
@@ -1044,14 +1045,18 @@ class BigtableOffloadedEventStoreTest {
       clients.proxy.dropNextCheckAndMutateResponse();
 
       CompletableFuture<Void> failed = store.persistEvent(event(2));
+      CompletableFuture<Optional<SnapshotReadResult<String>>> headAfterFailure =
+          store.getLatestSnapshotById(AID);
       CompletableFuture<Void> resent = store.persistEvent(event(2));
 
       assertInstanceOf(StorageException.class, failureOf(failed));
+      assertEquals(1, get(headAfterFailure).get().headSeqNr(), "the failed append kept the head");
       get(resent);
     } finally {
       drain(execution);
     }
     assertEquals(List.of(1L, 2L), stored(t));
+    assertEquals(headSeqNr(2), EMULATOR.text(t.head, prefix("Order-1"), "head", "seq_nr"));
   }
 
   /** The conditional updates that create the head row of Order-1. */
@@ -1105,15 +1110,22 @@ class BigtableOffloadedEventStoreTest {
       AsyncEventStore<String, String> store =
           BigtableEventStore.createOffloaded(
               clients.open(t, RetentionPolicy.none(), nothing()), config(gate), execution);
+      AsyncEventStore<String, String> healthy =
+          BigtableEventStore.createOffloaded(
+              open(t, RetentionPolicy.none()), config(nothing()), execution);
       CompletableFuture<Void> active = store.persistEvent(event(1));
       gate.awaitEntered();
       CompletableFuture<List<EventEnvelope<String>>> queued = store.getEventsByIdSinceSeqNr(AID, 0);
+      assertFalse(queued.isDone(), "the execution accepted the queued read");
 
       clients.data.close();
       gate.release();
 
+      // #829: the closed SDK client fails with its own RejectedExecutionException, not STORAGE.
       assertInstanceOf(RejectedExecutionException.class, failureOf(active));
       assertInstanceOf(RejectedExecutionException.class, failureOf(queued));
+      assertEquals(
+          List.of(), seqNrs(get(healthy.getEventsByIdSinceSeqNr(AID, 0))), "the worker moved on");
       execution.close();
       get(execution.drained().toCompletableFuture());
     } finally {
@@ -1121,6 +1133,38 @@ class BigtableOffloadedEventStoreTest {
       drain(execution);
     }
     assertEquals(List.of(), stored(t));
+  }
+
+  @Test
+  void concurrentCallersRunInTheOneOrderInWhichTheirAdmissionsWereAccepted() throws Exception {
+    BigtableEmulator.Tables t = noneStore();
+    int callers = 4;
+    int rounds = 25;
+    List<String> serialized = Collections.synchronizedList(new ArrayList<>());
+    BlockingExecution execution = BlockingExecution.singleWorker(callers * rounds);
+    try {
+      AsyncEventStore<String, String> store =
+          BigtableEventStore.createOffloaded(
+              open(t, RetentionPolicy.none()),
+              ConcurrentAdmission.recordingPayloads(serialized),
+              execution);
+      List<ConcurrentAdmission.Admission> admissions =
+          ConcurrentAdmission.admit(
+              callers,
+              rounds,
+              (caller, round) -> store.persistEvent(ConcurrentAdmission.event(caller, round)));
+      for (ConcurrentAdmission.Admission admission : admissions) {
+        get(admission.result);
+      }
+      ConcurrentAdmission.assertRanInOneAdmissionOrder(admissions, serialized);
+    } finally {
+      drain(execution);
+    }
+    EventStore<String, String> readBack = store(open(t, RetentionPolicy.none()));
+    for (int caller = 0; caller < callers; caller++) {
+      AggregateId id = ConcurrentAdmission.event(caller, 0).aggregateId();
+      assertEquals(rounds, readBack.getEventsByIdSinceSeqNr(id, 0).size(), id.asString());
+    }
   }
 
   @Test
