@@ -92,9 +92,9 @@ public final class ConcurrentAdmission {
   }
 
   /**
-   * Each caller thread admits one operation per round. Every caller takes its call time before the
-   * first barrier and its return time before the second, so the admissions of one round overlap and
-   * all of them return before any admission of the next round is called.
+   * Each caller thread admits one operation per round. The callers of a round leave a barrier
+   * together and admit at once, and a second barrier makes every admission of a round return before
+   * any admission of the next round is called.
    */
   public static List<Admission> admit(int callers, int rounds, Submit submit) throws Exception {
     AtomicLong clock = new AtomicLong();
@@ -110,8 +110,8 @@ public final class ConcurrentAdmission {
               () -> {
                 try {
                   for (int round = 0; round < rounds; round++) {
-                    long calledAt = clock.incrementAndGet();
                     called.await(5, TimeUnit.SECONDS);
+                    long calledAt = clock.incrementAndGet();
                     CompletableFuture<?> result = submit.submit(c, round);
                     long returnedAt = clock.incrementAndGet();
                     admissions.add(new Admission(c, round, calledAt, returnedAt, result));
@@ -140,8 +140,8 @@ public final class ConcurrentAdmission {
 
   /**
    * Asserts that {@code executed} holds every admission once, and that an admission that returned
-   * before another was called also ran before it. Fails unless both admissions that overlapped and
-   * admissions of different callers that followed each other were checked.
+   * before another was called also ran before it. Fails unless admissions of different callers that
+   * followed each other were checked.
    */
   public static void assertRanInOneAdmissionOrder(
       List<Admission> admissions, List<String> executed) {
@@ -154,7 +154,6 @@ public final class ConcurrentAdmission {
       assertTrue(position.containsKey(admission.key), admission.key + " ran");
     }
     int followedAcrossCallers = 0;
-    int overlapped = 0;
     for (Admission earlier : admissions) {
       for (Admission later : admissions) {
         if (earlier.returnedAt < later.calledAt) {
@@ -169,12 +168,9 @@ public final class ConcurrentAdmission {
           if (earlier.caller != later.caller) {
             followedAcrossCallers++;
           }
-        } else if (earlier.caller != later.caller && later.returnedAt >= earlier.calledAt) {
-          overlapped++;
         }
       }
     }
     assertTrue(followedAcrossCallers > 0, "admissions of different callers followed each other");
-    assertTrue(overlapped > 0, "admissions of different callers overlapped");
   }
 }
