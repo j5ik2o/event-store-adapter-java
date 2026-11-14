@@ -1,7 +1,7 @@
 {
-  "ref": "aislop-check-v1",
+  "ref": "aislop-check-v2",
   "files": {
-    "check-aislop.mjs": "02b80fcc0f03a305ab12e659942508597b3ff9bad678878ead32deede275976b",
-    "check-aislop.test.mjs": "a4afe18535bc8312bc6f730a5ffbfc77e7faa39180979c6af0b0dd7231208b2e"
+    "check-aislop.mjs": "cc737d15f89bf6985c0e545ddcd792aa3f7584b76982ef1679052e7b94b109bb",
+    "check-aislop.test.mjs": "19e08330e04e871ef67ecfc0184c6fc88f14d882ca0da3fd382cc281b20de201"
   }
 }
