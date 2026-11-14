@@ -138,6 +138,19 @@ jobs:
         run: >-
           grep -E '<testsuite [^>]*tests="1" skipped="0"'
           build/test-results/test/TEST-com.github.j5ik2o.event.store.adapter.java.GoogleSdkSetTest.xml
+  aislop:
+    name: "Run aislop check"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run check:aislop
+      - run: npm run test:aislop
   release-tools:
     name: Check release tooling
     runs-on: ubuntu-latest
@@ -169,7 +182,7 @@ jobs:
     name: CI Success
     runs-on: ubuntu-latest
     timeout-minutes: 2
-    needs: [lint, test, google-sdk-sets, release-tools]
+    needs: [lint, test, google-sdk-sets, aislop, release-tools]
     if: always()
     steps:
       - name: Check CI results
@@ -177,9 +190,10 @@ jobs:
           LINT_RESULT: ${{ needs.lint.result }}
           TEST_RESULT: ${{ needs.test.result }}
           GOOGLE_SDK_SETS_RESULT: ${{ needs.google-sdk-sets.result }}
+          AISLOP_RESULT: ${{ needs.aislop.result }}
           RELEASE_TOOLS_RESULT: ${{ needs.release-tools.result }}
         run: |
-          if [[ "$LINT_RESULT" != "success" || "$TEST_RESULT" != "success" || "$GOOGLE_SDK_SETS_RESULT" != "success" || "$RELEASE_TOOLS_RESULT" != "success" ]]; then
-            echo "CI did not succeed: lint=$LINT_RESULT, test=$TEST_RESULT, google-sdk-sets=$GOOGLE_SDK_SETS_RESULT, release-tools=$RELEASE_TOOLS_RESULT"
+          if [[ "$LINT_RESULT" != "success" || "$TEST_RESULT" != "success" || "$GOOGLE_SDK_SETS_RESULT" != "success" || "$AISLOP_RESULT" != "success" || "$RELEASE_TOOLS_RESULT" != "success" ]]; then
+            echo "CI did not succeed: lint=$LINT_RESULT, test=$TEST_RESULT, google-sdk-sets=$GOOGLE_SDK_SETS_RESULT, aislop=$AISLOP_RESULT, release-tools=$RELEASE_TOOLS_RESULT"
             exit 1
           fi

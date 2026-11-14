@@ -1,0 +1,12 @@
+{
+  "name": "event-store-adapter-java-aislop-check",
+  "private": true,
+  "description": "aislop check wiring for this repository. The Gradle build does not use this package.json.",
+  "devDependencies": {
+    "aislop": "0.20.1"
+  },
+  "scripts": {
+    "check:aislop": "node scripts/aislop-check-bootstrap.mjs check",
+    "test:aislop": "node scripts/aislop-check-bootstrap.mjs test"
+  }
+}

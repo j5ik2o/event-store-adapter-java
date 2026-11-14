@@ -38,3 +38,9 @@ gradle-app.setting
 !.vscode/settings.json
 
 .DS_Store
+
+# aislop check fetch cache
+.aislop-check/
+
+# npm
+node_modules/

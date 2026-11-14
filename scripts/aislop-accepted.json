@@ -1,0 +1,1356 @@
+{
+  "engines": [
+    "format",
+    "lint",
+    "code-quality",
+    "ai-slop",
+    "security"
+  ],
+  "missingToolsAllowed": {
+    "ruff": "このリポジトリは Java だけで、Python の道具 ruff を導入しない。format は整形器が無いこと、lint は PMD が無いことを欠けた道具として記録する。",
+    "pmd": "このリポジトリは Java だけで、PMD を導入しない。lint エンジンは oxlint（JavaScript/TypeScript）で動き、Java 向けの PMD が見つからないことを欠けた道具として記録する。",
+    "google-java-format": "このリポジトリは Java の整形を Gradle の spotless で行う。format エンジンが使う google-java-format は aislop の場所から見つからないため、欠けた道具として記録される。"
+  },
+  "accepted": [
+    {
+      "reason": "docs/javadoc/ は Javadoc が生成した配布用の JavaScript と CSS で、手で直さない生成物である。ビルド時に再生成されるため、ここでの指摘は修正せず受け入れる。",
+      "findings": [
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/package-search-index.js",
+          "message": "'updateSearchResults' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/package-search-index.js",
+          "message": "'packageSearchIndex' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/type-search-index.js",
+          "message": "'updateSearchResults' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/type-search-index.js",
+          "message": "'typeSearchIndex' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/tag-search-index.js",
+          "message": "'updateSearchResults' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/tag-search-index.js",
+          "message": "'tagSearchIndex' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/member-search-index.js",
+          "message": "'memberSearchIndex' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/member-search-index.js",
+          "message": "'updateSearchResults' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/module-search-index.js",
+          "message": "'moduleSearchIndex' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/module-search-index.js",
+          "message": "'updateSearchResults' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'switchCopyLabel' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'getURL' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'getURL' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'getResultLabel' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'copyToClipboard' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'getResultDescription' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'mbrDesc' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'clsDesc' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'categories' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'categories' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'doSearch' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'messages' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'messages' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'messages' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'messages' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'messages' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'messages' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'messages' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'messages' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'pkgDesc' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'tagDesc' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'descDesc' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "'mdlDesc' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "Parameter 'e' is declared but never used. Unused parameters should start with a '_'."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "Parameter 'e' is declared but never used. Unused parameters should start with a '_'."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "Variable 'id' is declared but never used. Unused variables should start with a '_'."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "Variable 'button' is declared but never used. Unused variables should start with a '_'."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "Parameter 'e' is declared but never used. Unused parameters should start with a '_'."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "Catch parameter 'unsupported' is caught but never used."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "Catch parameter 'unsupported' is caught but never used."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-empty",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "Unexpected empty block statements"
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-empty",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "Unexpected empty block statements"
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "'$' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "'tagSearchIndex' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "'pathtoroot' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "'pathtoroot' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "'pathtoroot' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "'moduleSearchIndex' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "'memberSearchIndex' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "'indexFilesLoaded' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "'updateSearchResults' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "'updateSearchResults' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "'typeSearchIndex' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "'typeSearchIndex' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "'packageSearchIndex' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "'packageSearchIndex' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "Variable 'mbrDesc' is declared but never used. Unused variables should start with a '_'."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "Variable 'clsDesc' is declared but never used. Unused variables should start with a '_'."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "Variable 'tagDesc' is declared but never used. Unused variables should start with a '_'."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "Variable 'descDesc' is declared but never used. Unused variables should start with a '_'."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "Parameter 'event' is declared but never used. Unused parameters should start with a '_'."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "Parameter 'ui' is declared but never used. Unused parameters should start with a '_'."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-useless-escape",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "Unnecessary escape character '/'"
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-useless-escape",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "Unnecessary escape character '['"
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/script.js",
+          "message": "'pathtoroot' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/script.js",
+          "message": "'pathtoroot' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": "docs/javadoc/script-files/script.js",
+          "message": "'hljs' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/script.js",
+          "message": "Function 'loadScripts' is declared but never used."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/script.js",
+          "message": "Function 'sortTable' is declared but never used."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/script.js",
+          "message": "Function 'toggleGlobal' is declared but never used."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/script.js",
+          "message": "Function 'show' is declared but never used."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/script.js",
+          "message": "Function 'switchTab' is declared but never used."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/script.js",
+          "message": "Variable 'updateSearchResults' is declared but never used. Unused variables should start with a '_'."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/script.js",
+          "message": "Function 'indexFilesLoaded' is declared but never used."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/script.js",
+          "message": "Function 'copySnippet' is declared but never used."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/script.js",
+          "message": "Parameter 'e' is declared but never used. Unused parameters should start with a '_'."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/script.js",
+          "message": "Parameter 'e' is declared but never used. Unused parameters should start with a '_'."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/script.js",
+          "message": "Parameter 'e' is declared but never used. Unused parameters should start with a '_'."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/script.js",
+          "message": "Function 'initTheme' is declared but never used."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/script.js",
+          "message": "Parameter 'e' is declared but never used. Unused parameters should start with a '_'."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/script.js",
+          "message": "Parameter 'e' is declared but never used. Unused parameters should start with a '_'."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/script.js",
+          "message": "Parameter 'e' is declared but never used. Unused parameters should start with a '_'."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/script.js",
+          "message": "Parameter 'idx' is declared but never used. Unused parameters should start with a '_'."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/script.js",
+          "message": "Parameter 'e' is declared but never used. Unused parameters should start with a '_'."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/script.js",
+          "message": "Parameter 'e' is declared but never used. Unused parameters should start with a '_'."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-vars",
+          "file": "docs/javadoc/script-files/script.js",
+          "message": "Parameter 'entries' is declared but never used. Unused parameters should start with a '_'."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unassigned-vars",
+          "file": "docs/javadoc/script-files/script.js",
+          "message": "'moduleSearchIndex' is always 'undefined' because it's never assigned."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unassigned-vars",
+          "file": "docs/javadoc/script-files/script.js",
+          "message": "'packageSearchIndex' is always 'undefined' because it's never assigned."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unassigned-vars",
+          "file": "docs/javadoc/script-files/script.js",
+          "message": "'typeSearchIndex' is always 'undefined' because it's never assigned."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unassigned-vars",
+          "file": "docs/javadoc/script-files/script.js",
+          "message": "'memberSearchIndex' is always 'undefined' because it's never assigned."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unassigned-vars",
+          "file": "docs/javadoc/script-files/script.js",
+          "message": "'tagSearchIndex' is always 'undefined' because it's never assigned."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-useless-escape",
+          "file": "docs/javadoc/script-files/script.js",
+          "message": "Unnecessary escape character '['"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": "docs/javadoc/script-files/script.js",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": "docs/javadoc/script-files/search.js",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/swallowed-exception",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "Empty catch block swallows errors silently"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/swallowed-exception",
+          "file": "docs/javadoc/script-files/search-page.js",
+          "message": "Empty catch block swallows errors silently"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.horizontal-scroll' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.deprecation-comment' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.about-language' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.legal-copy' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.skip-nav' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.class-declaration-page' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.class-use-page' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.class-description' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.notes' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.name-value' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.details-list' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.horizontal' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.inheritance' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.ref-list' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.preview-feature-list' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.details-table' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.constants-summary-page' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.two-column-search-results' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.two-column-summary' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.three-column-summary' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.three-column-release-summary' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.four-column-summary' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.doc-file-page' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.tree-page' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.deprecated-label' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.description-from-type-label' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.preview-label' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.restricted-label' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.preview-mark' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.restricted-mark' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.help-footnote' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.preview-comment' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.restricted-comment' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.deprecation-block' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.preview-block' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.restricted-block' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.sealed-graph' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.class-uses' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.help-section' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.help-section-list' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.help-subtoc' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.help-note' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.borderless' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.striped' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.annotations' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/unused-css",
+          "file": "docs/javadoc/resource-files/stylesheet.css",
+          "message": "CSS class '.highlighted' is defined but never referenced in the codebase"
+        },
+        {
+          "engine": "security",
+          "rule": "security/innerhtml",
+          "file": "docs/javadoc/script-files/script.js",
+          "message": "Direct innerHTML assignment can lead to XSS"
+        },
+        {
+          "engine": "security",
+          "rule": "security/innerhtml",
+          "file": "docs/javadoc/script-files/script.js",
+          "message": "Direct innerHTML assignment can lead to XSS"
+        }
+      ]
+    },
+    {
+      "reason": "既存の Java・SQL・コメントの指摘。この issue は受け入れ一覧への記録までが範囲で、コードは直さない（issue の範囲外）。行番号は照合に使わない。",
+      "findings": [
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": "spanner/src/main/java/com/github/j5ik2o/event/store/adapter/java/spanner/SpannerLayout.java",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/swallowed-exception",
+          "file": "bigtable/src/main/java/com/github/j5ik2o/event/store/adapter/java/bigtable/BigtableEventStore.java",
+          "message": "Empty catch block swallows errors silently"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/swallowed-exception",
+          "file": "bigtable/src/main/java/com/github/j5ik2o/event/store/adapter/java/bigtable/BigtableEventStore.java",
+          "message": "Empty catch block swallows errors silently"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/swallowed-exception",
+          "file": "bigtable/src/main/java/com/github/j5ik2o/event/store/adapter/java/bigtable/BigtableEventStore.java",
+          "message": "Empty catch block swallows errors silently"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/swallowed-exception",
+          "file": "core/src/main/java/com/github/j5ik2o/event/store/adapter/java/memory/MemoryEventStore.java",
+          "message": "Empty catch block swallows errors silently"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/swallowed-exception",
+          "file": "core/src/main/java/com/github/j5ik2o/event/store/adapter/java/memory/MemoryEventStore.java",
+          "message": "Empty catch block swallows errors silently"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/swallowed-exception",
+          "file": "dynamodb/src/main/java/com/github/j5ik2o/event/store/adapter/java/dynamodb/DynamoDbRetentionNotifier.java",
+          "message": "Empty catch block swallows errors silently"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/swallowed-exception",
+          "file": "dynamodb/src/main/java/com/github/j5ik2o/event/store/adapter/java/dynamodb/DynamoDbSnapshotRetention.java",
+          "message": "Empty catch block swallows errors silently"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/swallowed-exception",
+          "file": "spanner/src/main/java/com/github/j5ik2o/event/store/adapter/java/spanner/SpannerEventStore.java",
+          "message": "Empty catch block swallows errors silently"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/swallowed-exception",
+          "file": "spanner/src/main/java/com/github/j5ik2o/event/store/adapter/java/spanner/SpannerEventStore.java",
+          "message": "Empty catch block swallows errors silently"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/swallowed-exception",
+          "file": "sqlite/src/main/java/com/github/j5ik2o/event/store/adapter/java/sqlite/SqliteEventStore.java",
+          "message": "Empty catch block swallows errors silently"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/swallowed-exception",
+          "file": "sqlite/src/main/java/com/github/j5ik2o/event/store/adapter/java/sqlite/SqliteEventStore.java",
+          "message": "Empty catch block swallows errors silently"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": "bigtable/src/main/java/com/github/j5ik2o/event/store/adapter/java/bigtable/BigtableRows.java",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": "bigtable/src/main/java/com/github/j5ik2o/event/store/adapter/java/bigtable/BigtableRows.java",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": "bigtable/src/main/java/com/github/j5ik2o/event/store/adapter/java/bigtable/BigtableRows.java",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": "bigtable/src/main/java/com/github/j5ik2o/event/store/adapter/java/bigtable/BigtableStorageHooks.java",
+          "message": "Narrative comment block (cross-reference commentary)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": "dynamodb/src/main/java/com/github/j5ik2o/event/store/adapter/java/dynamodb/DynamoDbItemSize.java",
+          "message": "Narrative comment block (cross-reference commentary)"
+        },
+        {
+          "engine": "security",
+          "rule": "security/sql-injection",
+          "file": "sqlite/src/main/java/com/github/j5ik2o/event/store/adapter/java/sqlite/SqliteAppend.java",
+          "message": "Possible SQL injection: query built by string concatenation or String.format"
+        },
+        {
+          "engine": "security",
+          "rule": "security/sql-injection",
+          "file": "sqlite/src/main/java/com/github/j5ik2o/event/store/adapter/java/sqlite/SqliteAppend.java",
+          "message": "Possible SQL injection: query built by string concatenation or String.format"
+        },
+        {
+          "engine": "security",
+          "rule": "security/sql-injection",
+          "file": "sqlite/src/main/java/com/github/j5ik2o/event/store/adapter/java/sqlite/SqliteAppend.java",
+          "message": "Possible SQL injection: query built by string concatenation or String.format"
+        },
+        {
+          "engine": "security",
+          "rule": "security/sql-injection",
+          "file": "sqlite/src/main/java/com/github/j5ik2o/event/store/adapter/java/sqlite/SqliteAppend.java",
+          "message": "Possible SQL injection: query built by string concatenation or String.format"
+        },
+        {
+          "engine": "security",
+          "rule": "security/sql-injection",
+          "file": "sqlite/src/main/java/com/github/j5ik2o/event/store/adapter/java/sqlite/SqliteAppend.java",
+          "message": "Possible SQL injection: query built by string concatenation or String.format"
+        },
+        {
+          "engine": "security",
+          "rule": "security/sql-injection",
+          "file": "sqlite/src/main/java/com/github/j5ik2o/event/store/adapter/java/sqlite/SqliteLayout.java",
+          "message": "Possible SQL injection: query built by string concatenation or String.format"
+        },
+        {
+          "engine": "security",
+          "rule": "security/sql-injection",
+          "file": "sqlite/src/main/java/com/github/j5ik2o/event/store/adapter/java/sqlite/SqliteLayout.java",
+          "message": "Possible SQL injection: query built by string concatenation or String.format"
+        },
+        {
+          "engine": "security",
+          "rule": "security/sql-injection",
+          "file": "sqlite/src/main/java/com/github/j5ik2o/event/store/adapter/java/sqlite/SqliteLayout.java",
+          "message": "Possible SQL injection: query built by string concatenation or String.format"
+        },
+        {
+          "engine": "security",
+          "rule": "security/sql-injection",
+          "file": "sqlite/src/main/java/com/github/j5ik2o/event/store/adapter/java/sqlite/SqliteRead.java",
+          "message": "Possible SQL injection: query built by string concatenation or String.format"
+        }
+      ]
+    },
+    {
+      "reason": "リリース用の補助スクリプトにある区切り線のコメント。動作に影響しない装飾で、直す必要が無いため受け入れる。",
+      "findings": [
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".github/create-release-note-body.py",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".github/create-release-note-header.py",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".github/next-semver.py",
+          "message": "Narrative comment block (decorative separator)"
+        }
+      ]
+    },
+    {
+      "reason": "tools/user-docs/check.py の規模と関数の長さに関する指摘。この issue はツールの改修を含まないため、既存の課題として受け入れる。",
+      "findings": [
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": "tools/user-docs/check.py",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": "tools/user-docs/check.py",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        }
+      ]
+    }
+  ]
+}
