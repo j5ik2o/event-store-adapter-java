@@ -30,13 +30,21 @@
  * 子プロセスが残り続けないようにするためである（issue #20）。660秒は
  * 起動役の開始からの全体予算で、正本の取得（fetch、1ファイル60秒まで）
  * の時間も含む。子プロセスには残り時間だけを渡し、残りが無ければ子を
- * 起動せずに失敗する。正本の取得（fetch）にも60秒の制限時間を設ける。
+ * 起動せずに失敗する。取得1回の制限時間は、全体予算の残り時間でも
+ * 頭打ちにする（issue #25）。
  * 制限時間の超過時は、直接の子だけでなくプロセスツリーごと終了する。
  * 子プロセスは専用プロセスグループで起動し、超過時はグループ全体へ終了
- * 信号を送る（猶予の後に強制終了）。この起動役自身が SIGTERM や SIGINT を
- * 受けたときも、子のグループを終了してから死ぬ（検査側も同じ構造で、scan
- * のグループを終了する）。SIGKILL は受け取れないため、その場合は下の層の
- * 自前の制限時間が残る。
+ * 信号を送る（猶予の後に強制終了）。強制終了の予約は、直接の子が先に
+ * 終わっても解除しない（issue #24）。この起動役自身が SIGTERM や SIGINT
+ * を受けたときは、受けた信号をそのまま子のグループへ転送する。検査が
+ * 自分の後始末（scan のグループの終了）をできるように、即座の強制終了
+ * はしない（issue #23）。起動役の猶予（10秒）は検査の猶予（3秒）より
+ * 十分長く取り、検査が scan のグループへの強制終了を終える前に、起動役
+ * が検査を強制終了してしまうことがないようにする。信号を転送したら
+ * 全体タイマーは解除して終了処理を引き継ぎ、転送後の信号の再送で子の
+ * 後始末を中断しない。子の始末が済んでから、起動役も同じ信号で死ぬ。
+ * 起動役自身が SIGKILL で死んだ場合は受け取れないが、その場合も検査は
+ * 渡された残り時間の中で動き続け、scan は検査の制限時間に縛られる。
  *
  * j5ik2o/ci は公開リポジトリなので、取得に認証は要らない。
  */
@@ -63,8 +71,19 @@ const RAW_BASE = "https://raw.githubusercontent.com/j5ik2o/ci";
 export const RUN_TIMEOUT_MS = 660_000;
 /** 正本の取得（fetch）の制限時間（ミリ秒）。 */
 export const FETCH_TIMEOUT_MS = 60_000;
-/** プロセスツリーへ終了信号を送ってから、強制終了まで待つ猶予（ミリ秒）。 */
-const TREE_KILL_GRACE_MS = 3_000;
+/**
+ * プロセスツリーへ終了信号を送ってから、強制終了まで待つ猶予（ミリ秒）。
+ * 子である検査にも自前の猶予（check-aislop.mjs の TREE_KILL_GRACE_MS、
+ * 3秒）があり、検査はその猶予の間に scan のグループを強制終了する。
+ * 起動役の猶予が検査の猶予以下だと、検査側の強制終了が発火する前に
+ * 起動役が検査を強制終了してしまい、SIGTERM を無視する scan が残る。
+ * そのため起動役の猶予は、検査の猶予と、その後の検査の終了までを
+ * 見込んで十分長く取る。呼び出し側の外側の期限は、この猶予も含めて
+ * 全体予算より後に置く（既定では 660秒 + 10秒が内側に収まる順序）。
+ */
+export const TREE_KILL_GRACE_MS = 10_000;
+/** 終了信号を送ったプロセスグループが消えたかを確かめる間隔（ミリ秒）。 */
+const GROUP_POLL_MS = 100;
 
 const sha256 = (buffer) => createHash("sha256").update(buffer).digest("hex");
 
@@ -77,6 +96,16 @@ export function childTimeoutMs(env = process.env) {
 /** 全体予算から経過時間を引いた、子プロセスへ渡せる残り時間（ミリ秒）。 */
 export function remainingBudgetMs(budgetMs, startedAt, now = Date.now()) {
   return budgetMs - (now - startedAt);
+}
+
+/**
+ * 取得1回の制限時間。固定の60秒と、全体予算の残り時間の、小さい方を使う。
+ * 全体予算が60秒未満でも、取得の最中に予算が効くようにするためである
+ * （issue #25）。残り時間が無い場合は 0 を返し、呼び出し側は取得を始めない。
+ */
+export function fetchTimeoutMs(remainingMs) {
+  if (remainingMs <= 0) return 0;
+  return Math.min(FETCH_TIMEOUT_MS, remainingMs);
 }
 
 /**
@@ -105,7 +134,7 @@ export function writeVerifiedCache(cacheDir, name, buffer) {
   return cachePath;
 }
 
-async function fetchCanonicalFile(ref, name, expectedHash, cacheDir) {
+async function fetchCanonicalFile(ref, name, expectedHash, cacheDir, timeoutMs) {
   const cachePath = path.join(cacheDir, name);
   if (existsSync(cachePath) && sha256(readFileSync(cachePath)) === expectedHash) {
     return cachePath;
@@ -114,7 +143,7 @@ async function fetchCanonicalFile(ref, name, expectedHash, cacheDir) {
   let buffer;
   try {
     const response = await fetch(url, {
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
@@ -139,11 +168,21 @@ async function fetchCanonicalFile(ref, name, expectedHash, cacheDir) {
  * process.execPath の後ろに渡す引数列（検査なら [検査のパス]、テストなら
  * ["--test", テストのパス]）。子は専用プロセスグループで起動し、制限時間を
  * 超えたらグループ全体へ終了信号を送り、猶予の後に強制終了して、理由を
- * 出して 1 を返す。この起動役自身が SIGTERM や SIGINT を受けたときも、
- * 子のグループを終了してから同じ信号で死ぬ。起動自体に失敗した場合も
+ * 出して 1 を返す。猶予は graceMs で変更でき、既定は TREE_KILL_GRACE_MS
+ * （検査自身の猶予より十分長い値）である。強制終了の予約は、直接の子が
+ * 先に終わっても解除しない
+ * （issue #24）。この起動役自身が SIGTERM や SIGINT を受けたときは、受けた
+ * 信号をそのまま子のグループへ転送する。検査が自分の後始末（scan の
+ * グループの終了）をできるように、即座の強制終了はしない（issue #23）。
+ * 転送を始めたら全体タイマーを解除して終了処理を引き継ぎ、制限時間の
+ * 超過で既に送った信号も再送しない。子の始末が済んでから、起動役も
+ * 同じ信号で死ぬ。起動自体に失敗した場合も
  * 1 を返す。Windows ではプロセスグループが無いため、直接の子だけを終了する。
  */
-export function runPinnedCommand(argv, { cwd, env, timeoutMs }) {
+export function runPinnedCommand(
+  argv,
+  { cwd, env, timeoutMs, graceMs = TREE_KILL_GRACE_MS },
+) {
   return new Promise((resolvePromise) => {
     const useGroup = process.platform !== "win32";
     const child = spawn(process.execPath, argv, {
@@ -154,61 +193,147 @@ export function runPinnedCommand(argv, { cwd, env, timeoutMs }) {
     });
     let timedOut = false;
     let settled = false;
-    let killTimer = null;
-    const killTree = (signal) => {
-      if (useGroup && child.pid) {
-        try {
-          process.kill(-child.pid, signal);
-          return;
-        } catch {
-          // グループへ送れなければ、直接の子だけでも終了する。
-        }
+    let closed = false;
+    let closeStatus = null;
+    let receivedSignal = null;
+    const escalation = createGroupEscalation(
+      child,
+      useGroup,
+      () => maybeFinish(),
+      graceMs,
+    );
+    const cleanup = () => {
+      clearTimeout(timer);
+      escalation.stopWatch();
+      process.removeListener("SIGTERM", onSigterm);
+      process.removeListener("SIGINT", onSigint);
+    };
+    const maybeFinish = () => {
+      if (settled || !closed) return;
+      if (escalation.pending()) return;
+      settled = true;
+      cleanup();
+      if (receivedSignal !== null) {
+        // 子の始末が済んだので、自分も受けた信号で死ぬ。
+        process.kill(process.pid, receivedSignal);
+        return;
       }
-      try {
-        child.kill(signal);
-      } catch {
-        // 終了済みなら何もしない。
+      if (timedOut) {
+        console.error(
+          `制限時間（${Math.round(timeoutMs / 1000)}秒）を超えたため、子プロセスを終了しました。制限時間は AISLOP_CHECK_RUN_TIMEOUT_MS で変更できます。`,
+        );
+        resolvePromise(1);
+      } else {
+        resolvePromise(closeStatus ?? 1);
       }
     };
     const onSigterm = () => forward("SIGTERM");
     const onSigint = () => forward("SIGINT");
     const forward = (signal) => {
-      killTree("SIGKILL");
+      if (receivedSignal !== null) return;
+      receivedSignal = signal;
+      // 2回目の信号は既定の動作で死ねるよう、受け手を外してから転送する。
       process.removeListener("SIGTERM", onSigterm);
       process.removeListener("SIGINT", onSigint);
-      process.kill(process.pid, signal);
-    };
-    const finish = (code) => {
-      if (settled) return;
-      settled = true;
+      // 転送を始めたら全体タイマーを解除し、終了処理を escalation へ
+      // 引き継ぐ。タイマーが残ると、予算の切れ目に SIGTERM が再送され、
+      // 受け手を外した子が既定動作で即死して、子の後始末（scan の
+      // グループの終了）が中断する。制限時間の超過で既に SIGTERM を
+      // 送っている場合も、再送しない。
       clearTimeout(timer);
-      if (killTimer) clearTimeout(killTimer);
-      process.removeListener("SIGTERM", onSigterm);
-      process.removeListener("SIGINT", onSigint);
-      resolvePromise(code);
+      if (!timedOut) {
+        escalation.signalGroup(signal);
+      }
+      escalation.schedule();
+      maybeFinish();
     };
     const timer = setTimeout(() => {
       timedOut = true;
-      killTree("SIGTERM");
-      killTimer = setTimeout(() => killTree("SIGKILL"), TREE_KILL_GRACE_MS);
+      escalation.signalGroup("SIGTERM");
+      escalation.schedule();
     }, timeoutMs);
     process.on("SIGTERM", onSigterm);
     process.on("SIGINT", onSigint);
     child.on("error", (error) => {
       console.error(`子プロセスを起動できませんでした: ${error.message}`);
-      finish(1);
+      if (closed) return;
+      closed = true;
+      closeStatus = 1;
+      maybeFinish();
     });
     child.on("close", (status) => {
-      if (timedOut) {
-        console.error(
-          `制限時間（${Math.round(timeoutMs / 1000)}秒）を超えたため、子プロセスを終了しました。制限時間は AISLOP_CHECK_RUN_TIMEOUT_MS で変更できます。`,
-        );
-        finish(1);
-      } else {
-        finish(status ?? 1);
-      }
+      if (closed) return;
+      closed = true;
+      closeStatus = status;
+      maybeFinish();
     });
   });
+}
+
+/**
+ * 子のプロセスグループの始末を担う。グループへ信号を送る関数と、終了信号
+ * の後に強制終了を予約する関数と、予約が残っているかの確認を返す。
+ * 強制終了の予約は、直接の子が先に終わっても解除しない（issue #24）。
+ * グループが先に消えたら、ポーリングで気づいて予約を取り消し、onSettled
+ * を呼ぶ。Windows ではプロセスグループが無いため、直接の子だけを扱う。
+ */
+function createGroupEscalation(child, useGroup, onSettled, graceMs) {
+  let escalationTimer = null;
+  let groupPoll = null;
+  const signalGroup = (signal) => {
+    if (useGroup && child.pid) {
+      try {
+        process.kill(-child.pid, signal);
+        return;
+      } catch {
+        // グループへ送れなければ、直接の子だけでも終了する。
+      }
+    }
+    try {
+      child.kill(signal);
+    } catch {
+      // 終了済みなら何もしない。
+    }
+  };
+  const groupAlive = () => {
+    if (!useGroup || !child.pid) return false;
+    try {
+      process.kill(-child.pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const stopWatch = () => {
+    if (groupPoll) {
+      clearInterval(groupPoll);
+      groupPoll = null;
+    }
+  };
+  const schedule = () => {
+    if (escalationTimer !== null) return;
+    escalationTimer = setTimeout(() => {
+      escalationTimer = null;
+      stopWatch();
+      signalGroup("SIGKILL");
+      onSettled();
+    }, graceMs);
+    if (useGroup) {
+      groupPoll = setInterval(() => {
+        if (groupAlive()) return;
+        clearTimeout(escalationTimer);
+        escalationTimer = null;
+        stopWatch();
+        onSettled();
+      }, GROUP_POLL_MS);
+    }
+  };
+  return {
+    signalGroup,
+    schedule,
+    stopWatch,
+    pending: () => escalationTimer !== null,
+  };
 }
 
 async function main() {
@@ -232,12 +357,27 @@ async function main() {
   }
   const budgetMs = childTimeoutMs(process.env);
   const cacheDir = path.join(ROOT, "node_modules", ".aislop-check", pin.ref);
-  const checkerPath = await fetchCanonicalFile(
-    pin.ref,
-    "check-aislop.mjs",
-    pin.files["check-aislop.mjs"],
-    cacheDir,
-  );
+  // 全体予算は取得の時間も含む。取得の前にも残り時間を確認し、取得1回の
+  // 制限時間は残り時間で頭打ちにする（issue #25）。残りが無ければ、取得も
+  // 子の起動もせずに失敗する。
+  const fetchWithinBudget = async (name) => {
+    const timeoutMs = fetchTimeoutMs(remainingBudgetMs(budgetMs, startedAt));
+    if (timeoutMs <= 0) {
+      console.error(
+        `全体の制限時間（${Math.round(budgetMs / 1000)}秒）を使い切りました。正本の取得も子プロセスの起動も行いません。制限時間は AISLOP_CHECK_RUN_TIMEOUT_MS で変更できます。`,
+      );
+      return null;
+    }
+    return await fetchCanonicalFile(
+      pin.ref,
+      name,
+      pin.files[name],
+      cacheDir,
+      timeoutMs,
+    );
+  };
+  const checkerPath = await fetchWithinBudget("check-aislop.mjs");
+  if (checkerPath === null) return 1;
   const env = {
     ...process.env,
     AISLOP_CHECK_ROOT: ROOT,
@@ -254,16 +394,12 @@ async function main() {
   if (mode === "check") {
     argv = [checkerPath];
   } else {
-    const testPath = await fetchCanonicalFile(
-      pin.ref,
-      "check-aislop.test.mjs",
-      pin.files["check-aislop.test.mjs"],
-      cacheDir,
-    );
+    const testPath = await fetchWithinBudget("check-aislop.test.mjs");
+    if (testPath === null) return 1;
     argv = ["--test", testPath];
   }
-  // 全体予算は取得の時間も含む。子には残り時間だけを渡し、残りが無ければ
-  // 子を起動せずに失敗する（取得だけで予算を使い切った場合）。
+  // 子には残り時間だけを渡し、残りが無ければ子を起動せずに失敗する
+  // （取得だけで予算を使い切った場合）。
   const timeoutMs = remainingBudgetMs(budgetMs, startedAt);
   if (timeoutMs <= 0) {
     console.error(
