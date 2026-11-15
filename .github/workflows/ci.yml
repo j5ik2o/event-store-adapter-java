@@ -141,7 +141,11 @@ jobs:
   aislop:
     name: "Run aislop check"
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The launcher allows itself 660s per invocation and its inner scan 600s, so a
+    # 600s job limit could kill the job before the launcher gives up and before the
+    # test command runs. Keep the job limit outside both budgets plus setup,
+    # fetch and the 10s tree-kill grace (aislop/README.md).
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v5
