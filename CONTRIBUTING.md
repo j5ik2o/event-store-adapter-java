@@ -38,6 +38,7 @@ python3 -m unittest discover -s .github/tests -v
 - `-PgoogleSdkSet=5.1` or `-PgoogleSdkSet=5.2` runs the tests on the Spanner and Bigtable SDK versions that release 5.1.0 or 5.2.0 depends on (5.1: Spanner 6.124.0 and Bigtable 2.85.0; 5.2: Spanner 6.127.0 and Bigtable 2.88.0). Only the test runtime classpath changes, so the library is still compiled against the declared SDK. `GoogleSdkSetTest` fails when the loaded SDK is not the selected one. CI runs the `createOffloaded` tests on both sets. Example: `./gradlew test -PgoogleSdkSet=5.1 --tests '*OffloadedEventStoreTest'`.
 - CI also checks the SHA-256 of `conformance/manifest.json`, `api-surface/surface.json`, `user-docs/template.json` and `tools/user-docs/check.py` with `sha256sum -c`, and checks the workflow files with actionlint v1.7.12. The expected values are in `ci.yml`.
 - The conformance report is written to `build/reports/conformance/` by the tests.
+- The `release-bundle` job builds the Maven Central bundle with `.github/central-bundle.sh` (the script the Release workflow will use) and a throwaway signing key, and checks its 180 files and 30 signatures. The `release-model` job checks the Quint model of the release path (`bash .github/quint/run-quint.sh ci`; see [.github/quint/README.md](.github/quint/README.md)). Neither uses a secret, and neither publishes anything.
 - The long-running load test of `createOffloaded` is skipped unless `EVENT_STORE_SOAK_SECONDS` is set. It runs the four operations on several aggregates for that many seconds per storage, then reads every aggregate back and checks threads and heap. CI does not run it. Example: `EVENT_STORE_SOAK_SECONDS=900 ./gradlew test --tests '*OffloadedSoakTest'`. The results are the `SOAK` lines in the standard output of `build/test-results/test/TEST-*OffloadedSoakTest.xml`.
 
 ## Design history
@@ -46,7 +47,7 @@ python3 -m unittest discover -s .github/tests -v
 
 ## Changes and releases
 
-- Changes go to `main` through a pull request. The `CI Success` job summarizes the results of lint, test and release-tools.
+- Changes go to `main` through a pull request. The `CI Success` job summarizes the results of lint, test, google-sdk-sets, aislop, release-tools, release-bundle and release-model.
 - The version is kept in the `version` file, which the build reads.
 - The Bump-Version workflow is started manually, with the inputs `level`, `force_bump`, `version` and `rehearsal`. The bump level comes from the Conventional Commits type of the commit subjects: `!` or `BREAKING CHANGE` is major, `feat` and `revert` are minor, and anything else is patch (`.github/semver-level.py`).
 - Bump-Version does not push to `main`. It commits the new version to `version` on a branch `release/vX.Y.Z` and opens a pull request into `main`. It does not create a GitHub Release, and it does not set `version` back to a SNAPSHOT version.

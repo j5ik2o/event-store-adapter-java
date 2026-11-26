@@ -13,11 +13,15 @@ REPOSITORY = 'o/r'
 VERSION_FILE = 'version'
 
 
-def load_gate():
-    spec = importlib.util.spec_from_file_location('release_gate', GATE_SCRIPT)
+def load_script(filename, name):
+    spec = importlib.util.spec_from_file_location(name, GITHUB / filename)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def load_gate():
+    return load_script(GATE_SCRIPT.name, 'release_gate')
 
 
 def run_body(workflow, step_id):
