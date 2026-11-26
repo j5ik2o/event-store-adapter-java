@@ -20,7 +20,7 @@
 - ビルドは `core`（Memory を含む）・`dynamodb`・`spanner`・`bigtable`・`sqlite` のモジュールに分かれます。ルートプロジェクトはまとめ用の成果物 `event-store-adapter-java` で、クラスを含まず 5 モジュールに依存します。各保存先の SDK は、その保存先のモジュールだけの `api` 依存です。
 - Gradle wrapper（`./gradlew`、Gradle 9.9.0）を使います。CI は Gradle 自体を JDK 25 で動かします。
 - DynamoDB のテストは、digest で固定した DynamoDB Local のイメージを Testcontainers で起動するので、Docker が必要です。Spanner のテストは、digest で固定した Cloud Spanner エミュレーターのイメージ `gcr.io/cloud-spanner-emulator/emulator:1.5.58` を Testcontainers で起動するので、Docker が必要です。実行されない必須の Spanner 適合ケースがあるとビルドが失敗します。SQLite のテストは同梱の JDBC ドライバーと一時的なローカルファイルを使うので、Docker は不要です。Bigtable のテストは、digest で固定した Cloud Bigtable エミュレーターのイメージ `gcr.io/google.com/cloudsdktool/google-cloud-cli` を Testcontainers で起動するので、Docker が必要です。実行されない必須の Bigtable 適合ケースがあるとビルドが失敗します。初回の実行はイメージを取得するので時間がかかります。
-- リリース用の道具の検査には Python 3 を使います。CI は Python 3.15 を使います。 `tools/user-docs/check.py` は Python 3.10 以上が必要です。
+- リリース用の道具の検査には Python 3 を使います。CI は Python 3.15 を使います。 `tools/user-docs/check.py` は Python 3.10 以上が必要です。`.github/tests` のリリース用の道具のテストには、`.github/tests/requirements.txt` のパッケージ（Hypothesis と semver）が必要です。
 
 ## 検査
 
@@ -32,6 +32,7 @@
 ./gradlew test --tests '*apisurface*'
 python3 tools/conformance/manifest.py verify
 python3 tools/user-docs/check.py
+python3 -m pip install -r .github/tests/requirements.txt
 python3 -m unittest discover -s .github/tests -v
 ```
 
@@ -49,7 +50,20 @@ python3 -m unittest discover -s .github/tests -v
 
 - 変更は pull request で `main` に入れます。`CI Success` ジョブが、lint・test・release-tools の結果をまとめて判定します。
 - 版は `version` ファイルに持ち、ビルドが読みます。
-- Bump-Version ワークフローは手動で起動します。入力は `level`・`force_bump`・`version` です。版を上げる段階は、コミットの件名の Conventional Commits の型で決まります。`!` か `BREAKING CHANGE` は major、`feat` と `revert` は minor、それ以外は patch です（`.github/semver-level.py`）。
-- Bump-Version は `vX.Y.Z` のタグを push し、GitHub Release を作り、`version` を次の SNAPSHOT 版にします。
+- Bump-Version ワークフローは手動で起動します。入力は `level`・`force_bump`・`version`・`rehearsal` です。版を上げる段階は、コミットの件名の Conventional Commits の型で決まります。`!` か `BREAKING CHANGE` は major、`feat` と `revert` は minor、それ以外は patch です（`.github/semver-level.py`）。
+- Bump-Version は `main` へ push しません。新しい版を `release/vX.Y.Z` の枝の `version` にコミットし、`main` への pull request を開きます。GitHub Release は作らず、`version` を SNAPSHOT 版へ戻すこともしません。
+- `version` を変えたコミットが `main` に入ると、Bump-Version のタグのジョブが、関門（`.github/release-gate.py`）でそのコミットを確かめます。コミットは、このリポジトリの `release/vX.Y.Z` からの pull request を squash でマージしたもので、`version` の版だけを変えていなければなりません。版は、前の版とすべての `vX.Y.Z` のタグより大きくなければなりません。親のコミットに `version` が無いときは、リリースしません。
 - `vX.Y.Z` のタグを push すると Release ワークフローが起動し、Sonatype（Maven Central）へ公開します。Snapshot（試験版）は公開しません。正式版を使ってください。
+
+### 今の状態：リリースは止めてある
+
+Release ワークフローは、まだ関門で確かめません。確かめるようになるまでは、Bump-Version からリリースは出せません。
+
+- タグのジョブはタグを push しません（`bump-version.yml` の `PUSH_RELEASE_TAG: 'false'`）。関門を通ったら、打つはずのタグを job summary に書いて終わります。
+- Bump-Version は、`rehearsal` が `true` でなければ、枝も pull request も作る前に失敗します。
+- 予行（`rehearsal: true`）は、`version up to vX.Y.Z (rehearsal, do not merge)` という題の draft の pull request を開きます。確かめたら、マージせずに閉じて、枝を消してください。
+- `vX.Y.Z` のタグを手で作らないでください。GitHub のリリースの画面で作るタグも同じです。タグは、そのタグが指すコミットの Release ワークフローを動かします。Release ワークフローに関門が入る前のコミットには、確かめる手順がありません。そうしたコミットには、あとからもタグを作らないでください。
+- 版上げの pull request を誤ってマージした場合、その版はタグが付かないまま `main` に残ります。リリースを有効にしたあとで、pull request で `version` を前の SNAPSHOT 版に戻し、出したい版を `version` に指定して Bump-Version をやり直してください。
+
+リリースは、あとの pull request（R2b）で有効にします。その pull request で、Release ワークフローに関門を入れ、同時に `PUSH_RELEASE_TAG` を `'true'` にします。Release ワークフローに関門が無いまま `PUSH_RELEASE_TAG` が `'true'` になっていると、`.github/tests/test_release_workflow_shape.py` が失敗します。署名と Sonatype の秘密の値は、Release ワークフローの `publish` の手順にだけ渡します。これも同じテストが確かめます。
 - 依存の更新は Renovate が行います（`renovate.json`）。
