@@ -1,0 +1,171 @@
+name: Release
+# 正本は .github/tests/fixtures/release-workflow.yml。このファイルを変える PR は、正本も同じ PR で同じように変える。
+# 正本と一字一句同じでない（uses: の版だけは違ってよい）と、形のテストはタグの push（bump-version.yml）を許さない。
+# ジョブと手順の名前は .github/central-rules.py（RELEASE_JOB、UPLOAD_STEP、PRE_UPLOAD_STEPS）と同じにし、変えない。
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+jobs:
+  release:
+    name: Publish to Maven Central
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    concurrency:
+      group: release-publish
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      action: ${{ steps.precheck.outputs.action }}
+      state: ${{ steps.deployment.outputs.state }}
+    env:
+      JAVA_OPTS: -Xms2048M -Xmx2048M -Xss6M -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
+      JVM_OPTS:  -Xms2048M -Xmx2048M -Xss6M -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.15"
+      # 関門。落ちれば、あとの手順はどれも動かない（失敗のあとも動くのは、秘密の値を持たない ID の記録の手順だけ）。
+      - name: Check the tagged commit against the release gate
+        id: release_gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          GATE="${RUNNER_TEMP}/release-gate"
+          RELEASE_SHA=$(git rev-parse "${RELEASE_TAG}^{commit}")
+          bash "${GITHUB_WORKSPACE}"/.github/release-gate-inputs.sh "$RELEASE_SHA" "$GATE"
+          python3 "${GITHUB_WORKSPACE}"/.github/release-gate.py check --mode publish --tag "$RELEASE_TAG" \
+            --repository "$GITHUB_REPOSITORY" --sha "$RELEASE_SHA" --on-main "$(cat "${GATE}/on-main")" \
+            --parents "${GATE}/parents" \
+            --parent-version "${GATE}/parent-version" --version-file "${GATE}/version" \
+            --changed-files "${GATE}/changed-files" --pulls "${GATE}/pulls.json" \
+            --remote-tags "${GATE}/remote-tags"
+      - name: Set up Java 11
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 11
+      - name: Set up the Gradle runtime
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 25
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+          cache-read-only: true
+      - name: Check the version Gradle builds
+        id: build_version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          ./gradlew --no-daemon -q properties --property version \
+            | python3 "${GITHUB_WORKSPACE}"/.github/central-portal.py check-version --tag "$RELEASE_TAG"
+      # 秘密の値は、それを使う手順の env だけに置く（SIGNING_* は bundle、SONATYPE_* は precheck・upload・deployment）。
+      - name: Check Maven Central before publishing
+        id: precheck
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          CENTRAL_DEPLOYMENTS: ${{ vars.CENTRAL_DEPLOYMENTS }}
+          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+        run: |
+          python3 "${GITHUB_WORKSPACE}"/.github/central-portal.py precheck --version "${RELEASE_TAG#v}"
+      - name: Build the bundle
+        id: bundle
+        if: steps.precheck.outputs.action == 'upload'
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+        run: |
+          bash "${GITHUB_WORKSPACE}"/.github/central-bundle.sh "${RELEASE_TAG#v}" "${RUNNER_TEMP}/central-bundle.zip"
+      - name: Upload the bundle to Maven Central
+        id: upload
+        if: steps.precheck.outputs.action == 'upload'
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+        run: |
+          python3 "${GITHUB_WORKSPACE}"/.github/central-portal.py upload --version "${RELEASE_TAG#v}" \
+            --bundle "${RUNNER_TEMP}/central-bundle.zip" --record "${RUNNER_TEMP}/central-deployment.txt"
+      # ここまでが関門で守る範囲。ID の記録は、アップロードの手順が ID を書いたあとに落ちても、取り消されても動く。
+      - name: Record the deployment ID
+        id: record
+        if: always() && steps.upload.outputs.deployment != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: central-deployment-${{ github.run_attempt }}-${{ steps.upload.outputs.deployment }}
+          path: ${{ runner.temp }}/central-deployment.txt
+          retention-days: 90
+          if-no-files-found: error
+      - name: Wait for the deployment to be published
+        id: deployment
+        if: steps.precheck.outputs.action == 'upload'
+        env:
+          DEPLOYMENT: ${{ steps.upload.outputs.deployment }}
+          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+        run: |
+          python3 "${GITHUB_WORKSPACE}"/.github/central-portal.py wait --id "$DEPLOYMENT"
+  github-release:
+    name: Create the GitHub release
+    needs: release
+    if: needs.release.outputs.action == 'published' || needs.release.outputs.state == 'PUBLISHED'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          SERVER_URL: ${{ github.server_url }}
+        run: |
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "the GitHub release ${RELEASE_TAG} already exists"
+          else
+            PREV_TAG=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-*' "${RELEASE_TAG}^")
+            NOTES="${RUNNER_TEMP}/release-notes.md"
+            python3 "${GITHUB_WORKSPACE}"/.github/create-release-note-header.py \
+              "$SERVER_URL" "$GITHUB_REPOSITORY" "$PREV_TAG" "$RELEASE_TAG" > "$NOTES"
+            git log "${PREV_TAG}..${RELEASE_TAG}" --no-merges --format='%H%x1f%s%x1f%b%x1e' \
+              | python3 "${GITHUB_WORKSPACE}"/.github/create-release-note-body.py "$SERVER_URL" "$GITHUB_REPOSITORY" >> "$NOTES"
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+              --title "Release ${RELEASE_TAG}" --notes-file "$NOTES"
+          fi
+  confirm:
+    name: Check Maven Central
+    needs: release
+    if: needs.release.outputs.action == 'published' || needs.release.outputs.state == 'PUBLISHED'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Check that repo1 serves the version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 "${GITHUB_WORKSPACE}"/.github/central-portal.py confirm --version "${RELEASE_TAG#v}"

@@ -406,8 +406,10 @@ class StubbedCommandsTest(unittest.TestCase):
             return 201, ID_B + '\n'
 
         self.stub.routes[('POST', '/api/v1/publisher/upload')] = upload
-        result = self.script('upload', '--version', '5.3.0', '--bundle', str(bundle))
+        record = self.directory / 'central-deployment.txt'
+        result = self.script('upload', '--version', '5.3.0', '--bundle', str(bundle), '--record', str(record))
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(record.read_text(), f'{ID_B}\n')
         self.assertEqual(self.output.read_text(), f'deployment={ID_B}\n')
         self.assertIn(ID_B, self.summary.read_text())
         self.assertIn(f'::notice::deployment {ID_B}', result.stdout)
@@ -415,7 +417,9 @@ class StubbedCommandsTest(unittest.TestCase):
                                          'name': [portal.deployment_name('5.3.0', RUN, 2)]})
         self.assertEqual(seen['headers']['Authorization'],
                          'Bearer ' + base64.b64encode(b'user:secret-password').decode())
-        self.assertIn(b'name="bundle"; filename="bundle.zip"', seen['body'])
+        # ファイル名は deployment の名前（deploymentName がファイル名から来ても、事前の確認の照合に合う）
+        filename = portal.deployment_name('5.3.0', RUN, 2) + '.zip'
+        self.assertIn(f'name="bundle"; filename="{filename}"'.encode(), seen['body'])
         self.assertIn(b'PK-zip-bytes', seen['body'])
 
     def test_upload_without_a_deployment_id_fails_without_an_output(self):
@@ -425,9 +429,11 @@ class StubbedCommandsTest(unittest.TestCase):
                 self.stub.routes[('POST', '/api/v1/publisher/upload')] = lambda request: (code, body)
                 bundle = self.directory / 'bundle.zip'
                 bundle.write_bytes(b'zip')
-                result = self.script('upload', '--version', '5.3.0', '--bundle', str(bundle))
+                record = self.directory / 'central-deployment.txt'
+                result = self.script('upload', '--version', '5.3.0', '--bundle', str(bundle), '--record', str(record))
                 self.assertEqual(result.returncode, 1)
                 self.assertEqual(self.output.read_text(), '')
+                self.assertFalse(record.exists())
                 self.assertIn(f'{RUN}/2=<deployment ID|none>', result.stderr)
 
     def test_wait_reads_the_state_until_published_or_failed(self):

@@ -5,19 +5,23 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from central_portal_support import portal
 from release_test_support import BUMP, RELEASE, WORKFLOWS, job, run_blocks, run_body, step, steps
+from release_workflow_canonical import CANONICAL, release_has_gate, release_steps
 
 PAT = '${{ secrets.PERSONAL_ACCESS_TOKEN }}'
-PUBLISH_SECRETS = ('SONATYPE_USERNAME', 'SONATYPE_PASSWORD', 'SIGNING_KEY', 'SIGNING_PASSWORD')
 SECRET_NAME = re.compile(r'\b(?:SONATYPE|SIGNING)_[A-Z_]+')
-# 公開の秘密の値を受け取ってよい手順（release.yml の手順の id）。R2b で bundle の手順に替えるときは、ここの名前だけを替える。
-PUBLISH_STEPS = ('publish',)
+SIGNING = frozenset({'SIGNING_KEY', 'SIGNING_PASSWORD'})
+SONATYPE = frozenset({'SONATYPE_USERNAME', 'SONATYPE_PASSWORD'})
+# 秘密の値を受け取ってよい手順（release ジョブの手順の id）と、その秘密の名前（I12）
+SECRET_STEPS = {'precheck': SONATYPE, 'bundle': SIGNING, 'upload': SONATYPE, 'deployment': SONATYPE}
+UPLOAD_IF = "steps.precheck.outputs.action == 'upload'"
+RECORD_IF = "always() && steps.upload.outputs.deployment != ''"
+PUBLISHED_IF = "needs.release.outputs.action == 'published' || needs.release.outputs.state == 'PUBLISHED'"
+STEP_IDS = [None, None, 'release_gate', None, None, None, 'build_version', 'precheck', 'bundle', 'upload', 'record',
+            'deployment']
 
-
-# release.yml の関門の手順は、名前の行のほかは、この文字列と一字一句同じでなければ「関門あり」と見ない。
-# 形の照合では、if false や関数の中、exit 0 や && false の後ろに置いた命令を見分けられないので、本文そのものを固定する。
-# 本文は bash -e で上から実行され、最後の行が関門なので、関門に落ちれば手順が失敗する。
-# R2b でこの手順を変えるときは、ここも同じ PR で変える。
+# 関門の手順の本文（名前の行を除く）。正本の関門の手順は、これと一字一句同じ（test_release_rehearsal.py も使う）。
 GATE_STEP = """        id: release_gate
         env:
           GH_TOKEN: ${{ github.token }}
@@ -32,46 +36,171 @@ GATE_STEP = """        id: release_gate
             --parent-version "${GATE}/parent-version" --version-file "${GATE}/version" \\
             --changed-files "${GATE}/changed-files" --pulls "${GATE}/pulls.json" \\
             --remote-tags "${GATE}/remote-tags\""""
-# 関門のあとで、失敗を越えて公開を動かすもの、または公開するコミットを替えるもの
+# 失敗を越えて動かすもの、公開するコミットを替えるもの、手順の外から本文を変えるもの
 SKIP_WORDS = ('always()', 'failure()', 'cancelled()', 'continue-on-error', 'git checkout', 'git switch',
-              'git reset', 'ref:')
+              'git reset', 'ref:', '|| true', 'exit 0', 'shell:', 'defaults:', 'BASH_ENV', 'ENV:', 'working-directory')
 
 
-def release_has_gate(release=RELEASE):
-    """release ジョブで、公開の手順の前に、固定した関門の手順（id: release_gate）があるか。
-
-    GitHub Actions では、失敗した手順のあとの手順は、always() などを付けない限り動かない。
-    そのため、関門の手順が GATE_STEP のとおりで、ジョブにも公開までの手順にも失敗を越える条件や
-    別のコミットへの切り替えが無ければ、関門に落ちたときに公開は動かない。
-    公開の秘密の値は publish の手順にしか無い（test_publish_secrets_are_only_in_the_env_of_the_publish_step）ので、
-    別のジョブからは公開できない。
-    """
-    try:
-        release_job = job(release, 'release')
-        release_steps = steps(release, 'release')
-    except ValueError:
+def tag_push_allowed(bump, release):
+    """PUSH_RELEASE_TAG が1つだけあり、'false' か、'true' で release.yml が正本と同じか。止める向きは常に許す。"""
+    settings = re.findall(r'PUSH_RELEASE_TAG: [^\n]*', bump + release)
+    if len(settings) != 1 or settings[0] not in ("PUSH_RELEASE_TAG: 'false'", "PUSH_RELEASE_TAG: 'true'"):
         return False
-    ids = [re.findall(r'\n        id: ([a-z_-]+)\n', text + '\n')[:1] for text in release_steps]
-    ids = [found[0] if found else None for found in ids]
-    if ids.count('release_gate') != 1 or ids.count('publish') != 1 or ids.index('release_gate') > ids.index('publish'):
-        return False
-    gate_step = release_steps[ids.index('release_gate')]
-    if not re.fullmatch(r'\n      - name: [^\n]+\n', gate_step[:gate_step.index('\n', 1) + 1]):
-        return False
-    if gate_step[gate_step.index('\n', 1) + 1:].rstrip('\n') != GATE_STEP:
-        return False
-    before_steps = release_job[:release_job.index('\n    steps:\n')]
-    guarded = release_steps[:ids.index('publish') + 1]
-    return not any(word in text for text in [before_steps] + guarded for word in SKIP_WORDS) \
-        and '        if:' not in release_steps[ids.index('publish')]
+    return settings[0] == "PUSH_RELEASE_TAG: 'false'" or release_has_gate(release)
 
 
-def env_block(step_text):
-    match = re.search(r'\n        env:\n((?:          [^\n]*\n)+)', step_text + '\n')
-    return match.group(1).splitlines() if match else []
+def replace_once(text, old, new):
+    assert text.count(old) == 1, old
+    return text.replace(old, new)
 
 
-class ReleaseWorkflowShapeTest(unittest.TestCase):
+def move_step(text, step_id, before_id):
+    """正本の手順 step_id を、手順 before_id の前に動かす。"""
+    moved = step(text, step_id)
+    text = text.replace(moved, '')
+    target = step(text, before_id)
+    return text.replace(target, moved + target)
+
+
+class CanonicalJudgeTest(unittest.TestCase):
+    """判定は、正本と行ごとに一字一句比べる（違ってよいのは uses: の版だけ）。"""
+
+    def test_the_release_workflow_is_the_canonical_one(self):
+        self.assertTrue(release_has_gate(RELEASE))
+        self.assertTrue(release_has_gate(CANONICAL))
+
+    def test_only_the_version_of_an_action_may_differ(self):
+        for new in ('uses: actions/checkout@v8', 'uses: actions/checkout@0123456789abcdef0123456789abcdef01234567 # v7'):
+            with self.subTest(new):
+                self.assertTrue(release_has_gate(CANONICAL.replace('uses: actions/checkout@v7', new)))
+        for new in ('uses: actions/checkout@v7 # v7 extra', 'uses: other/checkout@v7', 'uses: actions/checkout@'):
+            with self.subTest(new):
+                self.assertFalse(release_has_gate(CANONICAL.replace('uses: actions/checkout@v7', new, 1)))
+
+    def test_whitespace_and_line_changes_are_not_the_canonical_workflow(self):
+        for text in (CANONICAL + 'x\n', CANONICAL + '\n', CANONICAL.rstrip('\n'), CANONICAL.replace('\njobs:\n', '\njobs: \n'),
+                     CANONICAL.replace('    timeout-minutes: 150\n', '    timeout-minutes: 150\n\n'), '\n' + CANONICAL):
+            with self.subTest(repr(text[-20:])):
+                self.assertFalse(release_has_gate(text))
+
+    def test_ways_around_the_gate_are_not_a_gate(self):
+        gate_body = 'bash "${GITHUB_WORKSPACE}"/.github/release-gate-inputs.sh "$RELEASE_SHA" "$GATE"\n'
+        upload_if = f"        id: upload\n        if: {UPLOAD_IF}\n"
+        unsafe = {
+            # R2a の壊し方（関門の手順）
+            'commented': CANONICAL.replace('          python3 "${GITHUB_WORKSPACE}"/.github/release-gate.py',
+                                           '          # python3 "${GITHUB_WORKSPACE}"/.github/release-gate.py'),
+            'if false': replace_once(CANONICAL, '          ' + gate_body, '          if false; then\n          ' + gate_body),
+            '&& false': replace_once(CANONICAL, '          ' + gate_body, '          false && \\\n          ' + gate_body),
+            'exit 0 in the gate': replace_once(CANONICAL, '          ' + gate_body, '          exit 0\n          ' + gate_body),
+            '|| true in the gate': replace_once(CANONICAL, '"${GATE}/remote-tags"\n', '"${GATE}/remote-tags" || true\n'),
+            'another tag': replace_once(CANONICAL, 'RELEASE_TAG: ${{ github.ref_name }}\n        run: |\n          GATE=',
+                                        'RELEASE_TAG: v5.2.0\n        run: |\n          GATE='),
+            'gate if': replace_once(CANONICAL, '        id: release_gate\n', '        id: release_gate\n        if: false\n'),
+            'continue-on-error': replace_once(CANONICAL, '        id: release_gate\n',
+                                              '        id: release_gate\n        continue-on-error: true\n'),
+            'gate shell': replace_once(CANONICAL, '        id: release_gate\n', '        id: release_gate\n        shell: sh {0}\n'),
+            'other id': replace_once(CANONICAL, 'id: release_gate', 'id: other'),
+            # 部分レビュー F1 の a〜e
+            'a: precheck before the gate': move_step(CANONICAL, 'precheck', 'release_gate'),
+            'b: upload without if': replace_once(CANONICAL, upload_if, '        id: upload\n'),
+            'b: bundle without if': replace_once(CANONICAL, f'        id: bundle\n        if: {UPLOAD_IF}\n', '        id: bundle\n'),
+            'b: precheck with if': replace_once(CANONICAL, '        id: precheck\n', f'        id: precheck\n        if: {UPLOAD_IF}\n'),
+            'b: build_version with if': replace_once(CANONICAL, '        id: build_version\n',
+                                                     f'        id: build_version\n        if: {UPLOAD_IF}\n'),
+            'c: deployment if false': replace_once(CANONICAL, f'        id: deployment\n        if: {UPLOAD_IF}\n',
+                                                   '        id: deployment\n        if: false\n'),
+            'c: deployment || true': replace_once(CANONICAL, 'wait --id "$DEPLOYMENT"\n', 'wait --id "$DEPLOYMENT" || true\n'),
+            'c: no deployment': CANONICAL.replace(step(CANONICAL, 'deployment'), ''),
+            'd: precheck || true': replace_once(CANONICAL, 'precheck --version "${RELEASE_TAG#v}"\n',
+                                                'precheck --version "${RELEASE_TAG#v}" || true\n'),
+            'd: build_version || true': replace_once(CANONICAL, '--tag "$RELEASE_TAG"\n', '--tag "$RELEASE_TAG" || true\n'),
+            'e: top-level defaults': replace_once(CANONICAL, '\njobs:\n', '\ndefaults:\n  run:\n    shell: bash {0}\njobs:\n'),
+            'e: job defaults': replace_once(CANONICAL, '    timeout-minutes: 150\n',
+                                            '    timeout-minutes: 150\n    defaults:\n      run:\n        shell: sh {0}\n'),
+            'e: BASH_ENV': replace_once(CANONICAL, '    env:\n      JAVA_OPTS:', '    env:\n      BASH_ENV: .github/x\n      JAVA_OPTS:'),
+            # ほか
+            'record with a secret': replace_once(CANONICAL, '          if-no-files-found: error\n',
+                                                 '          if-no-files-found: error\n        env:\n'
+                                                 '          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}\n'),
+            'record with another if': replace_once(CANONICAL, f'if: {RECORD_IF}', 'if: always()'),
+            'github release without if': replace_once(CANONICAL, f'    needs: release\n    if: {PUBLISHED_IF}\n    runs-on: ubuntu-latest\n'
+                                                      '    permissions:\n      contents: write\n',
+                                                      '    needs: release\n    runs-on: ubuntu-latest\n    permissions:\n      contents: write\n'),
+            'job renamed': replace_once(CANONICAL, 'name: Publish to Maven Central', 'name: Publish'),
+            'checkout ref': replace_once(CANONICAL, '          fetch-depth: 0\n          persist-credentials: false\n      - name: Set up Python',
+                                         '          fetch-depth: 0\n          persist-credentials: false\n          ref: main\n'
+                                         '      - name: Set up Python'),
+            'no concurrency': replace_once(CANONICAL, '    concurrency:\n      group: release-publish\n      cancel-in-progress: false\n', ''),
+            'two gates': replace_once(CANONICAL, step(CANONICAL, 'release_gate'), step(CANONICAL, 'release_gate') * 2),
+        }
+        for name, text in unsafe.items():
+            with self.subTest(name):
+                self.assertNotEqual(text, CANONICAL)
+                self.assertFalse(release_has_gate(text))
+
+
+class CanonicalShapeTest(unittest.TestCase):
+    """正本（= release.yml）が設計の形を守ること。正本を変えたときの網（判定には使わない）。"""
+
+    def setUp(self):
+        self.steps = release_steps(CANONICAL)
+
+    def test_names_match_the_precheck_rules(self):
+        self.assertIn('\n    name: ' + portal.RELEASE_JOB + '\n', job(CANONICAL, 'release'))
+        names = [item['name'] for item in self.steps]
+        ids = [item['id'] for item in self.steps]
+        self.assertTrue(all(names))
+        self.assertEqual(self.steps[ids.index('upload')]['name'], portal.UPLOAD_STEP)
+        self.assertEqual(set(names[:ids.index('upload')]) | {'Set up job'}, portal.PRE_UPLOAD_STEPS)
+
+    def test_step_order_and_conditions(self):
+        self.assertEqual([item['id'] for item in self.steps], STEP_IDS)
+        expected_if = {'bundle': UPLOAD_IF, 'upload': UPLOAD_IF, 'deployment': UPLOAD_IF, 'record': RECORD_IF}
+        for item in self.steps:
+            with self.subTest(item['name']):
+                self.assertEqual(item['if'], expected_if.get(item['id']))
+        for name in ('github-release', 'confirm'):
+            self.assertIn(f'\n    needs: release\n    if: {PUBLISHED_IF}\n', job(CANONICAL, name))
+        self.assertIn('\n    outputs:\n      action: ${{ steps.precheck.outputs.action }}\n'
+                      '      state: ${{ steps.deployment.outputs.state }}\n', job(CANONICAL, 'release'))
+
+    def test_the_gate_step_is_the_fixed_one(self):
+        gate = step(CANONICAL, 'release_gate')
+        self.assertEqual(gate[gate.index('\n', 1) + 1:].rstrip('\n'), GATE_STEP)
+
+    def test_secrets_are_only_in_the_env_of_their_steps(self):
+        for item in self.steps:
+            with self.subTest(item['name']):
+                secrets = {name for name in item['env'] if SECRET_NAME.fullmatch(name)}
+                self.assertEqual(secrets, SECRET_STEPS.get(item['id'], frozenset()))
+                for name in secrets:
+                    self.assertEqual(item['env'][name], f'${{{{ secrets.{name} }}}}')
+        for path in sorted(WORKFLOWS.glob('*.yml')):
+            lines = [line for line in path.read_text().splitlines() if SECRET_NAME.search(line)]
+            with self.subTest(file=path.name):
+                self.assertEqual(len(lines), 8 if path.name == 'release.yml' else 0, lines)
+
+    def test_nothing_bypasses_a_failed_step(self):
+        for word in SKIP_WORDS:
+            with self.subTest(word):
+                self.assertEqual(CANONICAL.count(word), 1 if word == 'always()' else 0)
+        self.assertIn(f'if: {RECORD_IF}', step(CANONICAL, 'record'))
+        self.assertIn('uses: actions/upload-artifact@', step(CANONICAL, 'record'))
+        self.assertNotIn('run:', step(CANONICAL, 'record'))
+        self.assertNotIn(PAT, RELEASE)
+        self.assertNotIn('persist-credentials: true', RELEASE)
+
+    def test_the_jobs_are_serialized_and_limited(self):
+        release = job(CANONICAL, 'release')
+        self.assertIn('    concurrency:\n      group: release-publish\n      cancel-in-progress: false\n', release)
+        self.assertIn('    permissions:\n      contents: read\n      actions: read\n      pull-requests: read\n', release)
+        self.assertIn("    tags:\n      - 'v[0-9]+.[0-9]+.[0-9]+'\n", CANONICAL)
+        self.assertEqual(re.findall(r'\n  ([a-z-]+):\n', CANONICAL[CANONICAL.index('\njobs:\n'):]),
+                         ['release', 'github-release', 'confirm'])
+
+
+class BumpWorkflowShapeTest(unittest.TestCase):
     def test_nothing_is_pushed_to_main(self):
         pushes = []
         for path in sorted(WORKFLOWS.glob('*.yml')):
@@ -103,73 +232,36 @@ class ReleaseWorkflowShapeTest(unittest.TestCase):
         self.assertIn('      rehearsal:\n        description:', BUMP)
         self.assertIn('        type: boolean\n        default: false\n', BUMP[BUMP.index('      rehearsal:'):])
 
-    def test_release_gate_detection_accepts_only_the_fixed_gate_step(self):
-        def release(gate_step, publish_if='', checkout='', before=''):
-            return ('name: Release\njobs:\n  release:\n    runs-on: ubuntu-latest\n' + before + '    steps:\n'
-                    '      - uses: actions/checkout@v7\n' + checkout + gate_step +
-                    '      - name: Publish\n        id: publish\n' + publish_if +
-                    '        run: ./gradlew publish\n')
-        gate = '      - name: Check the tagged commit against the release gate\n' + GATE_STEP + '\n'
-        last = '            --remote-tags "${GATE}/remote-tags"\n'
-        first = '          GATE="${RUNNER_TEMP}/release-gate"\n'
-        self.assertTrue(release_has_gate(release(gate)))
-        self.assertFalse(release_has_gate(RELEASE))
-        unsafe = {
-            'commented': gate.replace('          python3', '          # python3'),
-            'if false': gate.replace(first, '          if false; then\n' + first) + '',
-            'function': gate.replace(first, '          gate() {\n' + first).replace(last, last + '          }\n'),
-            '&& false': gate.replace(first, '          false && \\\n' + first),
-            'exit 0': gate.replace(first, '          exit 0\n' + first),
-            '|| true': gate.replace('"${GATE}/remote-tags"\n', '"${GATE}/remote-tags" || true\n'),
-            'another tag': gate.replace('${{ github.ref_name }}', 'v5.2.0'),
-            'step if': gate.replace('        env:', '        if: false\n        env:'),
-            'continue-on-error': gate.replace('        env:', '        continue-on-error: true\n        env:'),
-            'shell': gate.replace('        run: |', '        shell: sh {0}\n        run: |'),
-            'other id': gate.replace('id: release_gate', 'id: other'),
-        }
-        for name, step_text in unsafe.items():
-            with self.subTest(name):
-                self.assertNotEqual(step_text, gate)
-                self.assertFalse(release_has_gate(release(step_text)))
-        self.assertFalse(release_has_gate(release(gate, publish_if='        if: always()\n')))
-        self.assertFalse(release_has_gate(release(gate, publish_if='        if: true\n')))
-        self.assertFalse(release_has_gate(release(gate, before='    continue-on-error: true\n')))
-        self.assertFalse(release_has_gate(release(gate, checkout='        with:\n          ref: main\n')))
-        self.assertFalse(release_has_gate(release(gate + gate)))
-        after = release('').replace('        run: ./gradlew publish\n', '        run: ./gradlew publish\n' + gate)
-        self.assertFalse(release_has_gate(after))
-        elsewhere = release('') + '  gate:\n    runs-on: ubuntu-latest\n    steps:\n' + gate
-        self.assertFalse(release_has_gate(elsewhere))
-
-    def test_tag_push_stays_off_while_the_release_workflow_has_no_gate(self):
-        settings = re.findall(r'PUSH_RELEASE_TAG: [^\n]*', BUMP + RELEASE)
-        self.assertEqual(len(settings), 1, settings)
+    def test_tag_push_is_on_only_while_the_release_workflow_is_the_canonical_one(self):
+        self.assertTrue(tag_push_allowed(BUMP, RELEASE))
         self.assertIn("\nenv:\n  PUSH_RELEASE_TAG: ", BUMP)
-        if not release_has_gate():
-            self.assertEqual(settings, ["PUSH_RELEASE_TAG: 'false'"])
         self.assertIn("if: steps.trigger.outputs.tag != '' && env.PUSH_RELEASE_TAG == 'true'",
                       step(BUMP, 'release_tag'))
         self.assertIn("if: steps.trigger.outputs.tag != '' && env.PUSH_RELEASE_TAG != 'true'",
                       step(BUMP, 'tag_summary'))
 
-    def run_release_path(self, push_release_tag, rehearsal):
-        with tempfile.TemporaryDirectory() as directory:
-            return subprocess.run(
-                ['bash', '-e', '-o', 'pipefail', '-c', run_body(BUMP, 'release_path')], cwd=directory,
-                env={**os.environ, 'PUSH_RELEASE_TAG': push_release_tag, 'REHEARSAL': rehearsal},
-                capture_output=True, text=True,
-            )
+    def test_turning_tag_push_off_is_always_allowed(self):
+        # 公開を止める1行の PR（'false'）は、release.yml の形に関わらず通る。'true' は正本のときだけ
+        def setting(value):
+            text = re.sub(r"\n  PUSH_RELEASE_TAG: [^\n]*\n", f"\n  PUSH_RELEASE_TAG: {value}\n", BUMP)
+            self.assertEqual(text.count(f'PUSH_RELEASE_TAG: {value}\n'), 1)
+            return text
+        on, off = setting("'true'"), setting("'false'")
+        changed = RELEASE.replace('name: Release\n', 'name: Release\n# changed\n', 1)
+        self.assertTrue(tag_push_allowed(on, RELEASE))
+        self.assertTrue(tag_push_allowed(off, RELEASE))
+        self.assertTrue(tag_push_allowed(off, changed))
+        self.assertFalse(tag_push_allowed(on, changed))
+        for value in ("'TRUE'", 'true', "'yes'", "''"):
+            with self.subTest(value):
+                self.assertFalse(tag_push_allowed(setting(value), RELEASE))
+        self.assertFalse(tag_push_allowed(off + "\n  PUSH_RELEASE_TAG: 'false'\n", RELEASE))
+        self.assertFalse(tag_push_allowed(BUMP, RELEASE + "      PUSH_RELEASE_TAG: 'false'\n"))
 
-    def test_a_bump_that_is_not_a_rehearsal_fails_before_the_branch_and_the_pull_request(self):
-        bump_steps = steps(BUMP, 'bump-version')
-        self.assertIn('id: release_path\n', bump_steps[0])
-        self.assertNotIn('        if:', bump_steps[0])
-        result = self.run_release_path('false', 'false')
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('::error::', result.stdout)
-        self.assertIn('rehearsal', result.stdout)
-        self.assertEqual(self.run_release_path('false', 'true').returncode, 0)
-        self.assertEqual(self.run_release_path('true', 'false').returncode, 0)
+    def test_the_bump_no_longer_refuses_to_run(self):
+        self.assertNotIn('id: release_path', BUMP)
+        self.assertNotIn('cannot release yet', BUMP)
+        self.assertTrue(steps(BUMP, 'bump-version')[0].startswith('\n      - uses: actions/checkout@'))
 
     def open_pull_request(self, rehearsal):
         with tempfile.TemporaryDirectory() as directory:
@@ -201,20 +293,6 @@ class ReleaseWorkflowShapeTest(unittest.TestCase):
         self.assertNotIn('--draft', args)
         self.assertEqual(args[args.index('--title') + 1], 'version up to v5.3.0')
 
-    def test_publish_secrets_are_only_in_the_env_of_the_publish_step(self):
-        allowed = {line for step_id in PUBLISH_STEPS for line in env_block(step(RELEASE, step_id))}
-        self.assertEqual(
-            sorted(line for line in allowed if SECRET_NAME.search(line)),
-            sorted(f'          {name}: ${{{{ secrets.{name} }}}}' for name in PUBLISH_SECRETS))
-        for path in sorted(WORKFLOWS.glob('*.yml')):
-            for number, line in enumerate(path.read_text().splitlines(), 1):
-                if SECRET_NAME.search(line):
-                    with self.subTest(file=path.name, line=number):
-                        self.assertEqual(path.name, 'release.yml')
-                        self.assertIn(line, allowed)
-        for name in PUBLISH_SECRETS:
-            self.assertEqual(RELEASE.count(name), 2, name)
-
     def test_pat_is_given_only_to_the_steps_that_push_or_open_the_pull_request(self):
         self.assertEqual(BUMP.count(PAT), 3)
         for step_id in ('version_commit', 'version_pr', 'release_tag'):
@@ -235,14 +313,14 @@ class ReleaseWorkflowShapeTest(unittest.TestCase):
         tag_steps = steps(BUMP, 'tag-release')
         ids = [re.search(r'id: ([a-z_]+)\n', text).group(1) for text in tag_steps if 'id: ' in text]
         self.assertEqual(ids, ['trigger', 'tag_summary', 'release_tag'])
-        self.assertIn('--mode tag', run_body(BUMP, 'trigger'))
-        self.assertIn('.github/release-gate-inputs.sh "$RELEASE_SHA" "$GATE"', run_body(BUMP, 'trigger'))
+        self.assertIn('--mode tag', step(BUMP, 'trigger'))
+        self.assertIn('.github/release-gate-inputs.sh "$RELEASE_SHA" "$GATE"', step(BUMP, 'trigger'))
         self.assertNotIn(PAT, step(BUMP, 'trigger'))
         self.assertNotIn(PAT, step(BUMP, 'tag_summary'))
 
     def test_the_bump_writes_the_version_through_the_gate_script(self):
-        self.assertIn('.github/release-gate.py set-version "$NEXT_VERSION"', run_body(BUMP, 'version_commit'))
-        self.assertIn('git add version\n', run_body(BUMP, 'version_commit'))
+        self.assertIn('.github/release-gate.py set-version "$NEXT_VERSION"', step(BUMP, 'version_commit'))
+        self.assertIn('git add version\n', step(BUMP, 'version_commit'))
 
 
 if __name__ == '__main__':

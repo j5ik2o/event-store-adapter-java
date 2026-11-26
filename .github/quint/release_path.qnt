@@ -12,15 +12,17 @@
 //   - 公開先の2段（Central）：受け付け（deployment が処理中）→ PUBLISHED か FAILED（設計レビュー A2）
 //   - 公開の操作のあとでジョブが失敗する（設計レビュー A3）
 //   - 公開先の反映の遅れ。公開後の確認の待ちの上限（js#1161）と、確認だけの再実行
-//   - 並行：concurrency の group で、待っているタグのジョブ・公開のジョブが新しいものに置き換えられる（D2）
+//   - 並行：concurrency の group で、待っているタグのジョブ・公開のジョブが、あとから着いたジョブに置き換えられる（D2、#863）
 //   - 移行前からあるタグ（kotlin・scala の v5.2.0）を、古い実行の再実行で出す
 //   - Go：タグの push そのものが公開
 //
 // 版は整数で抽象化する（X.Y.Z の順序だけが効く）。プレリリース（-SNAPSHOT など）は、同じ番号の正式版より小さい。
 // 時間は「確認の1回」を1刻みとする整数の時計で表す。
-// concurrency の待ちの置き換え（cancelPendingTag・cancelPendingPublish）は、コミットの ID と版の大小を到着の順と見なす
-// （新しい方が古い方を置き換える）。失敗したジョブの再実行が、待っている新しい版を置き換える到着の順は表していない
-// （#862 の CodeRabbit の指摘。追跡は https://github.com/j5ik2o/event-store-adapter-java/issues/863）。
+// concurrency の待ちの置き換え（cancelPendingTag・cancelPendingPublish）は、group に着いた順（tagArrival・publishArrival）で決める。
+// 初めての実行も、失敗したジョブや取り消された run の再実行も、どれも1つの到着として数え、あとから着いたジョブが
+// 待っているジョブを置き換える。版やコミットの大小は見ない。古い版の再実行が、待っている新しい版を置き換えることもある
+// （https://github.com/j5ik2o/event-store-adapter-java/issues/863）。モデルのジョブは1つの動作で動き切るので、
+// 「待っている」と「動いている」を分けず、待ちの集合の中で最後に着いたもの以外は、どれも置き換えられうる（実物より広い）。
 module release_path {
 
   // ---------------------------------------------------------------- 定数（言語ごとのインスタンスで決める）
@@ -55,6 +57,9 @@ module release_path {
   const UNKNOWN_STOPS: bool           // 始まったのに ID の無い試みがあれば、事前の確認が止まる（§1.4 の 2）
   const NONE_SKIPS_QUERY: bool        // v2 の規則：変数の =none があれば、artifact の ID を照会しない（N1。false が v3 の規則）
   const PRECHECK_LATEST_TAG: bool     // 事前の確認は、決めるときのリモートのタグで「最新のタグか」を確かめる（待ちのあとも読み直す。#862 の指摘）
+  // #863
+  const RERUN_CANCELLED: bool         // 置き換えられて取り消された run を、人が再実行する（CONTRIBUTING の表）。
+                                      // false は直す前の §6 の行「置き換え → そのまま（飛んだ版）」
 
   // ---------------------------------------------------------------- 型
   type Commit = {
@@ -93,12 +98,15 @@ module release_path {
     lookup: int -> int,         // コミット → 照会の回数
     assocAfter: int -> int,     // コミット → 関連付けが返り始める回数
     tagFailed: Set[int],        // 失敗したタグのジョブ（再実行できる）
-    tagSkipped: Set[int],       // 待ちのジョブが置き換えられ、タグが付かなかったコミット
+    tagSkipped: Set[int],       // 待ちのジョブが置き換えられ、タグが付かなかったコミット（取り消された run）
+    tagArrival: int -> int,     // コミット → タグのジョブが group に着いた順（#863）
     wouldTag: Set[int],         // タグを push しない構成で、関門を通った（打つはずだった）版
     oldTags: Set[int],          // 古い版上げが打ったタグ
     publishPending: Set[int],   // 公開のジョブを待つ版
     publishFailed: Set[int],    // 失敗した公開のジョブ（関門で止まった、公開の操作のあとで失敗した、FAILED を読んだ）
-    publishSkipped: Set[int],   // 待ちの公開のジョブが置き換えられた版
+    publishSkipped: Set[int],   // 待ちの公開のジョブが置き換えられた版（取り消された run）
+    publishArrival: int -> int, // 版 → 公開のジョブが group に着いた順（#863）
+    arrivals: int,              // 着いたジョブの数（次の到着の番号）
     deploy: int -> Deploy,      // 版 → 最後の deployment の状態
     published: Set[int],        // 公開先が PUBLISHED にした版
     publishOrder: List[int],    // PUBLISHED になった順
@@ -181,6 +189,14 @@ module release_path {
   pure def mapWithout(m: int -> PR, k: int): int -> PR =
     m.keys().exclude(Set(k)).mapBy(x => m.get(x))
 
+  // concurrency の group にジョブが着く（初めての実行も再実行も同じ。#863）
+  pure def arriveTag(r: Repo, id: int): Repo =
+    { ...r, tagPending: r.tagPending.union(Set(id)), tagArrival: r.tagArrival.put(id, r.arrivals), arrivals: r.arrivals + 1 }
+
+  pure def arrivePublish(r: Repo, v: int): Repo =
+    { ...r, publishPending: r.publishPending.union(Set(v)), publishArrival: r.publishArrival.put(v, r.arrivals),
+      arrivals: r.arrivals + 1 }
+
   // squash のマージ。strict なので、マージ時点の main の先頭が親
   pure def merge(r: Repo, p: int, assocDelay: int): Repo =
     val pr = r.prs.get(p)
@@ -194,14 +210,14 @@ module release_path {
     val id = r.nextId
     // Bump-Version の push は paths で版のファイルの変更だけに絞る
     val versionChanged = ver != parent.ver or pre != parent.pre
-    {
+    val merged = {
       ...r,
       commits: r.commits.put(id, c), head: id, nextId: id + 1,
       prs: mapWithout(r.prs, p),
-      tagPending: if (versionChanged) r.tagPending.union(Set(id)) else r.tagPending,
       lookup: r.lookup.put(id, 0),
       assocAfter: r.assocAfter.put(id, assocDelay),
     }
+    if (versionChanged) arriveTag(merged, id) else merged
 
   // タグの関門（tag のモード）。0 = 何もしない、1 = タグを打つ、2 = 失敗
   pure def tagGate(r: Repo, id: int): int =
@@ -272,8 +288,8 @@ module release_path {
       manualTags: Set(),
       tagPending: Set(),
       lookup: Map(), assocAfter: Map(),
-      tagFailed: Set(), tagSkipped: Set(), wouldTag: Set(), oldTags: Set(),
-      publishPending: Set(), publishFailed: Set(), publishSkipped: Set(),
+      tagFailed: Set(), tagSkipped: Set(), tagArrival: Map(), wouldTag: Set(), oldTags: Set(),
+      publishPending: Set(), publishFailed: Set(), publishSkipped: Set(), publishArrival: Map(), arrivals: 0,
       // 移行前の版：11/11 の deployment は FAILED（片付けたかどうかは手順で確かめる）
       deploy: if (LEGACY.contains(INIT_TAG)) Map(INIT_TAG -> Failed) else Map(INIT_TAG -> Published),
       published: if (LEGACY.contains(INIT_TAG)) Set() else Set(INIT_TAG),
@@ -341,7 +357,7 @@ module release_path {
           nondet d = 0.to(MAX_DELAY).oneOf()
           s' = submit(tagged, c.ver, d)
         } else
-          s' = { ...tagged, publishPending: tagged.publishPending.union(Set(c.ver)) }
+          s' = arrivePublish(tagged, c.ver)
       } else
         s' = { ...s, tagPending: s.tagPending.exclude(Set(id)),
                tagFailed: if (g == 2) s.tagFailed.union(Set(id)) else s.tagFailed }
@@ -351,14 +367,23 @@ module release_path {
   // 5. 失敗したタグのジョブの再実行（時間がたち、関連付けは返るようになる）
   action rerunTagJob(id: int): bool = all {
     s.tagFailed.contains(id),
-    s' = { ...s, tagFailed: s.tagFailed.exclude(Set(id)), tagPending: s.tagPending.union(Set(id)),
-           lookup: s.lookup.put(id, 0), assocAfter: s.assocAfter.put(id, 0) },
+    s' = arriveTag({ ...s, tagFailed: s.tagFailed.exclude(Set(id)),
+                     lookup: s.lookup.put(id, 0), assocAfter: s.assocAfter.put(id, 0) }, id),
   }
 
-  // 6. concurrency の group：待っているタグのジョブは、新しいジョブに置き換えられる（queue: max でない間）
+  // 5b（#863）. 置き換えられて取り消されたタグのジョブの run を、人が再実行する
+  action rerunCancelledTag(id: int): bool = all {
+    RERUN_CANCELLED,
+    s.tagSkipped.contains(id),
+    s' = arriveTag({ ...s, tagSkipped: s.tagSkipped.exclude(Set(id)),
+                     lookup: s.lookup.put(id, 0), assocAfter: s.assocAfter.put(id, 0) }, id),
+  }
+
+  // 6. concurrency の group：待っているタグのジョブは、あとから着いたジョブに置き換えられる（queue: max でない間）。
+  //    あとから着いたのが古いコミットの再実行でも置き換える（#863）
   action cancelPendingTag(id: int): bool = all {
     s.tagPending.contains(id),
-    s.tagPending.exists(other => other > id),
+    s.tagPending.exists(other => other != id and s.tagArrival.get(other) > s.tagArrival.get(id)),
     s' = { ...s, tagPending: s.tagPending.exclude(Set(id)), tagSkipped: s.tagSkipped.union(Set(id)) },
   }
 
@@ -371,7 +396,7 @@ module release_path {
       nondet d = 0.to(MAX_DELAY).oneOf()
       s' = submit(tagged, v, d)
     } else
-      s' = { ...tagged, publishPending: tagged.publishPending.union(Set(v)) },
+      s' = arrivePublish(tagged, v),
   }
 
   // 8. 公開のジョブ（タグの push、または失敗したジョブの再実行）。
@@ -418,13 +443,21 @@ module release_path {
 
   action rerunPublishJob(v: int): bool = all {
     s.publishFailed.contains(v),
-    s' = { ...s, publishFailed: s.publishFailed.exclude(Set(v)), publishPending: s.publishPending.union(Set(v)) },
+    s' = arrivePublish({ ...s, publishFailed: s.publishFailed.exclude(Set(v)) }, v),
   }
 
-  // 9. concurrency の group：待っている公開のジョブは、新しいジョブに置き換えられる（D2）
+  // 8b（#863）. 置き換えられて取り消された公開のジョブの run を、人が再実行する
+  action rerunCancelledPublish(v: int): bool = all {
+    RERUN_CANCELLED,
+    s.publishSkipped.contains(v),
+    s' = arrivePublish({ ...s, publishSkipped: s.publishSkipped.exclude(Set(v)) }, v),
+  }
+
+  // 9. concurrency の group：待っている公開のジョブは、あとから着いたジョブに置き換えられる（D2）。
+  //    あとから着いたのが古い版の再実行でも置き換える（#863）
   action cancelPendingPublish(v: int): bool = all {
     s.publishPending.contains(v),
-    s.publishPending.exists(w => w > v),
+    s.publishPending.exists(w => w != v and s.publishArrival.get(w) > s.publishArrival.get(v)),
     s' = { ...s, publishPending: s.publishPending.exclude(Set(v)), publishSkipped: s.publishSkipped.union(Set(v)) },
   }
 
@@ -551,9 +584,8 @@ module release_path {
   action oldBumpTag(v: int): bool = all {
     OLD_BUMP,
     v > latestTag(s),
-    s' = { ...s, tags: s.tags.put(v, s.head), oldTags: s.oldTags.union(Set(v)),
-           releases: s.releases.union(Set(v)),
-           publishPending: s.publishPending.union(Set(v)) },
+    s' = arrivePublish({ ...s, tags: s.tags.put(v, s.head), oldTags: s.oldTags.union(Set(v)),
+                         releases: s.releases.union(Set(v)) }, v),
   }
 
   action step: bool = {
@@ -571,10 +603,11 @@ module release_path {
       nondet p = 0.to(s.nextPr).oneOf()
       mergePR(p, assocDelay),
       nondet id = 0.to(MAX_COMMITS).oneOf()
-      any { tagJob(id), rerunTagJob(id), cancelPendingTag(id) },
+      any { tagJob(id), rerunTagJob(id), rerunCancelledTag(id), cancelPendingTag(id) },
       pushTagByHand(v),
       publishJob(v, flag),
       rerunPublishJob(v),
+      rerunCancelledPublish(v),
       cancelPendingPublish(v),
       portalResolve(v, flag),
       confirmPoll(v),
@@ -629,14 +662,28 @@ module release_path {
 
   // I8. 途中で止まっても、手順で回復できる状態だけが残る：
   //     関門が打った最新のタグがまだ PUBLISHED でないなら、公開のジョブが待っている、どこかの deployment が処理中（待てば決まる）、
-  //     または失敗したジョブの再実行で関門を通る
+  //     または失敗したジョブ・取り消された run（#863）の再実行で関門を通る
   val stopsAreRecoverable: bool =
     val v = latestTag(s)
     (s.tagOrder.indices().exists(i => s.tagOrder[i] == v) and not(s.published.contains(v)) and not(TAG_IS_PUBLISH))
       implies (s.publishPending.contains(v) or anyProcessing(s)
-               or (s.publishFailed.contains(v) and publishGate(s, v))
+               or ((s.publishFailed.contains(v) or (RERUN_CANCELLED and s.publishSkipped.contains(v))) and publishGate(s, v))
                // R2b：ID の無い試み、drop した ID があれば、人が変数に行を足すと進む（supplyId、markNone）
                or s.unknown.keys().size() > 0 or s.stale.size() > 0 or s.noneConflict.size() > 0)
+
+  // I8b（#863）. 最新のタグより大きい版の、タグの無い版上げのコミットは、どれも回復できる：タグのジョブが待っている、
+  //     失敗したジョブを再実行できる、または取り消された run を再実行できる。関門（tag のモード）が求めるのは main から届くことと
+  //     最新のタグより大きいことだけで、main の先頭であることは求めない（版を変えないマージのあとも、再実行すればタグが付く）。
+  //     あとから着いた古いコミットの再実行が、新しい版上げのタグのジョブを置き換えうる
+  val untaggedReleaseRecoverable: bool =
+    s.commits.keys().forall(id =>
+      val c = s.commits.get(id)
+      val p = s.commits.get(c.parent)
+      // 降版（親より小さい版）は関門が何度でも拒否するので対象から外す（#864 の CodeRabbit・Devin の指摘）
+      (TAG_PUSH_ENABLED and id > 1 and c.squashOfReleasePR and not(c.pre) and key(c.ver, c.pre) > key(p.ver, p.pre)
+         and c.ver > latestTag(s) and not(s.tags.keys().contains(c.ver)))
+        implies (s.tagPending.contains(id) or s.tagFailed.contains(id)
+                 or (RERUN_CANCELLED and s.tagSkipped.contains(id))))
 
   // I9. 公開済み（PUBLISHED）の版の確認が時間切れになるのは、反映の遅れが待ちの上限を超えたときだけ（js#1161）。
   //     処理中のままの時間切れは、確認だけを再実行して待つ
@@ -658,7 +705,7 @@ module release_path {
   val safety: bool = all {
     publishedOnlyFromReleasePR, publishedMonotonic, tagsMonotonic, noDuplicatePublish,
     gateTagsOnReleaseCommits, legacyFromItsTag, legacyBeforeNewer, releaseOnlyAfterPublished,
-    stopsAreRecoverable, timeoutOnlyBeyondBudget, noReleaseForFailed, noUploadWhileUnknown,
+    stopsAreRecoverable, untaggedReleaseRecoverable, timeoutOnlyBeyondBudget, noReleaseForFailed, noUploadWhileUnknown,
   }
 
   // 確認の上限が反映の遅れを覆うなら、PUBLISHED の版の確認は時間切れにならない（js#1161 の直しの条件）
@@ -676,6 +723,12 @@ module release_path {
   val wTagSkipped: bool = s.tagSkipped.size() > 0
   val wPublishRefused: bool = s.publishFailed.size() > 0
   val wPublishSkipped: bool = s.publishSkipped.size() > 0
+  // #863：古い版の再実行が、待っている新しい版を置き換えた／先頭のタグのジョブが置き換えられた
+  val wNewerSkipped: bool = s.publishSkipped.exists(v => v == latestTag(s) and not(s.published.contains(v)))
+  val wHeadTagSkipped: bool = s.tagSkipped.contains(s.head)
+  // 置き換えられたタグのジョブの版が、版を変えないマージのあとも main の今の版のまま（先頭ではない）
+  val wSkippedBelowHead: bool = s.tagSkipped.exists(id => id != s.head and s.commits.get(id).ver == headCommit(s).ver
+                                                    and not(s.tags.keys().contains(s.commits.get(id).ver)))
   val wDeployFailed: bool = s.failedOnce.size() > 0
   val wFailedThenPublished: bool = s.failedOnce.exists(v => s.published.contains(v))
   val wJobFailedAfterSubmit: bool = s.jobFailedAfterSubmit.size() > 0
@@ -703,7 +756,7 @@ module java {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = true, OTHER_PRS = true,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 6, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 6,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 7
   ).*
 }
@@ -715,7 +768,7 @@ module javaReleasesOnly {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 2, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 6,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 6
   ).*
 }
@@ -727,7 +780,7 @@ module kotlin {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = true, OTHER_PRS = true,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 6, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 6,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 7
   ).*
 }
@@ -739,7 +792,7 @@ module kotlinNoManual {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = true,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 6, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 6,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 7
   ).*
 }
@@ -751,7 +804,7 @@ module scala {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = true, OTHER_PRS = true,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 6, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 6,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 7
   ).*
 }
@@ -763,7 +816,7 @@ module rs {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = false, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = true, OTHER_PRS = true,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 6, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 6,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 7
   ).*
 }
@@ -776,7 +829,7 @@ module go {
     TAG_IS_PUBLISH = true, ASYNC_PORTAL = false, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = true,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 6, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 7,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 7
   ).*
 }
@@ -790,7 +843,7 @@ module kotlinNoRequired {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 0,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 5
   ).*
 }
@@ -802,7 +855,7 @@ module goManualTags {
     TAG_IS_PUBLISH = true, ASYNC_PORTAL = false, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = true, OTHER_PRS = true,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 0,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 5
   ).*
 }
@@ -814,7 +867,7 @@ module jsBefore1161 {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = false, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 6, MAX_DELAY = 18,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 4
   ).*
 }
@@ -826,7 +879,7 @@ module wholeRerun {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = false, PRECHECK_SEES_DEPLOYMENTS = false, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 2, MAX_DELAY = 6,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = true, MAX_COMMITS = 4
   ).*
 }
@@ -838,7 +891,7 @@ module noDeploymentCheck {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = false, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 0,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = false,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 4
   ).*
 }
@@ -853,7 +906,7 @@ module javaR2aOnly {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = true,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 6, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 6,
     NEW_PATH = true, TAG_PUSH_ENABLED = false, OLD_PUBLISH = true, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 7
   ).*
 }
@@ -865,7 +918,7 @@ module javaR2aPushesTags {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 0,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = true, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 5
   ).*
 }
@@ -877,7 +930,7 @@ module scalaBeforeR5 {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = true,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 6, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 6,
     NEW_PATH = false, TAG_PUSH_ENABLED = false, OLD_PUBLISH = true, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 7
   ).*
 }
@@ -889,7 +942,7 @@ module scalaOldBumpLive {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 0,
     NEW_PATH = false, TAG_PUSH_ENABLED = false, OLD_PUBLISH = true, OLD_BUMP = true, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 5
   ).*
 }
@@ -901,7 +954,7 @@ module noOtherDeploymentCheck {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 0,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = false,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 6
   ).*
 }
@@ -916,7 +969,7 @@ module javaR2b {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = true, OTHER_PRS = true,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 6, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 6,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
+    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 7
   ).*
 }
@@ -928,7 +981,7 @@ module javaR2bReleasesOnly {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 2,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
+    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 6
   ).*
 }
@@ -940,7 +993,7 @@ module stepRecordDropped {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 0,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = true, UNKNOWN_DETECTED = false, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
+    RECORD_VIEW = true, UNKNOWN_DETECTED = false, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 6
   ).*
 }
@@ -952,7 +1005,7 @@ module unknownIgnored {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 0,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = false, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
+    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = false, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 6
   ).*
 }
@@ -965,7 +1018,7 @@ module noneSkipsQuery {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 2,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = true, PRECHECK_LATEST_TAG = true,
+    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = true, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 6
   ).*
 }
@@ -980,7 +1033,20 @@ module noLatestTagCheck {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 2,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = false,
+    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = false, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 6
+  ).*
+}
+
+// #863：置き換えられて取り消された run を再実行しない（直す前の §6 の行「そのまま」）。古い版の再実行が最新の版の待ちを
+// 置き換えると、最新のタグが公開されないまま止まる（I8 が破れる見込み）。javaR2bReleasesOnly と同じ構成で RERUN_CANCELLED だけを外す
+module cancelledLeftAlone {
+  import release_path(
+    VERSIONS = 1.to(4), INIT_VER = 2, INIT_PRE = true, INIT_TAG = 1, LEGACY = Set(), REQUIRED_PUBLISHED = Set(),
+    TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
+    LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 2,
+    NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
+    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
+    RERUN_CANCELLED = false, RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 6
   ).*
 }
