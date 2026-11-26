@@ -18,6 +18,9 @@
 //
 // 版は整数で抽象化する（X.Y.Z の順序だけが効く）。プレリリース（-SNAPSHOT など）は、同じ番号の正式版より小さい。
 // 時間は「確認の1回」を1刻みとする整数の時計で表す。
+// concurrency の待ちの置き換え（cancelPendingTag・cancelPendingPublish）は、コミットの ID と版の大小を到着の順と見なす
+// （新しい方が古い方を置き換える）。失敗したジョブの再実行が、待っている新しい版を置き換える到着の順は表していない
+// （#862 の CodeRabbit の指摘。追跡は https://github.com/j5ik2o/event-store-adapter-java/issues/863）。
 module release_path {
 
   // ---------------------------------------------------------------- 定数（言語ごとのインスタンスで決める）
@@ -51,6 +54,7 @@ module release_path {
                                       // false は、手順の一覧が途中で切れた job を数えない規則（直す前の追記）
   const UNKNOWN_STOPS: bool           // 始まったのに ID の無い試みがあれば、事前の確認が止まる（§1.4 の 2）
   const NONE_SKIPS_QUERY: bool        // v2 の規則：変数の =none があれば、artifact の ID を照会しない（N1。false が v3 の規則）
+  const PRECHECK_LATEST_TAG: bool     // 事前の確認は、決めるときのリモートのタグで「最新のタグか」を確かめる（待ちのあとも読み直す。#862 の指摘）
 
   // ---------------------------------------------------------------- 型
   type Commit = {
@@ -101,6 +105,7 @@ module release_path {
     failedOnce: Set[int],       // 一度でも FAILED になった版
     jobFailedAfterSubmit: Set[int], // 公開の操作のあとでジョブが失敗した版
     visibleAt: int -> int,      // 版 → 公開先（repo1 など）が返し始める時刻
+    delayOf: int -> int,        // 版 → PUBLISHED から公開先が返し始めるまでの遅れ（I9 で使う）
     duplicateAttempts: int,     // 処理中・公開済みの版を、もう一度出そうとした回数
     confirm: int -> { status: ConfirmStatus, attempts: int, statusAttempts: int, whileProcessing: bool },
     // attempts：PUBLISHED のあとの反映の確認の回数。statusAttempts：deployment の状態の確認の回数（別の上限）
@@ -229,7 +234,7 @@ module release_path {
       RECORD_VIEW implies r.stale.size() == 0,       // B2：drop した ID の照会は失敗するので止まる
       RECORD_VIEW implies r.noneConflict.size() == 0, // N1：=none と照会の状態が食い違えば止まる
       v > visibleLatest(r),
-      v == latestTag(r),                             // 新しいタグに追い越されない
+      PRECHECK_LATEST_TAG implies v == latestTag(r), // 新しいタグに追い越されない
     }
 
   pure def becomePublished(r: Repo, v: int, delay: int): Repo =
@@ -239,6 +244,7 @@ module release_path {
       published: r.published.union(Set(v)),
       publishOrder: r.publishOrder.append(v),
       visibleAt: r.visibleAt.put(v, r.clock + delay),
+      delayOf: r.delayOf.put(v, delay),
     }
 
   // 公開先へ出す。処理中・公開済みの版は拒否され、二度目の試みとして数える
@@ -275,6 +281,7 @@ module release_path {
       failedOnce: Set(),
       jobFailedAfterSubmit: Set(),
       visibleAt: Map(INIT_TAG -> 0),
+      delayOf: Map(),
       duplicateAttempts: 0,
       confirm: Map(),
       releases: Set(INIT_TAG),   // kotlin・scala の v5.2.0 は、Central に無いのにリリースがある（今の時点で I7 の例外）
@@ -390,7 +397,9 @@ module release_path {
       else {
         val r = submit(pending, v, d)
         if (crash == 2)
+          // ID を残す前に落ちたので、公開のあとの確認は始まらない（人が ID を入れて再実行が通ってから。#862 の CodeRabbit の指摘）
           s' = { ...r, publishFailed: r.publishFailed.union(Set(v)),
+                 confirm: r.confirm.keys().exclude(Set(v)).mapBy(x => r.confirm.get(x)),
                  jobFailedAfterSubmit: r.jobFailedAfterSubmit.union(Set(v)),
                  recorded: r.recorded.exclude(Set(v)),
                  unknown: if (UNKNOWN_DETECTED) r.unknown.put(v, true) else r.unknown,
@@ -485,7 +494,11 @@ module release_path {
   action supplyId(v: int): bool = all {
     s.unknown.keys().contains(v),
     s' = { ...s, unknown: unknownWithout(s.unknown, v),
-           recorded: if (s.unknown.get(v)) s.recorded.union(Set(v)) else s.recorded },
+           recorded: if (s.unknown.get(v)) s.recorded.union(Set(v)) else s.recorded,
+           // ID が入ったので、Portal に届いていた試みは確認を始められる
+           confirm: if (s.unknown.get(v) and not(s.confirm.keys().contains(v)))
+                      s.confirm.put(v, { status: Waiting, attempts: 0, statusAttempts: 0, whileProcessing: false })
+                    else s.confirm },
   }
 
   // 13c（R2b、B2）. 人が、記録された FAILED の deployment を Portal で drop する。その ID の照会は失敗し続ける
@@ -500,7 +513,9 @@ module release_path {
   // 13d（R2b、B2）. 人が、drop した ID に none の行を変数に足す（変数は artifact より優先）
   action markNone(v: int): bool = all {
     s.stale.contains(v),
-    s' = { ...s, stale: s.stale.exclude(Set(v)), recorded: s.recorded.exclude(Set(v)) },
+    // drop した ID は状態を返さなくなるので、その版の =none の食い違い（wrongNone）も解ける（#862 の CodeRabbit の指摘）
+    s' = { ...s, stale: s.stale.exclude(Set(v)), recorded: s.recorded.exclude(Set(v)),
+           noneConflict: s.noneConflict.exclude(Set(v)) },
   }
 
   // 13e（R2b、N1）. 人が、照会が状態を返す ID の試みに、取り違えて =none を書く（drop していない ID）。
@@ -552,7 +567,8 @@ module release_path {
     any {
       openReleasePR(v),
       openOtherPR(v, pre, changes, same, only),
-      nondet p = 0.to(MAX_COMMITS).oneOf()
+      // 開いている PR の ID はすべて選べる（openReleasePR は nextPr に上限を付けない。#862 の CodeRabbit の指摘）
+      nondet p = 0.to(s.nextPr).oneOf()
       mergePR(p, assocDelay),
       nondet id = 0.to(MAX_COMMITS).oneOf()
       any { tagJob(id), rerunTagJob(id), cancelPendingTag(id) },
@@ -624,9 +640,10 @@ module release_path {
 
   // I9. 公開済み（PUBLISHED）の版の確認が時間切れになるのは、反映の遅れが待ちの上限を超えたときだけ（js#1161）。
   //     処理中のままの時間切れは、確認だけを再実行して待つ
+  //     （#862 の CodeRabbit の指摘で、上限どうしの比較から、その deployment の実際の遅れとの比較に強めた）
   val timeoutOnlyBeyondBudget: bool =
     s.confirm.keys().forall(v => (s.confirm.get(v).status == TimedOut and not(s.confirm.get(v).whileProcessing))
-                                   implies MAX_DELAY >= CONFIRM_ATTEMPTS)
+                                   implies (s.delayOf.keys().contains(v) and s.delayOf.get(v) >= CONFIRM_ATTEMPTS))
 
   // I10（A2）. FAILED を読んだ確認は、リリースを作らせない
   val noReleaseForFailed: bool =
@@ -663,7 +680,8 @@ module release_path {
   val wNewerAfterLegacy: bool = LEGACY.exists(v => s.published.contains(v) and s.published.exists(w => w > v))
   val wOtherVersionMerged: bool = s.commits.keys().exists(i => i > 1 and not(s.commits.get(i).squashOfReleasePR)
                                                           and s.commits.get(i).ver != s.commits.get(s.commits.get(i).parent).ver)
-  val wTwoReleases: bool = s.tagOrder.length() >= 2
+  val wTwoTags: bool = s.tagOrder.length() >= 2
+  val wTwoReleases: bool = s.releases.exclude(Set(INIT_TAG)).size() >= 2
   val wWouldTag: bool = s.wouldTag.size() > 0
   val wUnknown: bool = s.unknown.keys().size() > 0
   val wUnknownResolved: bool = s.everUnknown.exists(v => s.published.contains(v)) and s.unknown.keys().size() == 0
@@ -682,7 +700,7 @@ module java {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = true, OTHER_PRS = true,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 6, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 6,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 7
   ).*
 }
@@ -694,7 +712,7 @@ module javaReleasesOnly {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 2, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 6,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 6
   ).*
 }
@@ -706,7 +724,7 @@ module kotlin {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = true, OTHER_PRS = true,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 6, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 6,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 7
   ).*
 }
@@ -718,7 +736,7 @@ module kotlinNoManual {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = true,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 6, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 6,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 7
   ).*
 }
@@ -730,7 +748,7 @@ module scala {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = true, OTHER_PRS = true,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 6, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 6,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 7
   ).*
 }
@@ -742,7 +760,7 @@ module rs {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = false, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = true, OTHER_PRS = true,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 6, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 6,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 7
   ).*
 }
@@ -755,7 +773,7 @@ module go {
     TAG_IS_PUBLISH = true, ASYNC_PORTAL = false, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = true,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 6, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 7,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 7
   ).*
 }
@@ -769,7 +787,7 @@ module kotlinNoRequired {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 0,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 5
   ).*
 }
@@ -781,7 +799,7 @@ module goManualTags {
     TAG_IS_PUBLISH = true, ASYNC_PORTAL = false, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = true, OTHER_PRS = true,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 0,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 5
   ).*
 }
@@ -793,7 +811,7 @@ module jsBefore1161 {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = false, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 6, MAX_DELAY = 18,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 4
   ).*
 }
@@ -805,7 +823,7 @@ module wholeRerun {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = false, PRECHECK_SEES_DEPLOYMENTS = false, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 2, MAX_DELAY = 6,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
     RERUN_WHOLE_PUBLISH = true, MAX_COMMITS = 4
   ).*
 }
@@ -817,7 +835,7 @@ module noDeploymentCheck {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = false, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 0,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = false,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 4
   ).*
 }
@@ -832,7 +850,7 @@ module javaR2aOnly {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = true,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 6, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 6,
     NEW_PATH = true, TAG_PUSH_ENABLED = false, OLD_PUBLISH = true, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 7
   ).*
 }
@@ -844,7 +862,7 @@ module javaR2aPushesTags {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 0,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = true, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 5
   ).*
 }
@@ -856,7 +874,7 @@ module scalaBeforeR5 {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = true,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 6, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 6,
     NEW_PATH = false, TAG_PUSH_ENABLED = false, OLD_PUBLISH = true, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 7
   ).*
 }
@@ -868,7 +886,7 @@ module scalaOldBumpLive {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 0,
     NEW_PATH = false, TAG_PUSH_ENABLED = false, OLD_PUBLISH = true, OLD_BUMP = true, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 5
   ).*
 }
@@ -880,7 +898,7 @@ module noOtherDeploymentCheck {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 0,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = false,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 6
   ).*
 }
@@ -895,7 +913,7 @@ module javaR2b {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = true, OTHER_PRS = true,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 6, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 6,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false,
+    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 7
   ).*
 }
@@ -907,7 +925,7 @@ module javaR2bReleasesOnly {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 2,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false,
+    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 6
   ).*
 }
@@ -919,7 +937,7 @@ module stepRecordDropped {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 0,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = true, UNKNOWN_DETECTED = false, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false,
+    RECORD_VIEW = true, UNKNOWN_DETECTED = false, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 6
   ).*
 }
@@ -931,7 +949,7 @@ module unknownIgnored {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 0,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = false, NONE_SKIPS_QUERY = false,
+    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = false, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 6
   ).*
 }
@@ -944,7 +962,20 @@ module noneSkipsQuery {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 2,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = true,
+    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = true, PRECHECK_LATEST_TAG = true,
+    RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 6
+  ).*
+}
+
+// 事前の確認が「最新のタグか」を確かめない場合（待ちのあとにタグを読み直さない実装は、待つあいだに付いたタグについてこれと同じ）。
+// FAILED の版の再実行が、あとの版の PUBLISHED のあとに出る（I2 が破れる見込み。#862 の Devin の指摘の再現）
+module noLatestTagCheck {
+  import release_path(
+    VERSIONS = 1.to(4), INIT_VER = 2, INIT_PRE = true, INIT_TAG = 1, LEGACY = Set(), REQUIRED_PUBLISHED = Set(),
+    TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
+    LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 2,
+    NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
+    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = false,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 6
   ).*
 }

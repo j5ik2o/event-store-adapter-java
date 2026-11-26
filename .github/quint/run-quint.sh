@@ -16,9 +16,10 @@ NEGATIVE_ALL=(kotlinNoRequired:legacyBeforeNewer goManualTags:publishedOnlyFromR
   jsBefore1161:neverTimesOutAfterPublished wholeRerun:noDuplicatePublish noDeploymentCheck:noDuplicatePublish
   javaR2aPushesTags:noDuplicatePublish scalaOldBumpLive:legacyBeforeNewer noOtherDeploymentCheck:publishedMonotonic
   stepRecordDropped:noDuplicatePublish unknownIgnored:noDuplicatePublish noneSkipsQuery:noDuplicatePublish
-  noneSkipsQuery:publishedMonotonic)
+  noneSkipsQuery:publishedMonotonic noLatestTagCheck:publishedMonotonic)
 POSITIVE_CI=(javaR2b javaR2bReleasesOnly)
-NEGATIVE_CI=(stepRecordDropped:noDuplicatePublish unknownIgnored:noDuplicatePublish noneSkipsQuery:noDuplicatePublish)
+NEGATIVE_CI=(stepRecordDropped:noDuplicatePublish unknownIgnored:noDuplicatePublish noneSkipsQuery:noDuplicatePublish
+  noLatestTagCheck:publishedMonotonic)
 TESTS=(javaPathsTest kotlinPathsTest javaR2aOnlyTest javaR2bPathsTest)
 
 if [[ "$mode" == ci ]]; then

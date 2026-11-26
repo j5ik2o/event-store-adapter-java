@@ -44,8 +44,10 @@ def record(attempt, deployment, run_created=NOW - timedelta(days=1)):
     return portal.Artifact(portal.record_name(attempt, deployment), False, run_created + timedelta(days=90))
 
 
-def run(run_id=RUN, tag='v5.3.0', age=1, jobs=(), artifacts=(), event='push'):
-    return portal.Run(run_id, NOW - timedelta(days=age), tag, event, tuple(jobs), tuple(artifacts))
+def run(run_id=RUN, tag='v5.3.0', age=1, jobs=(), artifacts=(), event='push', attempts=None):
+    if attempts is None:
+        attempts = max([job.run_attempt for job in jobs] or [1])
+    return portal.Run(run_id, NOW - timedelta(days=age), tag, event, tuple(jobs), tuple(artifacts), attempts)
 
 
 def facts(runs=(), version='5.3.0', overrides='', tags=('v5.2.0', 'v5.3.0'), statuses=None, repo1=None,

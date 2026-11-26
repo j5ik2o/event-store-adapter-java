@@ -10,7 +10,7 @@ module javaPathsTest {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 6, CONFIRM_ATTEMPTS = 2, MAX_DELAY = 0,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 6
   ).* from "./release_path"
 
@@ -119,7 +119,7 @@ module kotlinPathsTest {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 2, MAX_DELAY = 0,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 6
   ).* from "./release_path"
 
@@ -156,7 +156,7 @@ module javaR2aOnlyTest {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 2, MAX_DELAY = 0,
     NEW_PATH = true, TAG_PUSH_ENABLED = false, OLD_PUBLISH = true, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 6
   ).* from "./release_path"
 
@@ -176,7 +176,7 @@ module javaR2bPathsTest {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 2, MAX_DELAY = 0,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false,
+    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 6
   ).* from "./release_path"
 

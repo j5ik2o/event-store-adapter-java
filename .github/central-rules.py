@@ -98,6 +98,7 @@ class Run:
     event: str
     jobs: tuple = ()          # filter=all の release ジョブ（数える run だけ読む）
     artifacts: tuple = ()     # 名前が central- で始まるもの（数える run だけ読む）
+    attempts: int = 1         # run の run_attempt（試みの数）
 
 
 @dataclass(frozen=True)
@@ -239,10 +240,9 @@ def attempt_records(facts):
                            'keep the artifact retention at 90 days')
             artifacts[attempt] = deployment
         jobs = executions(run.jobs)
-        if not jobs and run.id != facts.current_run:
-            raise Stop(f'run {run.id} has no {RELEASE_JOB!r} job; check the deployments of the run in the Portal and '
-                       f'add {run.id}/1=<deployment ID|none> to CENTRAL_DEPLOYMENTS')
-        uploaded = {}
+        # release ジョブが一覧に無い run（startup_failure など）は、どの試みもアップロードしたかもしれないと見る。
+        # 止まったあと、変数に試みの行を足せば先へ進める（下の 3 の規則と同じ道）
+        uploaded = {attempt: True for attempt in range(1, run.attempts + 1)} if not jobs else {}
         for job in jobs:
             if run.id == facts.current_run and job.run_attempt == facts.current_attempt:
                 continue
@@ -377,7 +377,7 @@ def parse_status(code, body):
     if not isinstance(data, dict):
         return Status(QUERY_FAILED)
     state = data.get('deploymentState')
-    if state not in STATES:
+    if not isinstance(state, str) or state not in STATES:
         return Status(QUERY_FAILED)
     errors = data.get('errors')
     return Status(state, data.get('deploymentName'), json.dumps(errors, ensure_ascii=False) if errors else None)

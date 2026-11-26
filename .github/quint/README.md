@@ -8,6 +8,7 @@ The model was written for the release path design of the event-store-adapter rep
 - `UNKNOWN_DETECTED`: such an attempt is always seen as started (`may_have_uploaded` in `central-rules.py` counts a job as uploaded unless it proves otherwise).
 - `UNKNOWN_STOPS`: an attempt that may have uploaded without a record stops every later upload.
 - `NONE_SKIPS_QUERY`: the rejected rule where a `=none` line skipped the status query. The instance `noneSkipsQuery` shows that rule breaks the invariants.
+- `PRECHECK_LATEST_TAG`: the precheck checks that this version is still the latest tag. The model reads the tags at the moment the precheck decides, so `central-portal.py` reads them again after a wait. The instance `noLatestTagCheck` drops the check and breaks I2 (a `FAILED` version re-run after a later version is `PUBLISHED`).
 
 Invariants are `safety` (I1 to I11). Instances whose names describe a missing safeguard (`stepRecordDropped`, `unknownIgnored`, `noneSkipsQuery` and others) are expected to violate an invariant.
 

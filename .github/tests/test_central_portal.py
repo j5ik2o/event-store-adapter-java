@@ -5,7 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from central_portal_support import (
@@ -173,8 +173,12 @@ class DecideTest(unittest.TestCase):
         recent = run(age=79, jobs=[release_job(1)])
         self.assert_stops(facts([recent]))
 
-    def test_a_run_without_a_release_job_stops(self):
+    def test_a_run_without_a_release_job_stops_until_its_attempts_have_lines(self):
         self.assert_stops(facts([run(jobs=[])]), f'{RUN}/1=<deployment ID|none>')
+        self.assertEqual(self.decide(facts([run(jobs=[])], overrides=f'{RUN}/1=none')).action, 'upload')
+        twice = run(jobs=[], attempts=2)
+        self.assert_stops(facts([twice], overrides=f'{RUN}/1=none'), f'{RUN}/2=<deployment ID|none>')
+        self.assertEqual(self.decide(facts([twice], overrides=f'{RUN}/1=none\n{RUN}/2=none')).action, 'upload')
         self.assertEqual(self.decide(facts([run(run_id=RUN, jobs=[])], current_run=RUN)).action, 'upload')
 
     def test_queries_that_fail_stop(self):
@@ -210,7 +214,9 @@ class SmallFunctionsTest(unittest.TestCase):
         self.assertEqual(portal.parse_status(404, b'').state, portal.ABSENT)
         self.assertEqual(portal.parse_status(400, b'').state, portal.ABSENT)
         for code, data in ((500, b''), (None, b''), (200, b'not json'), (200, b'[]'),
-                           (200, b'{"deploymentState": "DONE"}'), (200, b'{}')):
+                           (200, b'{"deploymentState": "DONE"}'), (200, b'{}'),
+                           (200, b'{"deploymentState": ["PUBLISHED"]}'), (200, b'{"deploymentState": {"a": 1}}'),
+                           (200, b'{"deploymentState": null}')):
             with self.subTest(code=code, data=data):
                 self.assertEqual(portal.parse_status(code, data).state, portal.QUERY_FAILED)
 
@@ -234,19 +240,38 @@ class StubbedCommandsTest(unittest.TestCase):
         self.summary = self.directory / 'summary'
         self.output.write_text('')
         self.summary.write_text('')
-        self.tags = self.directory / 'remote-tags'
-        self.tags.write_text('a' * 40 + '\trefs/tags/v5.2.0\n' + 'b' * 40 + '\trefs/tags/v5.3.0\n')
+        # リモートのタグは、本物の git の bare リポジトリから `git ls-remote --tags` で読む
+        self.git_env = {**os.environ, 'GIT_CONFIG_GLOBAL': str(self.directory / 'gitconfig'), 'GIT_CONFIG_NOSYSTEM': '1'}
+        (self.directory / 'gitconfig').write_text('[user]\n\tname = Test\n\temail = test@example.com\n')
+        self.remote = self.directory / 'remote.git'
+        work = self.directory / 'work'
+        self.git(self.directory, 'init', '--bare', str(self.remote))
+        self.git(self.directory, 'init', str(work))
+        self.git(work, 'commit', '--allow-empty', '-m', 'first')
+        self.git(work, 'push', str(self.remote), 'HEAD:refs/heads/main')
+        self.add_tag('v5.2.0')
+        self.add_tag('v5.3.0')
         for artifact in portal.bundle.ARTIFACTS:
             self.stub.routes[('HEAD', f'/maven2/io/github/j5ik2o/{artifact}/5.3.0/{artifact}-5.3.0.pom')] = \
                 lambda request: (404, b'')
 
-    def script(self, *args, attempt=2):
+    def git(self, cwd, *args):
+        subprocess.run(['git', *args], cwd=cwd, env=self.git_env, check=True, capture_output=True)
+
+    def add_tag(self, name):
+        self.git(self.remote, 'tag', '-f', name, 'main')
+
+    def precheck(self, version='5.3.0', attempts='3', **env):
+        return self.script('precheck', '--version', version, '--remote', str(self.remote),
+                           '--attempts', attempts, '--interval', '0', **env)
+
+    def script(self, *args, attempt=2, **extra):
         env = {
             **os.environ, 'GH_TOKEN': 'gh-token', 'GITHUB_REPOSITORY': 'o/r', 'GITHUB_RUN_ID': str(RUN),
             'GITHUB_RUN_ATTEMPT': str(attempt), 'SONATYPE_USERNAME': 'user', 'SONATYPE_PASSWORD': 'secret-password',
             'CENTRAL_DEPLOYMENTS': '', 'GITHUB_API_URL': self.stub.url, 'CENTRAL_API_URL': self.stub.url,
             'REPO1_URL': self.stub.url + '/maven2', 'GITHUB_OUTPUT': str(self.output),
-            'GITHUB_STEP_SUMMARY': str(self.summary),
+            'GITHUB_STEP_SUMMARY': str(self.summary), **extra,
         }
         env.pop('GITHUB_ACTIONS', None)
         result = subprocess.run([sys.executable, str(GITHUB / 'central-portal.py'), *args], env=env,
@@ -256,15 +281,26 @@ class StubbedCommandsTest(unittest.TestCase):
             self.assertNotIn(base64.b64encode(b'user:secret-password').decode(), text)
         return result
 
-    def github_run(self, jobs, artifacts):
-        created = (NOW - timedelta(days=1)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    def github_runs(self, *runs):
+        """runs は (run の ID, タグ, jobs, artifacts)。時刻は実時刻から決める（窓の 80 日は実時刻で数える）。"""
+        created = (datetime.now(timezone.utc) - timedelta(days=1)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        listed = [{'id': run_id, 'created_at': created, 'head_branch': tag, 'event': 'push', 'run_attempt':
+                   max([job['run_attempt'] for job in jobs] or [1])} for run_id, tag, jobs, _ in runs]
         self.stub.routes[('GET', '/repos/o/r/actions/workflows/release.yml/runs')] = lambda request: (200, {
-            'total_count': 1, 'workflow_runs': [
-                {'id': RUN, 'created_at': created, 'head_branch': 'v5.3.0', 'event': 'push'}]})
-        self.stub.routes[('GET', f'/repos/o/r/actions/runs/{RUN}/jobs')] = lambda request: (200, {
-            'total_count': len(jobs), 'jobs': jobs})
-        self.stub.routes[('GET', f'/repos/o/r/actions/runs/{RUN}/artifacts')] = lambda request: (200, {
-            'total_count': len(artifacts), 'artifacts': artifacts})
+            'total_count': len(listed), 'workflow_runs': listed})
+        for run_id, _, jobs, artifacts in runs:
+            self.stub.routes[('GET', f'/repos/o/r/actions/runs/{run_id}/jobs')] = (
+                lambda request, jobs=jobs: (200, {'total_count': len(jobs), 'jobs': jobs}))
+            self.stub.routes[('GET', f'/repos/o/r/actions/runs/{run_id}/artifacts')] = (
+                lambda request, artifacts=artifacts: (200, {'total_count': len(artifacts), 'artifacts': artifacts}))
+
+    def github_run(self, jobs, artifacts):
+        self.github_runs((RUN, 'v5.3.0', jobs, artifacts))
+
+    @staticmethod
+    def artifact_json(attempt, deployment):
+        expires = (datetime.now(timezone.utc) + timedelta(days=89)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        return {'name': portal.record_name(attempt, deployment), 'expired': False, 'expires_at': expires}
 
     @staticmethod
     def job_json(attempt, upload_conclusion):
@@ -275,9 +311,7 @@ class StubbedCommandsTest(unittest.TestCase):
                     {'name': name, 'status': 'completed', 'conclusion': conclusion} for name, conclusion in pairs]}
 
     def test_precheck_waits_for_an_earlier_attempt_and_then_does_not_upload(self):
-        expires = (NOW + timedelta(days=89)).strftime('%Y-%m-%dT%H:%M:%SZ')
-        self.github_run([self.job_json(1, 'success')],
-                        [{'name': portal.record_name(1, ID_A), 'expired': False, 'expires_at': expires}])
+        self.github_run([self.job_json(1, 'success')], [self.artifact_json(1, ID_A)])
         states = iter(['PUBLISHING', 'PUBLISHED', 'PUBLISHED'])
 
         def status(request):
@@ -288,8 +322,7 @@ class StubbedCommandsTest(unittest.TestCase):
                          'deploymentState': next(states)}
 
         self.stub.routes[('POST', '/api/v1/publisher/status')] = status
-        result = self.script('precheck', '--version', '5.3.0', '--remote-tags', str(self.tags),
-                             '--attempts', '3', '--interval', '0')
+        result = self.precheck()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(outputs(self.output), {'action': 'published', 'deployment': ID_A})
         self.assertEqual(self.stub.paths('GET').count('/repos/o/r/actions/workflows/release.yml/runs'), 2)
@@ -297,17 +330,48 @@ class StubbedCommandsTest(unittest.TestCase):
 
     def test_precheck_stops_on_an_upload_without_an_id(self):
         self.github_run([self.job_json(1, 'failure')], [])
-        result = self.script('precheck', '--version', '5.3.0', '--remote-tags', str(self.tags),
-                             '--attempts', '2', '--interval', '0')
+        result = self.precheck(attempts='2')
         self.assertEqual(result.returncode, 1)
         self.assertIn(f'{RUN}/1=<deployment ID|none>', result.stderr)
         self.assertEqual(outputs(self.output), {})
         self.assertFalse([path for path in self.stub.paths() if path.startswith('/api/')])
 
     def test_precheck_stops_when_github_fails(self):
-        result = self.script('precheck', '--version', '5.3.0', '--remote-tags', str(self.tags))
+        result = self.precheck()
         self.assertEqual(result.returncode, 1)
         self.assertIn('GitHub returned 404', result.stderr)
+
+    def waiting_on_another_version(self, tag_during_the_wait):
+        """v5.3.0 の run の deployment が処理中のあいだ、v5.4.0 の今の run が待つ。待ちが明けるときにタグを足せる。"""
+        current = RUN + 10
+        self.add_tag('v5.4.0')
+        self.github_runs((RUN, 'v5.3.0', [self.job_json(1, 'success')], [self.artifact_json(1, ID_A)]),
+                         (current, 'v5.4.0', [], []))
+        states = iter(['PUBLISHING', 'PUBLISHED'])
+
+        def status(request):
+            state = next(states, 'PUBLISHED')
+            if state == 'PUBLISHED' and tag_during_the_wait:
+                self.add_tag(tag_during_the_wait)
+            return 200, {'deploymentName': portal.deployment_name('5.3.0', RUN, 1), 'deploymentState': state}
+
+        self.stub.routes[('POST', '/api/v1/publisher/status')] = status
+        for artifact in portal.bundle.ARTIFACTS:
+            self.stub.routes[('HEAD', f'/maven2/io/github/j5ik2o/{artifact}/5.4.0/{artifact}-5.4.0.pom')] = \
+                lambda request: (404, b'')
+        return self.script('precheck', '--version', '5.4.0', '--remote', str(self.remote), '--attempts', '3',
+                           '--interval', '0', attempt=1, GITHUB_RUN_ID=str(current),
+                           CENTRAL_DEPLOYMENTS='tag/v5.5.0=checked')
+
+    def test_precheck_rereads_the_tags_after_waiting(self):
+        result = self.waiting_on_another_version(None)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(outputs(self.output), {'action': 'upload', 'deployment': ''})
+        self.output.write_text('')
+        result = self.waiting_on_another_version('v5.5.0')
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('v5.4.0 is not the latest release tag (v5.5.0)', result.stderr)
+        self.assertEqual(outputs(self.output), {})
 
     def test_upload_writes_the_id_first(self):
         bundle = self.directory / 'bundle.zip'

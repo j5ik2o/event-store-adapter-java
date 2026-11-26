@@ -104,7 +104,8 @@ def render(scenario, current):
                 artifacts.append(portal.Artifact(name, plan.expiry == 'expired', expires))
             if attempt.override is not None:
                 lines.append(f'{plan.id}/{attempt.number}={attempt.override}')
-        runs.append(portal.Run(plan.id, created, plan.tag, 'push', tuple(jobs), tuple(artifacts)))
+        runs.append(portal.Run(plan.id, created, plan.tag, 'push', tuple(jobs), tuple(artifacts),
+                               len(plan.attempts)))
     lines += [f'tag/{tag}=checked' for tag in sorted(scenario.checked)]
     if scenario.malformed_line:
         lines.append('this is not a line')
@@ -152,17 +153,15 @@ def expected_action(scenario, current):
         return 'stop', None
     if any(plan.expiry != 'ok' and any(attempt.record for attempt in plan.attempts) for plan in live):
         return 'stop', None
-    if any(plan.no_release_job and plan.id != current[0] for plan in live):
-        return 'stop', None
     # 2. run の数、タグと run
     if scenario.total > portal.MAX_RUNS:
         return 'stop', None
     run_tags = {plan.tag for plan in scenario.runs}
     if any(tag != 'v5.2.0' and tag not in run_tags and tag not in scenario.checked for tag in scenario.remote_tags):
         return 'stop', None
-    # 3. 届いたかもしれない実行に記録が無い（写しは数えない。release ジョブの無い run は今の run だけ）
+    # 3. 届いたかもしれない実行に記録が無い（写しは数えない。release ジョブの無い run は、どの試みも届いたかもしれない）
     for plan, attempt in own:
-        reached = not plan.no_release_job and not attempt.copy and KINDS[attempt.kind]
+        reached = plan.no_release_job or (not attempt.copy and KINDS[attempt.kind])
         if reached and attempt.record is None and attempt.override is None:
             return 'stop', None
     # 4. 照会

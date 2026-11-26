@@ -3,7 +3,7 @@
 
 設計：R2b の設計の追記（v3）の §1.1〜§1.6。判定は central-rules.py の decide。このファイルは照会と書き込みをする。
 
-precheck --version X.Y.Z --remote-tags <ls-remote の出力> [--attempts N --interval S]
+precheck --version X.Y.Z [--remote origin] [--attempts N --interval S]
     release.yml の run・jobs・artifact、変数 CENTRAL_DEPLOYMENTS、Portal の状態、repo1 を読んで決める。
     出力（$GITHUB_OUTPUT）：action=upload|published、deployment=<ID または空>。止まるときは終了コード 1。
 upload --version X.Y.Z --bundle <zip>
@@ -22,6 +22,7 @@ import base64
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 import time
 import urllib.error
@@ -119,12 +120,21 @@ def timestamp(text):
     return datetime.fromisoformat(text.replace('Z', '+00:00')) if text else None
 
 
-def gather(version, remote_tags_text, github, now):
+def remote_tags(remote):
+    """リモートのタグを読む（`git ls-remote --tags`）。読むたびに取り直す（待つあいだに新しいタグができうる）。"""
+    result = subprocess.run(['git', 'ls-remote', '--tags', remote], capture_output=True, text=True)
+    if result.returncode != 0:
+        raise Stop(f'could not list the tags of {remote}: {result.stderr.strip()}; re-run the job')
+    return result.stdout
+
+
+def gather(version, remote, github, now):
     total, raw_runs = github.pages('actions/workflows/release.yml/runs', 'workflow_runs')
     runs = []
     for item in raw_runs:
         run = rules.Run(id=int(item['id']), created_at=timestamp(item['created_at']),
-                        head_branch=item.get('head_branch'), event=item.get('event', ''))
+                        head_branch=item.get('head_branch'), event=item.get('event', ''),
+                        attempts=int(item.get('run_attempt') or 1))
         if rules.counted(run, now):
             _, jobs = github.pages(f'actions/runs/{run.id}/jobs?filter=all', 'jobs')
             _, artifacts = github.pages(f'actions/runs/{run.id}/artifacts', 'artifacts')
@@ -140,9 +150,10 @@ def gather(version, remote_tags_text, github, now):
                 artifacts=tuple(rules.Artifact(artifact['name'], bool(artifact.get('expired')),
                                          timestamp(artifact.get('expires_at')))
                                 for artifact in artifacts if artifact.get('name', '').startswith(rules.RECORD_PREFIX)),
+                attempts=run.attempts,
             )
         runs.append(run)
-    tags = tuple(gate.stable_tags(gate.remote_tags(remote_tags_text)).keys())
+    tags = tuple(gate.stable_tags(gate.remote_tags(remote_tags(remote))).keys())
     return rules.Facts(
         version=version, current_run=int(os.environ.get('GITHUB_RUN_ID', '0')),
         current_attempt=int(os.environ.get('GITHUB_RUN_ATTEMPT', '1')), now=now, total_runs=total, runs=tuple(runs),
@@ -170,7 +181,6 @@ def summary(text):
 def precheck(args, sleep=time.sleep, clock=lambda: datetime.now(timezone.utc)):
     """GitHub の事実は最初と、待ちが明けたときだけ読む。待つあいだは Portal と repo1 だけを読み直す。"""
     github = GitHub()
-    remote_tags_text = Path(args.remote_tags).read_text(encoding='utf-8')
     auth = {}
 
     def evaluate(facts):
@@ -181,7 +191,7 @@ def precheck(args, sleep=time.sleep, clock=lambda: datetime.now(timezone.utc)):
         repo1 = {artifact: repo1_code(artifact, args.version) for artifact in bundle.ARTIFACTS}
         return rules.decide(replace(facts, statuses=statuses, repo1=repo1))
 
-    facts = gather(args.version, remote_tags_text, github, clock())
+    facts = gather(args.version, args.remote, github, clock())
     decision = evaluate(facts)
     for attempt in range(1, args.attempts + 1):
         if decision.action != 'wait':
@@ -194,8 +204,8 @@ def precheck(args, sleep=time.sleep, clock=lambda: datetime.now(timezone.utc)):
         sleep(args.interval)
         decision = evaluate(facts)
         if decision.action != 'wait':
-            # 待ちが明けたら、GitHub の事実を読み直して 1 から決め直す（設計 §1.4 の 5）
-            facts = gather(args.version, remote_tags_text, github, clock())
+            # 待ちが明けたら、GitHub の事実とリモートのタグを読み直して 1 から決め直す（設計 §1.4 の 5）
+            facts = gather(args.version, args.remote, github, clock())
             decision = evaluate(facts)
     raise Stop(f'deployments are still in progress after {args.attempts} checks; re-run the job later')
 
@@ -269,7 +279,7 @@ def main(argv):
     pre = commands.add_parser('precheck')
     pre.set_defaults(run=precheck)
     pre.add_argument('--version', required=True)
-    pre.add_argument('--remote-tags', required=True)
+    pre.add_argument('--remote', default='origin', help='git remote whose tags are listed (git ls-remote --tags)')
     up = commands.add_parser('upload')
     up.set_defaults(run=upload)
     up.add_argument('--version', required=True)
