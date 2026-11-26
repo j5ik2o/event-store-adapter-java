@@ -130,11 +130,11 @@ deployment の待ちが時間切れになり、そのあと Portal が公開し�
 2. 前のリリースのタグ `<previous>` からリリースノートを書きます。
 
    ```sh
-   python3 .github/create-release-note-header.py https://github.com j5ik2o/event-store-adapter-java <previous> vX.Y.Z > notes.md
+   python3 .github/create-release-note-header.py https://github.com j5ik2o/event-store-adapter-java <previous> vX.Y.Z > release-body.md
    git log <previous>..vX.Y.Z --no-merges --format='%H%x1f%s%x1f%b%x1e' \
-     | python3 .github/create-release-note-body.py https://github.com j5ik2o/event-store-adapter-java >> notes.md
+     | python3 .github/create-release-note-body.py https://github.com j5ik2o/event-store-adapter-java >> release-body.md
    ```
 
-3. リリースを作ります：`gh release create vX.Y.Z --verify-tag --title "Release vX.Y.Z" --notes-file notes.md`。
+3. リリースを作ります：`gh release create vX.Y.Z --verify-tag --title "Release vX.Y.Z" -F release-body.md`。
 
 この場合のために関門を緩めることはしません。関門は、事前の確認より前に、秘密の値を持たずに、版がほかのどのタグより大きいことを確かめ続けます。

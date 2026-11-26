@@ -125,14 +125,14 @@ When the precheck stops for a missing ID, its error message lists every line to 
 If the wait for a deployment timed out, the Portal published it later, and a newer `vX.Y.Z` tag was pushed before the re-run, the release gate stops every re-run of the older version. The version is on Maven Central, but its GitHub release and the repo1 check are missing. Recover them by hand:
 
 1. Check that repo1 serves the version: `https://repo1.maven.org/maven2/io/github/j5ik2o/<artifact>/<version>/<artifact>-<version>.pom` for each of the six artifacts in `.github/central-bundle.py` (`ARTIFACTS`).
-2. Write the release notes from the previous release tag `<previous>`:
+2. Write the release description from the previous release tag `<previous>`:
 
    ```sh
-   python3 .github/create-release-note-header.py https://github.com j5ik2o/event-store-adapter-java <previous> vX.Y.Z > notes.md
+   python3 .github/create-release-note-header.py https://github.com j5ik2o/event-store-adapter-java <previous> vX.Y.Z > release-body.md
    git log <previous>..vX.Y.Z --no-merges --format='%H%x1f%s%x1f%b%x1e' \
-     | python3 .github/create-release-note-body.py https://github.com j5ik2o/event-store-adapter-java >> notes.md
+     | python3 .github/create-release-note-body.py https://github.com j5ik2o/event-store-adapter-java >> release-body.md
    ```
 
-3. Create the release: `gh release create vX.Y.Z --verify-tag --title "Release vX.Y.Z" --notes-file notes.md`.
+3. Create the release: `gh release create vX.Y.Z --verify-tag --title "Release vX.Y.Z" -F release-body.md`.
 
 The release gate is not relaxed for this case: it keeps checking, without any secret, that a version is greater than every other tag before the precheck runs.
