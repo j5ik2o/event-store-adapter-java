@@ -65,7 +65,7 @@ python3 -m unittest discover -s .github/tests -v
 4. Release ワークフローが、ジョブ `Publish to Maven Central` を次の順に流します。
    1. タグのコミットを関門で確かめます。
    2. Gradle がタグの版をビルドすることを確かめます。
-   3. Maven Central と前の Release の run を確かめます（`.github/central-portal.py precheck`）。処理中の deployment があれば待ちます（最大 60 分）。公開済みの版や、行方の分からない試みがあれば止まります。
+   3. Maven Central と前の Release の run を確かめます（`.github/central-portal.py precheck`）。処理中の deployment があれば待ちます（最大 60 分）。版が公開済みならアップロードせずに先へ進み、行方の分からない試みがあれば止まります。
    4. bundle（180 ファイル）を作り、Central Portal へ上げます（`publishingType=AUTOMATIC`）。
    5. deployment の ID を artifact `central-deployment-<試みの番号>-<ID>` に残します（90 日）。
    6. deployment が `PUBLISHED` になるまで待ちます（最大 60 分）。
@@ -112,8 +112,8 @@ ID が無くて事前の確認が止まったときは、そのエラーの文�
 | 60 分たっても deployment が処理中 | 待ちの手順が失敗する | 失敗したジョブを再実行する。事前の確認は同じ deployment を待ち、上げ直さない |
 | 60 分たっても repo1 が版を返さない | `Check Maven Central` が失敗する | `Check Maven Central` だけを再実行する |
 | GitHub のリリースを作れなかった | `Create the GitHub release` が失敗する | `Create the GitHub release` だけを再実行する |
-| より新しいタグがある（版が追い越された） | 事前の確認が止まる。その版は公開しない | そのまま（飛んだ版）。エラーの文が新しいタグの取り消された run を挙げていれば、その run のジョブをすべて再実行する |
-| 待っていた公開のジョブが、`release-publish` の group にあとから着いたジョブ（ほかのタグの push、ほかの版の再実行）に置き換えられた | その run は始まる前に取り消される。その版は公開されない | その版が最新の `vX.Y.Z` のタグなら、取り消された run のジョブをすべて再実行する（取り消されたジョブは、アップロードに数えない）。そうでなければそのまま（再実行しても、新しいタグがあるので事前の確認で止まる） |
+| より新しいタグがある（版が追い越された） | 関門が止まる（`must be greater than the latest tag`）。その版は公開しない | そのまま（飛んだ版）。その版が既に `PUBLISHED` だったとき（待ちが時間切れになり、再実行の前に新しいタグができた）は、[新しいタグの前に公開された版](#新しいタグの前に公開された版)の手順で回復する |
+| 待っていた公開のジョブが、`release-publish` の group にあとから着いたジョブ（ほかのタグの push、ほかの版の再実行）に置き換えられた | その run は始まる前に取り消される。その版は公開されない | その版が最新の `vX.Y.Z` のタグなら、取り消された run のジョブをすべて再実行する（取り消されたジョブは、アップロードに数えない）。そうでなければそのまま（再実行しても、新しいタグがあるので関門で止まる） |
 | タグのジョブ（`Tag the merged version`）が、`release-tag` の group にあとから着いたジョブに置き換えられた | その run は取り消される。その版にタグが付かない | その版が最新の `vX.Y.Z` のタグより大きければ、取り消された run を再実行する。あとにほかの pull request がマージされていても同じ（関門は `main` の先頭であることを求めない）。そうでなければそのまま（関門が拒否する） |
 | `CENTRAL_DEPLOYMENTS` の行の形が違う、artifact と違う ID を書いた、Portal が知っている deployment に `none` を書いた | 事前の確認が止まる | 行を直すか消して、再実行する |
 | Release の run や `central-` の artifact を消した。タグの push で Release の run が起きなかった（一度に4つ以上のタグの push、障害） | 事前の確認が止まる（Release の run の無いタグがある） | その版の deployment が処理中でないことを Portal で確かめ、`tag/vX.Y.Z=checked` を足して再実行する。タグは動かさない |
@@ -121,3 +121,20 @@ ID が無くて事前の確認が止まったときは、そのエラーの文�
 | artifact の保存期間を 90 日より短くした | 事前の確認が止まる | 90 日に戻す |
 | 30 日を過ぎて、run を再実行できない | | その版は飛んだ版として扱い、次の版を出す。その前に、行方の分からない試みすべてに行を足す |
 | 80 日より前の run | 事前の確認は数えない | |
+
+#### 新しいタグの前に公開された版
+
+deployment の待ちが時間切れになり、そのあと Portal が公開し、再実行の前に新しい `vX.Y.Z` のタグが push された場合、古い版の再実行は、どれも関門で止まります。版は Maven Central に出ていますが、GitHub のリリースと repo1 の確認が欠けます。手で回復します。
+
+1. repo1 が版を返すことを確かめます。`.github/central-bundle.py` の6つの成果物（`ARTIFACTS`）それぞれについて、`https://repo1.maven.org/maven2/io/github/j5ik2o/<成果物>/<版>/<成果物>-<版>.pom` を見ます。
+2. 前のリリースのタグ `<previous>` からリリースノートを書きます。
+
+   ```sh
+   python3 .github/create-release-note-header.py https://github.com j5ik2o/event-store-adapter-java <previous> vX.Y.Z > notes.md
+   git log <previous>..vX.Y.Z --no-merges --format='%H%x1f%s%x1f%b%x1e' \
+     | python3 .github/create-release-note-body.py https://github.com j5ik2o/event-store-adapter-java >> notes.md
+   ```
+
+3. リリースを作ります：`gh release create vX.Y.Z --verify-tag --title "Release vX.Y.Z" --notes-file notes.md`。
+
+この場合のために関門を緩めることはしません。関門は、事前の確認より前に、秘密の値を持たずに、版がほかのどのタグより大きいことを確かめ続けます。

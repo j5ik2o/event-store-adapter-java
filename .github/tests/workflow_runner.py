@@ -93,6 +93,9 @@ class Runner:
                 used.add(expression[8:])
                 return self.secrets[expression[8:]]
             raise UnknownExpression(f'expression not modelled: {expression}')
+        if '${{' in EXPRESSION.sub('', value):
+            # 区切りの中に } を含む式（format('{0}', …) など）は、正規表現に一致せずに残る。展開せずに拒否する
+            raise UnknownExpression(f'expression not modelled: {value}')
         return EXPRESSION.sub(one, value)
 
     def condition(self, expression, failed):

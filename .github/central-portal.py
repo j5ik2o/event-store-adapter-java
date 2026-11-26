@@ -155,7 +155,6 @@ def gather(version, remote, github, now):
                     name=job.get('name', ''), run_attempt=int(job.get('run_attempt') or 1),
                     started_at=job.get('started_at'), completed_at=job.get('completed_at'),
                     runner_id=job.get('runner_id'), runner_name=job.get('runner_name'),
-                    conclusion=job.get('conclusion'),
                     steps=tuple(rules.Step(step.get('name', ''), step.get('status'), step.get('conclusion'))
                                 for step in job.get('steps') or ()),
                 ) for job in jobs),
@@ -247,11 +246,12 @@ def upload(args):
     if code != 201 or not rules.UUID.fullmatch(deployment):
         raise Stop(f'the upload returned {code}; the Portal may or may not have created deployment {name}. '
                    f'Find it in the Portal and add {run_id}/{attempt}=<deployment ID|none> to CENTRAL_DEPLOYMENTS')
-    # 落ちても人が ID を拾えるように、記録のファイル、出力、summary とログの順に書く（設計 §1.1）
+    # 落ちても人が ID を拾えるように、ログ、記録のファイル、出力、summary の順に書く（設計 §1.1）。
+    # 出力を書く前に落ちると記録の手順は動かず、次の試みは「ID の無い試み」で止まる。そのときはログの ID を変数に足す
+    print(f'::notice::deployment {deployment} ({name})', flush=True)
     Path(args.record).write_text(deployment + '\n', encoding='utf-8')
     write_output(deployment=deployment)
     summary(f'Uploaded {name} to Maven Central: deployment `{deployment}`')
-    print(f'::notice::deployment {deployment} ({name})')
     return 0
 
 

@@ -63,7 +63,7 @@ python3 -m unittest discover -s .github/tests -v
 4. The Release workflow runs the job `Publish to Maven Central`:
    1. It checks the tagged commit against the release gate.
    2. It checks that Gradle builds the version of the tag.
-   3. It checks Maven Central and the earlier release runs (`.github/central-portal.py precheck`). It waits while a deployment is in progress (up to 60 minutes), and it stops when a version is already published or an earlier attempt is unaccounted for.
+   3. It checks Maven Central and the earlier release runs (`.github/central-portal.py precheck`). It waits while a deployment is in progress (up to 60 minutes). When the version is already published it skips the upload, and when an earlier attempt is unaccounted for it stops.
    4. It builds the bundle (180 files) and uploads it to the Central Portal (`publishingType=AUTOMATIC`).
    5. It records the deployment ID as the artifact `central-deployment-<attempt>-<ID>` (kept for 90 days).
    6. It waits until the deployment is `PUBLISHED` (up to 60 minutes).
@@ -110,8 +110,8 @@ When the precheck stops for a missing ID, its error message lists every line to 
 | The deployment is still in progress after 60 minutes | The wait step fails | Re-run the failed jobs. The precheck waits for the same deployment and does not upload again |
 | repo1 does not serve the version after 60 minutes | `Check Maven Central` fails | Re-run only `Check Maven Central` |
 | Creating the GitHub release fails | `Create the GitHub release` fails | Re-run only `Create the GitHub release` |
-| A newer tag exists (the version was overtaken) | The precheck stops; the version is not published | Leave it: the version is skipped. If the message names a cancelled run of the newer tag, re-run all jobs of that run |
-| The waiting publish job was replaced by a later arrival in the `release-publish` group (another tag push, or a re-run of another version) | That run is cancelled before it starts; its version is not published | If its version is the latest `vX.Y.Z` tag, re-run all jobs of the cancelled run (its cancelled job is not counted as an upload). Otherwise leave it: a re-run stops at the precheck because a newer tag exists |
+| A newer tag exists (the version was overtaken) | The release gate stops (`must be greater than the latest tag`); the version is not published | Leave it: the version is skipped. If the version was already `PUBLISHED` (its wait timed out, and the newer tag came before the re-run), see [A version published before a newer tag](#a-version-published-before-a-newer-tag) |
+| The waiting publish job was replaced by a later arrival in the `release-publish` group (another tag push, or a re-run of another version) | That run is cancelled before it starts; its version is not published | If its version is the latest `vX.Y.Z` tag, re-run all jobs of the cancelled run (its cancelled job is not counted as an upload). Otherwise leave it: a re-run stops at the release gate because a newer tag exists |
 | The tag job (`Tag the merged version`) was replaced by a later arrival in the `release-tag` group | That run is cancelled; the version gets no tag | If its version is greater than the latest `vX.Y.Z` tag, re-run the cancelled run, also when other pull requests were merged after it (the release gate does not require the head of `main`). Otherwise leave it: the release gate refuses it |
 | A line of `CENTRAL_DEPLOYMENTS` is malformed, gives another ID than the artifact, or says `none` for a deployment the Portal still knows | The precheck stops | Correct or remove the line and re-run |
 | A Release run or a `central-` artifact was deleted, or a tag push started no Release run (more than three tags in one push, or an outage) | The precheck stops: a tag has no Release run | Check in the Portal that no deployment of that version is in progress, add `tag/vX.Y.Z=checked` and re-run. Do not move the tag |
@@ -119,3 +119,20 @@ When the precheck stops for a missing ID, its error message lists every line to 
 | The artifact retention was set below 90 days | The precheck stops | Set it back to 90 days |
 | More than 30 days passed, so the run cannot be re-run | | Treat the version as skipped and release the next one. Before that, add lines for every attempt that is still unaccounted for |
 | A run is older than 80 days | The precheck does not count it | |
+
+#### A version published before a newer tag
+
+If the wait for a deployment timed out, the Portal published it later, and a newer `vX.Y.Z` tag was pushed before the re-run, the release gate stops every re-run of the older version. The version is on Maven Central, but its GitHub release and the repo1 check are missing. Recover them by hand:
+
+1. Check that repo1 serves the version: `https://repo1.maven.org/maven2/io/github/j5ik2o/<artifact>/<version>/<artifact>-<version>.pom` for each of the six artifacts in `.github/central-bundle.py` (`ARTIFACTS`).
+2. Write the release notes from the previous release tag `<previous>`:
+
+   ```sh
+   python3 .github/create-release-note-header.py https://github.com j5ik2o/event-store-adapter-java <previous> vX.Y.Z > notes.md
+   git log <previous>..vX.Y.Z --no-merges --format='%H%x1f%s%x1f%b%x1e' \
+     | python3 .github/create-release-note-body.py https://github.com j5ik2o/event-store-adapter-java >> notes.md
+   ```
+
+3. Create the release: `gh release create vX.Y.Z --verify-tag --title "Release vX.Y.Z" --notes-file notes.md`.
+
+The release gate is not relaxed for this case: it keeps checking, without any secret, that a version is greater than every other tag before the precheck runs.

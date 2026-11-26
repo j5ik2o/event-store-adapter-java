@@ -81,7 +81,6 @@ class Job:
     runner_id: Optional[int]
     runner_name: Optional[str]
     steps: tuple
-    conclusion: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -351,21 +350,11 @@ def decide(facts):
         return Decision('published')
     # 7. 最新のタグ
     tag = f'v{facts.version}'
-    latest = gate.latest_tag(list(facts.remote_tags))
-    if latest != tag:
-        raise Stop(f'{tag} is not the latest release tag ({latest}); an overtaken version is not published'
-                   + cancelled_hint(facts, latest))
+    if gate.latest_tag(list(facts.remote_tags)) != tag:
+        raise Stop(f'{tag} is not the latest release tag ({gate.latest_tag(list(facts.remote_tags))}); '
+                   'an overtaken version is not published')
     # 8.
     return Decision('upload')
-
-
-def cancelled_hint(facts, latest):
-    """最新のタグの run のうち、release ジョブが手順の無いまま取り消されたもの（concurrency で置き換えられた）を案内する（#863）。
-    途中の版の run は再実行しても「最新のタグでない」で止まるので挙げない。"""
-    runs = sorted(run.id for run in facts.runs
-                  if run.event == 'push' and run.head_branch == latest and executions(run.jobs)
-                  and all(job.conclusion == 'cancelled' and not job.steps for job in executions(run.jobs)))
-    return ''.join(f'; run {run_id} was cancelled before it started: re-run all its jobs' for run_id in runs)
 
 
 def check_build_version(output, tag):

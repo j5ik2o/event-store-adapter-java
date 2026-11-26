@@ -679,7 +679,8 @@ module release_path {
     s.commits.keys().forall(id =>
       val c = s.commits.get(id)
       val p = s.commits.get(c.parent)
-      (TAG_PUSH_ENABLED and id > 1 and c.squashOfReleasePR and not(c.pre) and (c.ver != p.ver or c.pre != p.pre)
+      // 降版（親より小さい版）は関門が何度でも拒否するので対象から外す（#864 の CodeRabbit・Devin の指摘）
+      (TAG_PUSH_ENABLED and id > 1 and c.squashOfReleasePR and not(c.pre) and key(c.ver, c.pre) > key(p.ver, p.pre)
          and c.ver > latestTag(s) and not(s.tags.keys().contains(c.ver)))
         implies (s.tagPending.contains(id) or s.tagFailed.contains(id)
                  or (RERUN_CANCELLED and s.tagSkipped.contains(id))))

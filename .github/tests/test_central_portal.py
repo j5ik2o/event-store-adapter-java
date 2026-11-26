@@ -5,7 +5,6 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -209,28 +208,6 @@ class DecideTest(unittest.TestCase):
     def test_an_overtaken_version_is_not_uploaded(self):
         self.assert_stops(facts(tags=('v5.2.0', 'v5.3.0', 'v5.4.0'), overrides='tag/v5.4.0=checked'),
                           'not the latest release tag')
-
-    def test_an_overtaken_version_names_the_cancelled_run_of_the_newer_tag(self):
-        # #863：古い版の再実行が、新しい版の待ちを置き換えた。新しい版の run は、手順の無いまま取り消されている
-        cancelled = portal.Job(name=portal.RELEASE_JOB, run_attempt=1, started_at=None, completed_at=None,
-                               runner_id=None, runner_name='', steps=(), conclusion='cancelled')
-        newer = run(run_id=RUN + 1, tag='v5.4.0', jobs=[cancelled])
-        older = run(run_id=RUN + 2, tag='v5.2.1', jobs=[cancelled])
-        # 途中の版（v5.3.1）の取り消された run は、再実行しても最新のタグでないので止まる。挙げない（#864 の Bugbot の指摘）
-        between = run(run_id=RUN + 3, tag='v5.3.1', jobs=[cancelled])
-        tags = ('v5.2.0', 'v5.2.1', 'v5.3.0', 'v5.3.1', 'v5.4.0')
-        message = self.assert_stops(facts([newer, older, between], tags=tags),
-                                    f'run {RUN + 1} was cancelled before it started: re-run all its jobs')
-        self.assertNotIn(f'run {RUN + 2}', message)
-        self.assertNotIn(f'run {RUN + 3}', message)
-        # 待っている（まだ取り消されていない）run や、動いた run は案内しない
-        waiting = run(run_id=RUN + 1, tag='v5.4.0', jobs=[replace(cancelled, conclusion=None)])
-        ran = run(run_id=RUN + 1, tag='v5.4.0', jobs=[release_job(1, upload='skipped')])
-        for other in (waiting, ran):
-            with self.subTest(other=other.jobs[0].conclusion):
-                message = self.assert_stops(facts([other], tags=('v5.2.0', 'v5.3.0', 'v5.4.0')))
-                self.assertIn('not the latest release tag', message)
-                self.assertNotIn('re-run all its jobs', message)
 
     def test_a_prerelease_version_stops(self):
         self.assert_stops(facts(version='5.3.0-rc.1'), 'X.Y.Z')

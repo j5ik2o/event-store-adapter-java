@@ -254,7 +254,8 @@ class ReleaseWorkflowRunTest(unittest.TestCase):
         for old, new in (("if: steps.precheck.outputs.action == 'upload'\n        env:\n          RELEASE_TAG",
                           "if: success()\n        env:\n          RELEASE_TAG"),
                          ('${{ github.ref_name }}', '${{ github.event.ref }}'),
-                         ('uses: actions/setup-python@v7', 'uses: some/action@v1')):
+                         ('uses: actions/setup-python@v7', 'uses: some/action@v1'),
+                         ('SIGNING_KEY: ${{ secrets.SIGNING_KEY }}', "SIGNING_KEY: ${{ format('{0}', secrets.SIGNING_KEY) }}")):
             with self.subTest(new):
                 with self.assertRaises(UnknownExpression):
                     self.run_release(workspace, tag, workflow=RELEASE.replace(old, new, 1))
