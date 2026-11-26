@@ -122,10 +122,20 @@ def timestamp(text):
 
 def remote_tags(remote):
     """リモートのタグを読む（`git ls-remote --tags`）。読むたびに取り直す（待つあいだに新しいタグができうる）。"""
-    result = subprocess.run(['git', 'ls-remote', '--tags', remote], capture_output=True, text=True)
+    try:
+        result = subprocess.run(['git', 'ls-remote', '--tags', remote], capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired as error:
+        raise Stop(f'listing the tags of {remote} timed out; re-run the job') from error
     if result.returncode != 0:
         raise Stop(f'could not list the tags of {remote}: {result.stderr.strip()}; re-run the job')
     return result.stdout
+
+
+def run_attempts(item):
+    value = item.get('run_attempt')
+    if not isinstance(value, int) or value < 1:
+        raise Stop(f'GitHub returned no run_attempt for run {item.get("id")}; re-run the job')
+    return value
 
 
 def gather(version, remote, github, now):
@@ -134,7 +144,7 @@ def gather(version, remote, github, now):
     for item in raw_runs:
         run = rules.Run(id=int(item['id']), created_at=timestamp(item['created_at']),
                         head_branch=item.get('head_branch'), event=item.get('event', ''),
-                        attempts=int(item.get('run_attempt') or 1))
+                        attempts=run_attempts(item))
         if rules.counted(run, now):
             _, jobs = github.pages(f'actions/runs/{run.id}/jobs?filter=all', 'jobs')
             _, artifacts = github.pages(f'actions/runs/{run.id}/artifacts', 'artifacts')
@@ -153,7 +163,10 @@ def gather(version, remote, github, now):
                 attempts=run.attempts,
             )
         runs.append(run)
-    tags = tuple(gate.stable_tags(gate.remote_tags(remote_tags(remote))).keys())
+    try:
+        tags = tuple(gate.stable_tags(gate.remote_tags(remote_tags(remote))).keys())
+    except ValueError as error:
+        raise Stop(f'could not read the tags of {remote}: {error}; re-run the job') from error
     return rules.Facts(
         version=version, current_run=int(os.environ.get('GITHUB_RUN_ID', '0')),
         current_attempt=int(os.environ.get('GITHUB_RUN_ATTEMPT', '1')), now=now, total_runs=total, runs=tuple(runs),

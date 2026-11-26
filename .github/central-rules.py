@@ -240,9 +240,10 @@ def attempt_records(facts):
                            'keep the artifact retention at 90 days')
             artifacts[attempt] = deployment
         jobs = executions(run.jobs)
-        # release ジョブが一覧に無い run（startup_failure など）は、どの試みもアップロードしたかもしれないと見る。
-        # 止まったあと、変数に試みの行を足せば先へ進める（下の 3 の規則と同じ道）
-        uploaded = {attempt: True for attempt in range(1, run.attempts + 1)} if not jobs else {}
+        # release ジョブが一覧に無い試み（run 全体の startup_failure、一覧の欠け）は、アップロードしたかもしれないと見る。
+        # 写しも一覧には入るので、写しを捨てる前の集合で数える。止まったら、変数に試みの行を足せば先へ進める
+        listed = {job.run_attempt for job in run.jobs if job.name == RELEASE_JOB}
+        uploaded = {attempt: True for attempt in range(1, run.attempts + 1) if attempt not in listed}
         for job in jobs:
             if run.id == facts.current_run and job.run_attempt == facts.current_attempt:
                 continue
@@ -296,15 +297,18 @@ def decide(facts):
     pushed = {run.head_branch for run in facts.runs if run.event == 'push'}
     for tag in sorted(facts.remote_tags):
         if gate.parse(tag[1:]) > boundary and tag not in pushed and tag not in overrides.checked_tags:
-            raise Stop(f'tag {tag} has no Release run; check in the Portal that no deployment of {tag[1:]} is in '
-                       f'progress, then add tag/{tag}=checked to CENTRAL_DEPLOYMENTS')
-    # 3. 始まったのに ID の記録が無い実行
-    for (run_id, attempt), record in sorted(records.items()):
-        if record['uploaded'] and record['artifact'] is None and record['override'] is None:
-            raise Stop(f'run {run_id} attempt {attempt} may have uploaded a bundle but left no deployment ID; '
-                       f'find the ID in its job summary or in the Portal (deployment '
-                       f'{deployment_name(record["version"], run_id, attempt)}) and add '
-                       f'{run_id}/{attempt}=<deployment ID|none> to CENTRAL_DEPLOYMENTS')
+            raise Stop(f'tag {tag} has no Release run; if the tag was pushed a moment ago, re-run the job in a '
+                       f'minute. Otherwise check in the Portal that no deployment of {tag[1:]} is in progress, '
+                       f'then add tag/{tag}=checked to CENTRAL_DEPLOYMENTS')
+    # 3. 始まったのに ID の記録が無い実行（足りない行をまとめて出す）
+    missing = [(run_id, attempt, record) for (run_id, attempt), record in sorted(records.items())
+               if record['uploaded'] and record['artifact'] is None and record['override'] is None]
+    if missing:
+        lines = '; '.join(f'{run_id}/{attempt}=<deployment ID|none> (deployment '
+                          f'{deployment_name(record["version"], run_id, attempt)})' for run_id, attempt, record in missing)
+        raise Stop(f'{len(missing)} release attempt(s) may have uploaded a bundle but left no deployment ID; '
+                   f'find each ID in the job summary of the attempt or in the Portal and add these lines to '
+                   f'CENTRAL_DEPLOYMENTS: {lines}')
     # 4. 照会（Portal、repo1）
     known = []   # (版, ID, Status)
     for (run_id, attempt), record in sorted(records.items()):

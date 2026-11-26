@@ -152,7 +152,8 @@ class DecideTest(unittest.TestCase):
         self.assertEqual(self.decide(facts([other])).action, 'upload')
 
     def test_tags_without_a_release_run(self):
-        self.assert_stops(facts(tags=('v5.2.0', 'v5.2.1', 'v5.3.0')), 'tag/v5.2.1=checked')
+        message = self.assert_stops(facts(tags=('v5.2.0', 'v5.2.1', 'v5.3.0')), 'tag/v5.2.1=checked')
+        self.assertIn('pushed a moment ago', message)
         value = facts(tags=('v5.2.0', 'v5.2.1', 'v5.3.0'), overrides='tag/v5.2.1=checked')
         self.assertEqual(self.decide(value).action, 'upload')
         own = facts([run(tag='v5.3.0', jobs=[release_job(1, upload='skipped')])])
@@ -180,6 +181,19 @@ class DecideTest(unittest.TestCase):
         self.assert_stops(facts([twice], overrides=f'{RUN}/1=none'), f'{RUN}/2=<deployment ID|none>')
         self.assertEqual(self.decide(facts([twice], overrides=f'{RUN}/1=none\n{RUN}/2=none')).action, 'upload')
         self.assertEqual(self.decide(facts([run(run_id=RUN, jobs=[])], current_run=RUN)).action, 'upload')
+
+    def test_an_attempt_missing_from_the_job_list_counts(self):
+        # 試み 1 はランナーに渡る前に取り消され、試み 2 の release ジョブは一覧に無い（設計の部分レビュー F1）
+        cancelled = release_job(1, step_pairs=(), runner_name='')
+        self.assert_stops(facts([run(jobs=[cancelled], attempts=2)]), f'{RUN}/2=<deployment ID|none>')
+        value = facts([run(jobs=[cancelled], attempts=2)], overrides=f'{RUN}/2=none')
+        self.assertEqual(self.decide(value).action, 'upload')
+
+    def test_every_missing_line_is_named_at_once(self):
+        message = self.assert_stops(facts([run(jobs=[], attempts=3)]))
+        for attempt in (1, 2, 3):
+            self.assertIn(f'{RUN}/{attempt}=<deployment ID|none>', message)
+        self.assertIn('3 release attempt(s)', message)
 
     def test_queries_that_fail_stop(self):
         recorded = run(jobs=[release_job(1)], artifacts=[record(1, ID_A)])
@@ -335,6 +349,15 @@ class StubbedCommandsTest(unittest.TestCase):
         self.assertIn(f'{RUN}/1=<deployment ID|none>', result.stderr)
         self.assertEqual(outputs(self.output), {})
         self.assertFalse([path for path in self.stub.paths() if path.startswith('/api/')])
+
+    def test_precheck_stops_on_a_run_without_run_attempt(self):
+        self.github_run([self.job_json(1, 'skipped')], [])
+        listing = self.stub.routes[('GET', '/repos/o/r/actions/workflows/release.yml/runs')](None)[1]
+        del listing['workflow_runs'][0]['run_attempt']
+        self.stub.routes[('GET', '/repos/o/r/actions/workflows/release.yml/runs')] = lambda request: (200, listing)
+        result = self.precheck()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('no run_attempt', result.stderr)
 
     def test_precheck_stops_when_github_fails(self):
         result = self.precheck()

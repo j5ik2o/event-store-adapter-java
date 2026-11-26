@@ -107,7 +107,7 @@ module release_path {
     visibleAt: int -> int,      // 版 → 公開先（repo1 など）が返し始める時刻
     delayOf: int -> int,        // 版 → PUBLISHED から公開先が返し始めるまでの遅れ（I9 で使う）
     duplicateAttempts: int,     // 処理中・公開済みの版を、もう一度出そうとした回数
-    confirm: int -> { status: ConfirmStatus, attempts: int, statusAttempts: int, whileProcessing: bool },
+    confirm: int -> { status: ConfirmStatus, attempts: int, statusAttempts: int, whileProcessing: bool, lastPoll: int },
     // attempts：PUBLISHED のあとの反映の確認の回数。statusAttempts：deployment の状態の確認の回数（別の上限）
     releases: Set[int],         // GitHub のリリース
     clock: int,
@@ -252,7 +252,7 @@ module release_path {
     val r = { ...r0, uploadsWhileUnknown: r0.uploadsWhileUnknown + (if (r0.unknown.keys().size() > 0) 1 else 0) }
     if (inFlightOrDone(r, v)) { ...r, duplicateAttempts: r.duplicateAttempts + 1 }
     else {
-      val started = { ...r, confirm: r.confirm.put(v, { status: Waiting, attempts: 0, statusAttempts: 0, whileProcessing: false }) }
+      val started = { ...r, confirm: r.confirm.put(v, { status: Waiting, attempts: 0, statusAttempts: 0, whileProcessing: false, lastPoll: -1 }) }
       if (ASYNC_PORTAL) { ...started, deploy: started.deploy.put(v, Processing) }
       else becomePublished(started, v, delay)
     }
@@ -458,7 +458,7 @@ module release_path {
         else if (st.attempts + 1 >= CONFIRM_ATTEMPTS)
           { ...st, status: TimedOut, attempts: st.attempts + 1, whileProcessing: false }
         else { ...st, attempts: st.attempts + 1 }
-      s' = { ...s, clock: now, confirm: s.confirm.put(v, polled) },
+      s' = { ...s, clock: now, confirm: s.confirm.put(v, { ...polled, lastPoll: now }) },
     },
   }
 
@@ -467,7 +467,7 @@ module release_path {
     not(RERUN_WHOLE_PUBLISH),
     s.confirm.keys().contains(v),
     s.confirm.get(v).status == TimedOut,
-    s' = { ...s, confirm: s.confirm.put(v, { status: Waiting, attempts: 0, statusAttempts: 0, whileProcessing: false }) },
+    s' = { ...s, confirm: s.confirm.put(v, { status: Waiting, attempts: 0, statusAttempts: 0, whileProcessing: false, lastPoll: -1 }) },
   }
 
   //     誤った回復：公開のジョブを丸ごと再実行する（事前の確認は、まだ返らない版を「無い」と見る）
@@ -477,7 +477,7 @@ module release_path {
     s.confirm.keys().contains(v),
     s.confirm.get(v).status == TimedOut,
     nondet d = 0.to(MAX_DELAY).oneOf()
-    val r = { ...s, confirm: s.confirm.put(v, { status: Waiting, attempts: 0, statusAttempts: 0, whileProcessing: false }) }
+    val r = { ...s, confirm: s.confirm.put(v, { status: Waiting, attempts: 0, statusAttempts: 0, whileProcessing: false, lastPoll: -1 }) }
     if (publishGate(s, v)) s' = submit(r, v, d) else s' = r,
   }
 
@@ -497,7 +497,7 @@ module release_path {
            recorded: if (s.unknown.get(v)) s.recorded.union(Set(v)) else s.recorded,
            // ID が入ったので、Portal に届いていた試みは確認を始められる
            confirm: if (s.unknown.get(v) and not(s.confirm.keys().contains(v)))
-                      s.confirm.put(v, { status: Waiting, attempts: 0, statusAttempts: 0, whileProcessing: false })
+                      s.confirm.put(v, { status: Waiting, attempts: 0, statusAttempts: 0, whileProcessing: false, lastPoll: -1 })
                     else s.confirm },
   }
 
@@ -640,10 +640,13 @@ module release_path {
 
   // I9. 公開済み（PUBLISHED）の版の確認が時間切れになるのは、反映の遅れが待ちの上限を超えたときだけ（js#1161）。
   //     処理中のままの時間切れは、確認だけを再実行して待つ
-  //     （#862 の CodeRabbit の指摘で、上限どうしの比較から、その deployment の実際の遅れとの比較に強めた）
+  //     （#862 の CodeRabbit の指摘で強めた）反映の確認が時間切れなら、最後の確認の時刻（lastPoll）には、公開先はまだ返していない。
+  //     最後の確認と同時に返し始めた deployment を時間切れにすれば破れる。加えて、その遅れは確認の上限以上
   val timeoutOnlyBeyondBudget: bool =
     s.confirm.keys().forall(v => (s.confirm.get(v).status == TimedOut and not(s.confirm.get(v).whileProcessing))
-                                   implies (s.delayOf.keys().contains(v) and s.delayOf.get(v) >= CONFIRM_ATTEMPTS))
+                                   implies (s.visibleAt.keys().contains(v)
+                                            and s.visibleAt.get(v) > s.confirm.get(v).lastPoll
+                                            and s.delayOf.get(v) >= CONFIRM_ATTEMPTS))
 
   // I10（A2）. FAILED を読んだ確認は、リリースを作らせない
   val noReleaseForFailed: bool =
@@ -967,8 +970,10 @@ module noneSkipsQuery {
   ).*
 }
 
-// 事前の確認が「最新のタグか」を確かめない場合（待ちのあとにタグを読み直さない実装は、待つあいだに付いたタグについてこれと同じ）。
-// FAILED の版の再実行が、あとの版の PUBLISHED のあとに出る（I2 が破れる見込み。#862 の Devin の指摘の再現）
+// 事前の確認が「最新のタグか」を確かめない場合。FAILED の版の再実行が、あとの版の PUBLISHED のあとに出る（I2 が破れる見込み）。
+// モデルの関門は、判定とアップロードを1つの動作で行い、決めるときのタグを読む（待ちは「関門で落ちて再実行」で表す）。
+// このインスタンスが示すのは、最新のタグの確かめが要ること。待ちのあとにタグを読み直すことは、
+// .github/tests/test_central_portal.py の test_precheck_rereads_the_tags_after_waiting で確かめる（#862）
 module noLatestTagCheck {
   import release_path(
     VERSIONS = 1.to(4), INIT_VER = 2, INIT_PRE = true, INIT_TAG = 1, LEGACY = Set(), REQUIRED_PUBLISHED = Set(),

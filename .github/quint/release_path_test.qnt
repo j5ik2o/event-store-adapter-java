@@ -259,3 +259,35 @@ module javaR2bPathsTest {
       .then(portalResolve(2, true))
       .expect(s.published.contains(2) and s.duplicateAttempts == 0 and safety)
 }
+
+// 反映の確認の境界（#862 の CodeRabbit の指摘）：受け付け＝公開の構成で、反映の遅れを決めて流す。確認の上限は 2 回
+module confirmBoundaryTest {
+  import release_path(
+    VERSIONS = 1.to(3), INIT_VER = 1, INIT_PRE = false, INIT_TAG = 1, LEGACY = Set(), REQUIRED_PUBLISHED = Set(),
+    TAG_IS_PUBLISH = false, ASYNC_PORTAL = false, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
+    LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 2, MAX_DELAY = 3,
+    NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
+    RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 6
+  ).* from "./release_path"
+
+  action published2(delay: int): bool =
+    init.then(openReleasePR(2)).then(mergePR(0, 0)).then(tagJob(2)).then(publishJobAt(2, false, 0, delay))
+
+  // 最後（2 回目）の確認と同時に返し始める：確認できる（時間切れにしない）
+  run visibleAtTheLastPollTest =
+    published2(2)
+      .then(confirmPoll(2))
+      .then(confirmPoll(2))
+      .expect(s.confirm.get(2).status == Confirmed and timeoutOnlyBeyondBudget and safety)
+
+  // 最後の確認のあとで返し始める：時間切れ。確認だけを再実行すれば確認できる（公開はしない）
+  run visibleAfterTheLastPollTest =
+    published2(3)
+      .then(confirmPoll(2))
+      .then(confirmPoll(2))
+      .expect(s.confirm.get(2).status == TimedOut and timeoutOnlyBeyondBudget and safety)
+      .then(rerunConfirm(2))
+      .then(confirmPoll(2))
+      .expect(s.confirm.get(2).status == Confirmed and s.duplicateAttempts == 0 and safety)
+}

@@ -20,7 +20,7 @@ NEGATIVE_ALL=(kotlinNoRequired:legacyBeforeNewer goManualTags:publishedOnlyFromR
 POSITIVE_CI=(javaR2b javaR2bReleasesOnly)
 NEGATIVE_CI=(stepRecordDropped:noDuplicatePublish unknownIgnored:noDuplicatePublish noneSkipsQuery:noDuplicatePublish
   noLatestTagCheck:publishedMonotonic)
-TESTS=(javaPathsTest kotlinPathsTest javaR2aOnlyTest javaR2bPathsTest)
+TESTS=(javaPathsTest kotlinPathsTest javaR2aOnlyTest javaR2bPathsTest confirmBoundaryTest)
 
 if [[ "$mode" == ci ]]; then
   samples=500

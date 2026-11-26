@@ -36,6 +36,7 @@ class Attempt:
     record: object        # artifact の ID（POOL の1つ）か None
     override: object      # None、'none'、ID
     malformed_record: bool
+    missing: bool = False  # この試みの release ジョブが jobs の一覧に無い
 
 
 @dataclass(frozen=True)
@@ -91,10 +92,13 @@ def render(scenario, current):
         jobs, artifacts, previous = [], [], None
         created = NOW - timedelta(days=plan.age)
         for attempt in plan.attempts:
-            job = render_job(attempt, previous)
-            previous = job
-            if not plan.no_release_job:
-                jobs.append(job)
+            if attempt.missing:
+                pass
+            else:
+                job = render_job(attempt, previous)
+                previous = job
+                if not plan.no_release_job:
+                    jobs.append(job)
             if attempt.record is not None:
                 expires = None if plan.expiry == 'expired' else created + timedelta(
                     days=90 if plan.expiry == 'ok' else 30)
@@ -161,7 +165,7 @@ def expected_action(scenario, current):
         return 'stop', None
     # 3. 届いたかもしれない実行に記録が無い（写しは数えない。release ジョブの無い run は、どの試みも届いたかもしれない）
     for plan, attempt in own:
-        reached = plan.no_release_job or (not attempt.copy and KINDS[attempt.kind])
+        reached = plan.no_release_job or attempt.missing or (not attempt.copy and KINDS[attempt.kind])
         if reached and attempt.record is None and attempt.override is None:
             return 'stop', None
     # 4. 照会
@@ -195,7 +199,7 @@ def expected_action(scenario, current):
 
 
 def attempts_strategy():
-    def build(kinds, copies, records, overrides, malformed):
+    def build(kinds, copies, records, overrides, malformed, missing):
         result, used = [], set()
         for index, kind in enumerate(kinds):
             number = index + 1
@@ -203,8 +207,10 @@ def attempts_strategy():
             if record in used:
                 record = None
             used.add(record)
-            result.append(Attempt(number, kind, copies[index] and index > 0, record, overrides[index],
-                                  malformed[index]))
+            # 写しは、前に一覧に出た試みがあるときだけ（写しの元が無ければ、ふつうの試み）
+            copy = copies[index] and any(not attempt.missing for attempt in result)
+            result.append(Attempt(number, kind, copy and not missing[index], record, overrides[index],
+                                  malformed[index], missing[index]))
         return tuple(result)
 
     size = st.integers(1, 3)
@@ -215,6 +221,7 @@ def attempts_strategy():
         st.lists(st.one_of(st.none(), st.sampled_from(POOL)), min_size=n, max_size=n),
         st.lists(st.one_of(st.none(), st.just('none'), st.sampled_from(POOL)), min_size=n, max_size=n),
         st.lists(st.sampled_from((False,) * 9 + (True,)), min_size=n, max_size=n),
+        st.lists(st.sampled_from((False,) * 5 + (True,)), min_size=n, max_size=n),
     ))
 
 
