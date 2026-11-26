@@ -216,10 +216,13 @@ class DecideTest(unittest.TestCase):
                                runner_id=None, runner_name='', steps=(), conclusion='cancelled')
         newer = run(run_id=RUN + 1, tag='v5.4.0', jobs=[cancelled])
         older = run(run_id=RUN + 2, tag='v5.2.1', jobs=[cancelled])
-        self.assert_stops(facts([newer, older], tags=('v5.2.0', 'v5.2.1', 'v5.3.0', 'v5.4.0')),
-                          f'run {RUN + 1} was cancelled before it started: re-run all its jobs')
-        message = self.assert_stops(facts([newer, older], tags=('v5.2.0', 'v5.2.1', 'v5.3.0', 'v5.4.0')))
+        # 途中の版（v5.3.1）の取り消された run は、再実行しても最新のタグでないので止まる。挙げない（#864 の Bugbot の指摘）
+        between = run(run_id=RUN + 3, tag='v5.3.1', jobs=[cancelled])
+        tags = ('v5.2.0', 'v5.2.1', 'v5.3.0', 'v5.3.1', 'v5.4.0')
+        message = self.assert_stops(facts([newer, older, between], tags=tags),
+                                    f'run {RUN + 1} was cancelled before it started: re-run all its jobs')
         self.assertNotIn(f'run {RUN + 2}', message)
+        self.assertNotIn(f'run {RUN + 3}', message)
         # 待っている（まだ取り消されていない）run や、動いた run は案内しない
         waiting = run(run_id=RUN + 1, tag='v5.4.0', jobs=[replace(cancelled, conclusion=None)])
         ran = run(run_id=RUN + 1, tag='v5.4.0', jobs=[release_job(1, upload='skipped')])

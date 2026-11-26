@@ -41,6 +41,14 @@ SKIP_WORDS = ('always()', 'failure()', 'cancelled()', 'continue-on-error', 'git 
               'git reset', 'ref:', '|| true', 'exit 0', 'shell:', 'defaults:', 'BASH_ENV', 'ENV:', 'working-directory')
 
 
+def tag_push_allowed(bump, release):
+    """PUSH_RELEASE_TAG が1つだけあり、'false' か、'true' で release.yml が正本と同じか。止める向きは常に許す。"""
+    settings = re.findall(r'PUSH_RELEASE_TAG: [^\n]*', bump + release)
+    if len(settings) != 1 or settings[0] not in ("PUSH_RELEASE_TAG: 'false'", "PUSH_RELEASE_TAG: 'true'"):
+        return False
+    return settings[0] == "PUSH_RELEASE_TAG: 'false'" or release_has_gate(release)
+
+
 def replace_once(text, old, new):
     assert text.count(old) == 1, old
     return text.replace(old, new)
@@ -225,16 +233,30 @@ class BumpWorkflowShapeTest(unittest.TestCase):
         self.assertIn('        type: boolean\n        default: false\n', BUMP[BUMP.index('      rehearsal:'):])
 
     def test_tag_push_is_on_only_while_the_release_workflow_is_the_canonical_one(self):
-        settings = re.findall(r'PUSH_RELEASE_TAG: [^\n]*', BUMP + RELEASE)
-        self.assertEqual(len(settings), 1, settings)
+        self.assertTrue(tag_push_allowed(BUMP, RELEASE))
         self.assertIn("\nenv:\n  PUSH_RELEASE_TAG: ", BUMP)
-        if not release_has_gate(RELEASE):
-            self.assertEqual(settings, ["PUSH_RELEASE_TAG: 'false'"])
-        self.assertEqual(settings, ["PUSH_RELEASE_TAG: 'true'"])
         self.assertIn("if: steps.trigger.outputs.tag != '' && env.PUSH_RELEASE_TAG == 'true'",
                       step(BUMP, 'release_tag'))
         self.assertIn("if: steps.trigger.outputs.tag != '' && env.PUSH_RELEASE_TAG != 'true'",
                       step(BUMP, 'tag_summary'))
+
+    def test_turning_tag_push_off_is_always_allowed(self):
+        # 公開を止める1行の PR（'false'）は、release.yml の形に関わらず通る。'true' は正本のときだけ
+        def setting(value):
+            text = re.sub(r"\n  PUSH_RELEASE_TAG: [^\n]*\n", f"\n  PUSH_RELEASE_TAG: {value}\n", BUMP)
+            self.assertEqual(text.count(f'PUSH_RELEASE_TAG: {value}\n'), 1)
+            return text
+        on, off = setting("'true'"), setting("'false'")
+        changed = RELEASE.replace('name: Release\n', 'name: Release\n# changed\n', 1)
+        self.assertTrue(tag_push_allowed(on, RELEASE))
+        self.assertTrue(tag_push_allowed(off, RELEASE))
+        self.assertTrue(tag_push_allowed(off, changed))
+        self.assertFalse(tag_push_allowed(on, changed))
+        for value in ("'TRUE'", 'true', "'yes'", "''"):
+            with self.subTest(value):
+                self.assertFalse(tag_push_allowed(setting(value), RELEASE))
+        self.assertFalse(tag_push_allowed(off + "\n  PUSH_RELEASE_TAG: 'false'\n", RELEASE))
+        self.assertFalse(tag_push_allowed(BUMP, RELEASE + "      PUSH_RELEASE_TAG: 'false'\n"))
 
     def test_the_bump_no_longer_refuses_to_run(self):
         self.assertNotIn('id: release_path', BUMP)

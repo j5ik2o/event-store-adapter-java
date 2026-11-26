@@ -255,7 +255,7 @@ jobs:
             echo "## Release tag not pushed"
             echo
             echo "The release gate passed. The tag job would push \`${RELEASE_TAG}\` on \`${RELEASE_SHA}\`."
-            echo "Tag pushing is off (\`PUSH_RELEASE_TAG\` is \`'false'\`) until the Release workflow checks the release gate, so nothing is published."
+            echo "Tag pushing is off (\`PUSH_RELEASE_TAG\` is \`'false'\` in \`bump-version.yml\`), so nothing is published."
           } >> "$GITHUB_STEP_SUMMARY"
           echo "::notice::release gate passed; ${RELEASE_TAG} on ${RELEASE_SHA} is not pushed (PUSH_RELEASE_TAG is 'false')"
       - name: Push the release tag
