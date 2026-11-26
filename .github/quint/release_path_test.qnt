@@ -10,7 +10,7 @@ module javaPathsTest {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 6, CONFIRM_ATTEMPTS = 2, MAX_DELAY = 0,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 6
   ).* from "./release_path"
 
@@ -110,6 +110,27 @@ module javaPathsTest {
       .then(rerunPublishJob(3))
       .then(publishJob(3, false))
       .expect(deployOf(s, 3) == Processing and safety)
+
+  // #863：版 2 のタグのジョブの再実行が、あとから着いて、待っている版 3（main の先頭）のタグのジョブを置き換える
+  // → 版 3 はタグが無いまま → 取り消された run を再実行する → 版 2、版 3 の順に出る
+  run rerunReplacesHeadTagTest =
+    mergedRelease(6)
+      .then(5.reps(_ => tagJob(2)))
+      .expect(s.tagFailed.contains(2))
+      .then(openReleasePR(3))
+      .then(mergePR(1, 0))
+      .then(rerunTagJob(2))
+      .then(cancelPendingTag(3))
+      .expect(s.tagSkipped.contains(3) and s.head == 3 and wHeadTagSkipped and safety)
+      .then(tagJob(2))
+      .then(publishJob(2, false))
+      .then(portalResolve(2, true))
+      .expect(not(s.tags.keys().contains(3)) and safety)
+      .then(rerunCancelledTag(3))
+      .then(tagJob(3))
+      .then(publishJob(3, false))
+      .then(portalResolve(3, true))
+      .expect(s.publishOrder == [2, 3] and s.duplicateAttempts == 0 and safety)
 }
 
 // kotlin：v5.2.0（版 1）は Central に無い。関門の設定「公開先に必要な版：5.2.0」
@@ -119,7 +140,7 @@ module kotlinPathsTest {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 2, MAX_DELAY = 0,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 6
   ).* from "./release_path"
 
@@ -156,7 +177,7 @@ module javaR2aOnlyTest {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 2, MAX_DELAY = 0,
     NEW_PATH = true, TAG_PUSH_ENABLED = false, OLD_PUBLISH = true, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 6
   ).* from "./release_path"
 
@@ -176,7 +197,7 @@ module javaR2bPathsTest {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 2, MAX_DELAY = 0,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
+    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 6
   ).* from "./release_path"
 
@@ -258,6 +279,25 @@ module javaR2bPathsTest {
       .then(publishJobAt(2, false, 0, 0))
       .then(portalResolve(2, true))
       .expect(s.published.contains(2) and s.duplicateAttempts == 0 and safety)
+
+  // #863：版 2 が FAILED → 版 3 のタグの公開のジョブが待っているところに、版 2 の再実行があとから着いて置き換える
+  // → 版 2 の再実行は「最新のタグでない」で止まる（公開しない）→ 版 3 の取り消された run を再実行する → 版 3 が出る
+  run rerunReplacesLatestTest =
+    tagged2
+      .then(publishJobAt(2, false, 0, 0))
+      .then(portalResolve(2, false))
+      .then(openReleasePR(3))
+      .then(mergePR(1, 0))
+      .then(tagJob(3))
+      .then(rerunPublishJob(2))
+      .then(cancelPendingPublish(3))
+      .expect(s.publishSkipped.contains(3) and s.publishPending == Set(2) and wNewerSkipped and safety)
+      .then(publishJobAt(2, false, 0, 0))
+      .expect(s.publishFailed.contains(2) and deployOf(s, 2) == Failed and safety)
+      .then(rerunCancelledPublish(3))
+      .then(publishJobAt(3, false, 0, 0))
+      .then(portalResolve(3, true))
+      .expect(s.publishOrder == [3] and s.duplicateAttempts == 0 and safety)
 }
 
 // 反映の確認の境界（#862 の CodeRabbit の指摘）：受け付け＝公開の構成で、反映の遅れを決めて流す。確認の上限は 2 回
@@ -267,7 +307,7 @@ module confirmBoundaryTest {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = false, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 2, MAX_DELAY = 3,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
+    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 6
   ).* from "./release_path"
 
@@ -290,4 +330,42 @@ module confirmBoundaryTest {
       .then(rerunConfirm(2))
       .then(confirmPoll(2))
       .expect(s.confirm.get(2).status == Confirmed and s.duplicateAttempts == 0 and safety)
+}
+
+// #863（設計の部分レビュー F2）：タグのジョブが置き換えられたあと、版を変えない PR がマージされても（先頭でなくなっても）、
+// 取り消された run を再実行すればタグが付く。関門は main の先頭であることを求めない
+module tagRecoveryTest {
+  import release_path(
+    VERSIONS = 1.to(3), INIT_VER = 2, INIT_PRE = true, INIT_TAG = 1, LEGACY = Set(), REQUIRED_PUBLISHED = Set(),
+    TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = true,
+    LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 6, CONFIRM_ATTEMPTS = 2, MAX_DELAY = 0,
+    NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
+    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true,
+    RERUN_CANCELLED = true, RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 7
+  ).* from "./release_path"
+
+  // 版 2 のタグのジョブが空振りで失敗 → 版 3 をマージ → 版 2 の再実行が版 3 のタグのジョブを置き換える →
+  // 版を変えない PR（Renovate など）をマージ（版 3 のコミットは先頭でなくなる）→ 版 2 が出る →
+  // 版 3 の取り消された run を再実行 → タグが付き、版 3 が出る
+  run skippedBelowHeadTest =
+    init
+      .then(openReleasePR(2))
+      .then(mergePR(0, 6))
+      .then(5.reps(_ => tagJob(2)))
+      .then(openReleasePR(3))
+      .then(mergePR(1, 0))
+      .then(rerunTagJob(2))
+      .then(cancelPendingTag(3))
+      .then(openOtherPR(3, false, false, true, false))
+      .then(mergePR(2, 0))
+      .expect(s.head == 4 and s.tagSkipped.contains(3) and wSkippedBelowHead and s.tagPending == Set(2) and safety)
+      .then(tagJob(2))
+      .then(publishJobAt(2, false, 0, 0))
+      .then(portalResolve(2, true))
+      .then(rerunCancelledTag(3))
+      .then(tagJob(3))
+      .expect(s.tags.get(3) == 3 and safety)
+      .then(publishJobAt(3, false, 0, 0))
+      .then(portalResolve(3, true))
+      .expect(s.publishOrder == [2, 3] and s.duplicateAttempts == 0 and safety)
 }
