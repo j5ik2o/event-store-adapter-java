@@ -49,6 +49,7 @@ class Candidate:
     tags: dict
     on_main: bool
     required: Optional[Required] = None
+    parents: int = 1
 
 
 def parse(version, release_only=True):
@@ -121,6 +122,9 @@ def approved_release(candidate, before, after, same_newline):
         raise GateError(f'{after} is not a release version (X.Y.Z)')
     if not candidate.on_main:
         raise GateError(f'{candidate.sha} is not reachable from main')
+    if candidate.parents != 1:
+        # merge_commit_sha は通常のマージでも PR に結び付くので、リポジトリのマージ方式の設定に頼らずここで落とす
+        raise GateError(f'{candidate.sha} has {candidate.parents} parents; only a squash merge is released')
     if list(candidate.changed_files) != [VERSION_FILE]:
         raise GateError(f'the commit must change only {VERSION_FILE}, but changes {list(candidate.changed_files)}')
     if not same_newline:
@@ -208,7 +212,7 @@ def check(args):
         parent=read_version_file(args.parent_version), current=read_version_file(args.version_file),
         changed_files=tuple(line for line in read(args.changed_files).splitlines() if line),
         pulls=tuple(json.loads(read(args.pulls))), tags=remote_tags(read(args.remote_tags)),
-        on_main=args.on_main == 'true', required=required,
+        on_main=args.on_main == 'true', required=required, parents=int(read(args.parents)),
     )
     return check_candidate(args.mode, candidate, args.tag)
 
@@ -230,7 +234,8 @@ def main(argv):
     gate = commands.add_parser('check')
     gate.add_argument('--mode', choices=('tag', 'publish'), required=True)
     gate.add_argument('--tag')
-    for name in ('repository', 'sha', 'parent-version', 'version-file', 'changed-files', 'pulls', 'remote-tags'):
+    for name in ('repository', 'sha', 'parents', 'parent-version', 'version-file', 'changed-files', 'pulls',
+                 'remote-tags'):
         gate.add_argument('--' + name, required=True)
     gate.add_argument('--on-main', choices=('true', 'false'), required=True)
     gate.add_argument('--required-version')

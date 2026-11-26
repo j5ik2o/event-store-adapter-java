@@ -249,6 +249,7 @@ jobs:
           bash "${GITHUB_WORKSPACE}"/.github/release-gate-inputs.sh "$RELEASE_SHA" "$GATE"
           TAG=$(python3 "${GITHUB_WORKSPACE}"/.github/release-gate.py check --mode tag \
             --repository "$GITHUB_REPOSITORY" --sha "$RELEASE_SHA" --on-main "$(cat "${GATE}/on-main")" \
+            --parents "${GATE}/parents" \
             --parent-version "${GATE}/parent-version" --version-file "${GATE}/version" \
             --changed-files "${GATE}/changed-files" --pulls "${GATE}/pulls.json" \
             --remote-tags "${GATE}/remote-tags")

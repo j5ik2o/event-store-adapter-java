@@ -209,6 +209,18 @@ class ReleaseRehearsalTest(unittest.TestCase):
         self.assertIn('is not the squash merge', result.stderr)
         self.assertEqual(out, {})
 
+    def test_merge_commit_of_the_version_branch_is_not_tagged(self):
+        self.open_version_branch()
+        merged = self.clone()
+        self.git(merged, 'merge', '--no-ff', '-m', 'Merge release/v5.3.0', 'origin/release/v5.3.0')
+        self.git(merged, 'push', 'origin', 'main')
+        sha = self.git(merged, 'rev-parse', 'HEAD')
+        self.pulls.write_text(json.dumps([pull(sha)]))
+        result, out = self.trigger(sha)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('has 2 parents', result.stderr)
+        self.assertEqual(out, {})
+
     def test_version_changed_with_code_is_not_tagged(self):
         work = self.clone()
         self.git(work, 'switch', '-c', 'release/v5.3.0')

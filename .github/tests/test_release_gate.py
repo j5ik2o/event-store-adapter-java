@@ -16,12 +16,12 @@ class ReleaseGateTest(unittest.TestCase):
     TARGET = '5.3.0\n'
 
     def check(self, mode='tag', parent=PARENT, current=TARGET, changed=(VERSION_FILE,), pulls=None,
-              tags=None, on_main=True, tag=None, required=None):
+              tags=None, on_main=True, tag=None, required=None, parents=1):
         candidate = gate.Candidate(
             repository=REPOSITORY, sha=self.SHA, parent=parent, current=current,
             changed_files=tuple(changed), pulls=tuple([pull(self.SHA)] if pulls is None else pulls),
             tags={'v5.1.0': 'b' * 40, 'v5.2.0': 'c' * 40} if tags is None else tags, on_main=on_main,
-            required=required,
+            required=required, parents=parents,
         )
         return gate.check_candidate(mode, candidate, tag)
 
@@ -97,6 +97,10 @@ class ReleaseGateTest(unittest.TestCase):
     def test_commit_off_main_fails(self):
         self.assert_rejected('is not reachable from main', on_main=False)
 
+    def test_merge_commit_fails(self):
+        self.assert_rejected('has 2 parents; only a squash merge is released', parents=2)
+        self.assert_rejected('has 2 parents', mode='publish', parents=2, tags={'v5.3.0': self.SHA}, tag='v5.3.0')
+
     def test_existing_tag(self):
         self.assertIsNone(self.check(tags={'v5.2.0': 'c' * 40, 'v5.3.0': self.SHA}))
         self.assert_rejected('already exists on another commit', tags={'v5.3.0': 'e' * 40})
@@ -166,8 +170,9 @@ class ReleaseGateTest(unittest.TestCase):
         (root / 'changed-files').write_text('version\n')
         (root / 'pulls.json').write_text(json.dumps([pull(self.SHA)]))
         (root / 'remote-tags').write_text('c' * 40 + '\trefs/tags/v5.2.0\n')
+        (root / 'parents').write_text('1\n')
         return self.cli('check', '--mode', 'tag', '--repository', REPOSITORY, '--sha', self.SHA,
-                        '--on-main', 'true', '--parent-version', str(root / 'parent-version'),
+                        '--on-main', 'true', '--parents', str(root / 'parents'), '--parent-version', str(root / 'parent-version'),
                         '--version-file', str(root / 'version'), '--changed-files', str(root / 'changed-files'),
                         '--pulls', str(root / 'pulls.json'), '--remote-tags', str(root / 'remote-tags'), *extra)
 

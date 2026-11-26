@@ -93,10 +93,11 @@ def ls_remote(entries):
     return '\n'.join(lines) + '\n'
 
 
-def make_case(parent, current, changed, pulls, entries, on_main, required=None):
+def make_case(parent, current, changed, pulls, entries, on_main, required=None, parents=1):
     candidate = gate.Candidate(
         repository=REPOSITORY, sha=SHA, parent=parent, current=current, changed_files=tuple(changed),
         pulls=tuple(pulls), tags=gate.remote_tags(ls_remote(entries)), on_main=on_main, required=required,
+        parents=parents,
     )
     return Case(candidate, tuple(entries))
 
@@ -116,10 +117,12 @@ def near_valid_cases(draw):
     changed = [VERSION_FILE]
     pulls = [pull(ref=f'release/v{target}')]
     entries = [(f'v{major - 1}.0.0', 'b' * 40, draw(st.booleans())), ('v0.1.0', 'c' * 40, draw(st.booleans()))]
-    on_main, required = True, None
-    for change in draw(st.lists(st.integers(0, 15), max_size=3)):
+    on_main, required, parents = True, None, 1
+    for change in draw(st.lists(st.sampled_from(range(17)), max_size=3)):
         if change == 0:
             on_main = False
+        elif change == 16:
+            parents = draw(st.sampled_from([0, 2, 3]))
         elif change == 1:
             changed = draw(st.permutations([VERSION_FILE, 'build.gradle.kts']))
         elif change == 2:
@@ -154,7 +157,7 @@ def near_valid_cases(draw):
         else:
             current = draw(st.one_of(st.none(), version_file(st.just(target))))
     entries = list({name: (name, sha, annotated) for name, sha, annotated in entries}.values())
-    return make_case(parent, current, changed, pulls, entries, on_main, required)
+    return make_case(parent, current, changed, pulls, entries, on_main, required, parents)
 
 
 @st.composite
@@ -176,7 +179,8 @@ def random_cases(draw):
     tags = draw(st.dictionaries(names, st.tuples(st.sampled_from((SHA,) + OTHER_SHAS), st.booleans()), max_size=4))
     entries = [(name, sha, annotated) for name, (sha, annotated) in tags.items()]
     required = draw(st.one_of(st.none(), st.builds(gate.Required, release_versions, st.booleans())))
-    return make_case(parent, current, changed, pulls, entries, draw(st.booleans()), required)
+    return make_case(parent, current, changed, pulls, entries, draw(st.booleans()), required,
+                     draw(st.sampled_from([1, 1, 2])))
 
 
 def cases():
@@ -212,6 +216,16 @@ EXAMPLES = (
               [('V5.4.0', 'c' * 40, False), ('v05.4.0', 'b' * 40, True), ('v5.2.0', 'b' * 40, False)], True),
     make_case('5.2.1-SNAPSHOT\n', '5.3.0\n', [VERSION_FILE], [pull()], [('v5.3.0', SHA, True)], True),
     make_case('5.2.1-SNAPSHOT\n', '5.3.0\n', [VERSION_FILE], [pull()], [('v5.3.0', 'b' * 40, False)], True),
+    # 崩した1か所だけで拒否される形（P1 が、どの条件を外しても見つけるように）
+    make_case('5.2.1-SNAPSHOT\n', '5.3.0\n', [VERSION_FILE], [pull()], [('v5.3.1', 'b' * 40, True)], True),
+    make_case('5.2.1-SNAPSHOT\n', '5.3.0\n', [VERSION_FILE], [pull()], [], True, parents=2),
+    make_case('5.2.1-SNAPSHOT\n', '5.3.0', [VERSION_FILE], [pull()], [], True),
+    make_case('5.2.1-SNAPSHOT\n', '5.3.0\n', [VERSION_FILE], [pull(repo='someone/r')], [], True),
+    make_case('5.2.1-SNAPSHOT\n', '5.3.0\n', [VERSION_FILE], [pull(repo=None)], [], True),
+    make_case('5.2.1-SNAPSHOT\n', '5.3.0\n', [VERSION_FILE], [pull(), pull()], [], True),
+    make_case('5.2.1-SNAPSHOT\n', '5.3.0\n', [VERSION_FILE, 'build.gradle.kts'], [pull()], [], True),
+    make_case('5.3.1\n', '5.3.0\n', [VERSION_FILE], [pull()], [], True),
+    make_case('5.2.1-SNAPSHOT\n', '5.3.0\n', [VERSION_FILE], [pull()], [], True, gate.Required('5.2.0', False)),
 )
 
 
@@ -236,6 +250,7 @@ class ReleaseGatePropertiesTest(unittest.TestCase):
                 return
             returned.append(result[1])
             self.assertTrue(candidate.on_main)
+            self.assertEqual(candidate.parents, 1)
             self.assertEqual(list(candidate.changed_files), [VERSION_FILE])
             self.assertIsNotNone(candidate.parent)
             self.assertIsNotNone(candidate.current)

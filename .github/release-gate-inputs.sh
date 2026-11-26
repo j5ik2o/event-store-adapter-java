@@ -16,6 +16,8 @@ if git merge-base --is-ancestor "$sha" FETCH_HEAD; then
   on_main=true
 fi
 echo "$on_main" > "${out}/on-main"
+# 親の数。通常のマージ（親が2つ）は関門が拒否する
+git rev-list --parents -n 1 "$sha" | awk '{print NF - 1}' > "${out}/parents"
 if git cat-file -e "${sha}^:version" 2> /dev/null; then
   git cat-file blob "${sha}^:version" > "${out}/parent-version"
 fi
