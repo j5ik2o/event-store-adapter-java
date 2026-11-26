@@ -14,32 +14,56 @@ SECRET_NAME = re.compile(r'\b(?:SONATYPE|SIGNING)_[A-Z_]+')
 PUBLISH_STEPS = ('publish',)
 
 
-GATE_COMMAND = '.github/release-gate.py check --mode publish'
-SKIP_WORDS = ('always()', 'failure()', 'cancelled()', 'continue-on-error', '|| true', '|| :')
+# release.yml の関門の手順は、名前の行のほかは、この文字列と一字一句同じでなければ「関門あり」と見ない。
+# 形の照合では、if false や関数の中、exit 0 や && false の後ろに置いた命令を見分けられないので、本文そのものを固定する。
+# 本文は bash -e で上から実行され、最後の行が関門なので、関門に落ちれば手順が失敗する。
+# R2b でこの手順を変えるときは、ここも同じ PR で変える。
+GATE_STEP = """        id: release_gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          GATE="${RUNNER_TEMP}/release-gate"
+          RELEASE_SHA=$(git rev-parse "${RELEASE_TAG}^{commit}")
+          bash "${GITHUB_WORKSPACE}"/.github/release-gate-inputs.sh "$RELEASE_SHA" "$GATE"
+          python3 "${GITHUB_WORKSPACE}"/.github/release-gate.py check --mode publish --tag "$RELEASE_TAG" \\
+            --repository "$GITHUB_REPOSITORY" --sha "$RELEASE_SHA" --on-main "$(cat "${GATE}/on-main")" \\
+            --parents "${GATE}/parents" \\
+            --parent-version "${GATE}/parent-version" --version-file "${GATE}/version" \\
+            --changed-files "${GATE}/changed-files" --pulls "${GATE}/pulls.json" \\
+            --remote-tags "${GATE}/remote-tags\""""
+# 関門のあとで、失敗を越えて公開を動かすもの、または公開するコミットを替えるもの
+SKIP_WORDS = ('always()', 'failure()', 'cancelled()', 'continue-on-error', 'git checkout', 'git switch',
+              'git reset', 'ref:')
 
 
 def release_has_gate(release=RELEASE):
-    """release ジョブで、公開の手順の前に、飛ばせない関門の手順（id: release_gate）があるか。
+    """release ジョブで、公開の手順の前に、固定した関門の手順（id: release_gate）があるか。
 
     GitHub Actions では、失敗した手順のあとの手順は、always() などを付けない限り動かない。
-    そのため、関門の手順に if も continue-on-error も無く、公開の手順にも失敗を越える条件が無ければ、
-    関門に落ちたときに公開は動かない。
+    そのため、関門の手順が GATE_STEP のとおりで、ジョブにも公開までの手順にも失敗を越える条件や
+    別のコミットへの切り替えが無ければ、関門に落ちたときに公開は動かない。
+    公開の秘密の値は publish の手順にしか無い（test_publish_secrets_are_only_in_the_env_of_the_publish_step）ので、
+    別のジョブからは公開できない。
     """
     try:
+        release_job = job(release, 'release')
         release_steps = steps(release, 'release')
     except ValueError:
         return False
     ids = [re.findall(r'\n        id: ([a-z_-]+)\n', text + '\n')[:1] for text in release_steps]
     ids = [found[0] if found else None for found in ids]
-    if 'release_gate' not in ids or 'publish' not in ids or ids.index('release_gate') > ids.index('publish'):
+    if ids.count('release_gate') != 1 or ids.count('publish') != 1 or ids.index('release_gate') > ids.index('publish'):
         return False
     gate_step = release_steps[ids.index('release_gate')]
-    commands = [line.strip() for line in run_body(gate_step + '\n', 'release_gate').splitlines()]
-    if not any(line.startswith(('python3 ', 'TAG=$(python3 ')) and GATE_COMMAND in line
-               for line in commands if not line.startswith('#')):
+    if not re.fullmatch(r'\n      - name: [^\n]+\n', gate_step[:gate_step.index('\n', 1) + 1]):
         return False
-    guarded = release_steps[ids.index('release_gate'):ids.index('publish') + 1]
-    return '        if:' not in gate_step and not any(word in text for text in guarded for word in SKIP_WORDS)
+    if gate_step[gate_step.index('\n', 1) + 1:].rstrip('\n') != GATE_STEP:
+        return False
+    before_steps = release_job[:release_job.index('\n    steps:\n')]
+    guarded = release_steps[:ids.index('publish') + 1]
+    return not any(word in text for text in [before_steps] + guarded for word in SKIP_WORDS) \
+        and '        if:' not in release_steps[ids.index('publish')]
 
 
 def env_block(step_text):
@@ -79,25 +103,43 @@ class ReleaseWorkflowShapeTest(unittest.TestCase):
         self.assertIn('      rehearsal:\n        description:', BUMP)
         self.assertIn('        type: boolean\n        default: false\n', BUMP[BUMP.index('      rehearsal:'):])
 
-    def test_release_gate_detection_needs_a_gate_step_that_cannot_be_skipped(self):
-        def release(gate_step, publish_if=''):
-            return ('name: Release\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n'
-                    '      - uses: actions/checkout@v7\n' + gate_step +
+    def test_release_gate_detection_accepts_only_the_fixed_gate_step(self):
+        def release(gate_step, publish_if='', checkout='', before=''):
+            return ('name: Release\njobs:\n  release:\n    runs-on: ubuntu-latest\n' + before + '    steps:\n'
+                    '      - uses: actions/checkout@v7\n' + checkout + gate_step +
                     '      - name: Publish\n        id: publish\n' + publish_if +
                     '        run: ./gradlew publish\n')
-        gate = ('      - name: Gate\n        id: release_gate\n        run: |\n'
-                '          python3 "${GITHUB_WORKSPACE}"/.github/release-gate.py check --mode publish --tag "$TAG"\n')
+        gate = '      - name: Check the tagged commit against the release gate\n' + GATE_STEP + '\n'
+        last = '            --remote-tags "${GATE}/remote-tags"\n'
+        first = '          GATE="${RUNNER_TEMP}/release-gate"\n'
         self.assertTrue(release_has_gate(release(gate)))
         self.assertFalse(release_has_gate(RELEASE))
-        commented = gate.replace('          python3', '          # python3')
-        self.assertFalse(release_has_gate(release(commented)))
-        self.assertFalse(release_has_gate(release(gate.replace('id: release_gate', 'id: other'))))
-        self.assertFalse(release_has_gate(release(gate.replace('        run:', '        if: false\n        run:'))))
-        self.assertFalse(release_has_gate(release(gate.replace('        run:', '        continue-on-error: true\n        run:'))))
-        self.assertFalse(release_has_gate(release(gate.replace('"$TAG"\n', '"$TAG" || true\n'))))
-        self.assertFalse(release_has_gate(release(gate, '        if: always()\n')))
+        unsafe = {
+            'commented': gate.replace('          python3', '          # python3'),
+            'if false': gate.replace(first, '          if false; then\n' + first) + '',
+            'function': gate.replace(first, '          gate() {\n' + first).replace(last, last + '          }\n'),
+            '&& false': gate.replace(first, '          false && \\\n' + first),
+            'exit 0': gate.replace(first, '          exit 0\n' + first),
+            '|| true': gate.replace('"${GATE}/remote-tags"\n', '"${GATE}/remote-tags" || true\n'),
+            'another tag': gate.replace('${{ github.ref_name }}', 'v5.2.0'),
+            'step if': gate.replace('        env:', '        if: false\n        env:'),
+            'continue-on-error': gate.replace('        env:', '        continue-on-error: true\n        env:'),
+            'shell': gate.replace('        run: |', '        shell: sh {0}\n        run: |'),
+            'other id': gate.replace('id: release_gate', 'id: other'),
+        }
+        for name, step_text in unsafe.items():
+            with self.subTest(name):
+                self.assertNotEqual(step_text, gate)
+                self.assertFalse(release_has_gate(release(step_text)))
+        self.assertFalse(release_has_gate(release(gate, publish_if='        if: always()\n')))
+        self.assertFalse(release_has_gate(release(gate, publish_if='        if: true\n')))
+        self.assertFalse(release_has_gate(release(gate, before='    continue-on-error: true\n')))
+        self.assertFalse(release_has_gate(release(gate, checkout='        with:\n          ref: main\n')))
+        self.assertFalse(release_has_gate(release(gate + gate)))
         after = release('').replace('        run: ./gradlew publish\n', '        run: ./gradlew publish\n' + gate)
         self.assertFalse(release_has_gate(after))
+        elsewhere = release('') + '  gate:\n    runs-on: ubuntu-latest\n    steps:\n' + gate
+        self.assertFalse(release_has_gate(elsewhere))
 
     def test_tag_push_stays_off_while_the_release_workflow_has_no_gate(self):
         settings = re.findall(r'PUSH_RELEASE_TAG: [^\n]*', BUMP + RELEASE)

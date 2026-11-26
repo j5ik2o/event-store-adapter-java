@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from release_test_support import BUMP, GITHUB, REPOSITORY, VERSION_FILE, outputs, pull, run_body
+from test_release_workflow_shape import GATE_STEP
 
 FAKE_GH = '''#!/bin/sh
 # 偽の gh。api は FAKE_GH_FAIL 回だけ失敗し、続く FAKE_GH_EMPTY 回は [] を返し、その後に $FAKE_PULLS を返す。
@@ -72,11 +73,11 @@ class ReleaseRehearsalTest(unittest.TestCase):
         return subprocess.run(['git', *args], cwd=cwd, env=self.env, check=True, text=True,
                               capture_output=True).stdout.strip()
 
-    def step(self, step_id, cwd, **env):
+    def step(self, step_id, cwd, workflow=BUMP, **env):
         output = self.directory / ('output-' + step_id)
         output.write_text('')
         result = subprocess.run(
-            ['bash', '-e', '-o', 'pipefail', '-c', run_body(BUMP, step_id)], cwd=cwd,
+            ['bash', '-e', '-o', 'pipefail', '-c', run_body(workflow, step_id)], cwd=cwd,
             env={**self.env, 'GITHUB_WORKSPACE': str(cwd), 'GITHUB_OUTPUT': str(output),
                  'GITHUB_REPOSITORY': REPOSITORY, 'SERVER_URL': 'https://github.com',
                  'PUSH_TOKEN': 'dummy', **env},
@@ -185,6 +186,29 @@ class ReleaseRehearsalTest(unittest.TestCase):
         result, out = self.trigger(after)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(out['tag'], '')
+
+    def publish_gate(self, tag):
+        """R2b の release.yml に入れる関門の手順（形のテストで固定した本文）を、そのまま動かす。"""
+        result, _ = self.step('release_gate', self.clone(tag), workflow=GATE_STEP + '\n', RELEASE_TAG=tag)
+        return result
+
+    def test_the_fixed_publish_gate_step_passes_only_the_tagged_version_commit(self):
+        after = self.merged_release()
+        result, _ = self.step('release_tag', self.clone(after), RELEASE_TAG='v5.3.0', RELEASE_SHA=after)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        result = self.publish_gate('v5.3.0')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines()[-1], 'v5.3.0')
+
+    def test_the_fixed_publish_gate_step_fails_on_a_hand_made_tag(self):
+        work = self.clone()
+        (work / VERSION_FILE).write_text('5.3.0\n')
+        self.git(work, 'commit', '-am', 'version up to v5.3.0')
+        self.git(work, 'tag', '-a', 'v5.3.0', '-m', 'v5.3.0')
+        self.git(work, 'push', 'origin', 'v5.3.0')
+        result = self.publish_gate('v5.3.0')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('is not reachable from main', result.stderr)
 
     def test_tag_on_another_commit_fails(self):
         self.open_version_branch()
