@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -209,6 +210,25 @@ class DecideTest(unittest.TestCase):
         self.assert_stops(facts(tags=('v5.2.0', 'v5.3.0', 'v5.4.0'), overrides='tag/v5.4.0=checked'),
                           'not the latest release tag')
 
+    def test_an_overtaken_version_names_the_cancelled_run_of_the_newer_tag(self):
+        # #863：古い版の再実行が、新しい版の待ちを置き換えた。新しい版の run は、手順の無いまま取り消されている
+        cancelled = portal.Job(name=portal.RELEASE_JOB, run_attempt=1, started_at=None, completed_at=None,
+                               runner_id=None, runner_name='', steps=(), conclusion='cancelled')
+        newer = run(run_id=RUN + 1, tag='v5.4.0', jobs=[cancelled])
+        older = run(run_id=RUN + 2, tag='v5.2.1', jobs=[cancelled])
+        self.assert_stops(facts([newer, older], tags=('v5.2.0', 'v5.2.1', 'v5.3.0', 'v5.4.0')),
+                          f'run {RUN + 1} was cancelled before it started: re-run all its jobs')
+        message = self.assert_stops(facts([newer, older], tags=('v5.2.0', 'v5.2.1', 'v5.3.0', 'v5.4.0')))
+        self.assertNotIn(f'run {RUN + 2}', message)
+        # 待っている（まだ取り消されていない）run や、動いた run は案内しない
+        waiting = run(run_id=RUN + 1, tag='v5.4.0', jobs=[replace(cancelled, conclusion=None)])
+        ran = run(run_id=RUN + 1, tag='v5.4.0', jobs=[release_job(1, upload='skipped')])
+        for other in (waiting, ran):
+            with self.subTest(other=other.jobs[0].conclusion):
+                message = self.assert_stops(facts([other], tags=('v5.2.0', 'v5.3.0', 'v5.4.0')))
+                self.assertIn('not the latest release tag', message)
+                self.assertNotIn('re-run all its jobs', message)
+
     def test_a_prerelease_version_stops(self):
         self.assert_stops(facts(version='5.3.0-rc.1'), 'X.Y.Z')
 
@@ -406,8 +426,10 @@ class StubbedCommandsTest(unittest.TestCase):
             return 201, ID_B + '\n'
 
         self.stub.routes[('POST', '/api/v1/publisher/upload')] = upload
-        result = self.script('upload', '--version', '5.3.0', '--bundle', str(bundle))
+        record = self.directory / 'central-deployment.txt'
+        result = self.script('upload', '--version', '5.3.0', '--bundle', str(bundle), '--record', str(record))
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(record.read_text(), f'{ID_B}\n')
         self.assertEqual(self.output.read_text(), f'deployment={ID_B}\n')
         self.assertIn(ID_B, self.summary.read_text())
         self.assertIn(f'::notice::deployment {ID_B}', result.stdout)
@@ -415,7 +437,9 @@ class StubbedCommandsTest(unittest.TestCase):
                                          'name': [portal.deployment_name('5.3.0', RUN, 2)]})
         self.assertEqual(seen['headers']['Authorization'],
                          'Bearer ' + base64.b64encode(b'user:secret-password').decode())
-        self.assertIn(b'name="bundle"; filename="bundle.zip"', seen['body'])
+        # ファイル名は deployment の名前（deploymentName がファイル名から来ても、事前の確認の照合に合う）
+        filename = portal.deployment_name('5.3.0', RUN, 2) + '.zip'
+        self.assertIn(f'name="bundle"; filename="{filename}"'.encode(), seen['body'])
         self.assertIn(b'PK-zip-bytes', seen['body'])
 
     def test_upload_without_a_deployment_id_fails_without_an_output(self):
@@ -425,9 +449,11 @@ class StubbedCommandsTest(unittest.TestCase):
                 self.stub.routes[('POST', '/api/v1/publisher/upload')] = lambda request: (code, body)
                 bundle = self.directory / 'bundle.zip'
                 bundle.write_bytes(b'zip')
-                result = self.script('upload', '--version', '5.3.0', '--bundle', str(bundle))
+                record = self.directory / 'central-deployment.txt'
+                result = self.script('upload', '--version', '5.3.0', '--bundle', str(bundle), '--record', str(record))
                 self.assertEqual(result.returncode, 1)
                 self.assertEqual(self.output.read_text(), '')
+                self.assertFalse(record.exists())
                 self.assertIn(f'{RUN}/2=<deployment ID|none>', result.stderr)
 
     def test_wait_reads_the_state_until_published_or_failed(self):

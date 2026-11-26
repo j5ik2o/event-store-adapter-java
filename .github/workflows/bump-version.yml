@@ -32,10 +32,11 @@ on:
         required: true
         type: boolean
         default: false
-# タグのジョブがタグを push するかどうか。'true' にするのは、release.yml が関門（release-gate.py check --mode publish）を
-# 持つのと同じ PR だけ（.github/tests/test_release_workflow_shape.py が確かめる）。'false' の間は、版上げは rehearsal でしか動かない。
+# タグのジョブがタグを push するかどうか。'true' を許すのは、release.yml が正本（.github/tests/fixtures/release-workflow.yml）と
+# 同じで、関門を持つときだけ（.github/tests/test_release_workflow_shape.py が確かめる）。
+# 公開を止めるときは 'false' にする PR をマージする。'false' の間、タグのジョブは打つはずのタグを job summary に書いて終わる。
 env:
-  PUSH_RELEASE_TAG: 'false'
+  PUSH_RELEASE_TAG: 'true'
 jobs:
   bump-version:
     name: Open the version pull request
@@ -45,17 +46,6 @@ jobs:
       contents: read
       actions: write
     steps:
-      # 枝も PR も作る前に止める。タグの push が止まっている間に版上げの PR をマージすると、
-      # その版はタグが付かないまま main に載る。
-      - name: Check that a release can go out
-        id: release_path
-        env:
-          REHEARSAL: ${{ inputs.rehearsal }}
-        run: |
-          if [[ "$PUSH_RELEASE_TAG" != true && "$REHEARSAL" != true ]]; then
-            echo "::error::Bump-Version cannot release yet: the tag job does not push tags (PUSH_RELEASE_TAG is 'false') until the Release workflow checks the release gate. Run it with rehearsal: true to open a draft pull request, then close it without merging."
-            exit 1
-          fi
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0

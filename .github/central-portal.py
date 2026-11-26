@@ -6,8 +6,9 @@
 precheck --version X.Y.Z [--remote origin] [--attempts N --interval S]
     release.yml の run・jobs・artifact、変数 CENTRAL_DEPLOYMENTS、Portal の状態、repo1 を読んで決める。
     出力（$GITHUB_OUTPUT）：action=upload|published、deployment=<ID または空>。止まるときは終了コード 1。
-upload --version X.Y.Z --bundle <zip>
-    bundle を publishingType=AUTOMATIC で上げる。受け取った ID を最初に $GITHUB_OUTPUT の deployment に書く。
+upload --version X.Y.Z --bundle <zip> --record <ファイル>
+    bundle を publishingType=AUTOMATIC で上げる（ファイル名は <deployment の名前>.zip）。受け取った ID を最初に --record の
+    ファイルへ、次に $GITHUB_OUTPUT の deployment に書く（release.yml の ID の記録の手順が、そのファイルを artifact にする）。
 wait --id <ID> [--attempts N --interval S]
     deployment が PUBLISHED になるまで待つ。FAILED は errors を出して失敗。時間切れも失敗。
 confirm --version X.Y.Z [--attempts N --interval S]
@@ -154,6 +155,7 @@ def gather(version, remote, github, now):
                     name=job.get('name', ''), run_attempt=int(job.get('run_attempt') or 1),
                     started_at=job.get('started_at'), completed_at=job.get('completed_at'),
                     runner_id=job.get('runner_id'), runner_name=job.get('runner_name'),
+                    conclusion=job.get('conclusion'),
                     steps=tuple(rules.Step(step.get('name', ''), step.get('status'), step.get('conclusion'))
                                 for step in job.get('steps') or ()),
                 ) for job in jobs),
@@ -223,10 +225,10 @@ def precheck(args, sleep=time.sleep, clock=lambda: datetime.now(timezone.utc)):
     raise Stop(f'deployments are still in progress after {args.attempts} checks; re-run the job later')
 
 
-def multipart(path):
+def multipart(path, filename):
     boundary = uuid.uuid4().hex
     data = Path(path).read_bytes()
-    head = (f'--{boundary}\r\nContent-Disposition: form-data; name="bundle"; filename="{Path(path).name}"\r\n'
+    head = (f'--{boundary}\r\nContent-Disposition: form-data; name="bundle"; filename="{filename}"\r\n'
             'Content-Type: application/octet-stream\r\n\r\n')
     body = head.encode('utf-8') + data + f'\r\n--{boundary}--\r\n'.encode('utf-8')
     return f'multipart/form-data; boundary={boundary}', body
@@ -236,7 +238,8 @@ def upload(args):
     run_id = int(os.environ['GITHUB_RUN_ID'])
     attempt = int(os.environ.get('GITHUB_RUN_ATTEMPT', '1'))
     name = rules.deployment_name(args.version, run_id, attempt)
-    content_type, body = multipart(args.bundle)
+    # deploymentName がファイル名から来る場合も、事前の確認の名前の照合に合うようにする（設計 §7）
+    content_type, body = multipart(args.bundle, f'{name}.zip')
     headers = {**central_auth(), 'Content-Type': content_type}
     query = urllib.parse.urlencode({'publishingType': 'AUTOMATIC', 'name': name})
     code, response = http('POST', central_url(f'/api/v1/publisher/upload?{query}'), headers, body, timeout=600)
@@ -244,7 +247,8 @@ def upload(args):
     if code != 201 or not rules.UUID.fullmatch(deployment):
         raise Stop(f'the upload returned {code}; the Portal may or may not have created deployment {name}. '
                    f'Find it in the Portal and add {run_id}/{attempt}=<deployment ID|none> to CENTRAL_DEPLOYMENTS')
-    # 落ちても人が ID を拾えるように、最初に出力へ、次に summary とログへ書く（設計 §1.1）
+    # 落ちても人が ID を拾えるように、記録のファイル、出力、summary とログの順に書く（設計 §1.1）
+    Path(args.record).write_text(deployment + '\n', encoding='utf-8')
     write_output(deployment=deployment)
     summary(f'Uploaded {name} to Maven Central: deployment `{deployment}`')
     print(f'::notice::deployment {deployment} ({name})')
@@ -297,6 +301,7 @@ def main(argv):
     up.set_defaults(run=upload)
     up.add_argument('--version', required=True)
     up.add_argument('--bundle', required=True)
+    up.add_argument('--record', required=True, help='file that receives the deployment ID (uploaded as an artifact)')
     waiter = commands.add_parser('wait')
     waiter.set_defaults(run=wait)
     waiter.add_argument('--id', required=True)
