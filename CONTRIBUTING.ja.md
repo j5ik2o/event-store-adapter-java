@@ -40,6 +40,7 @@ python3 -m unittest discover -s .github/tests -v
 - `-PgoogleSdkSet=5.1` または `-PgoogleSdkSet=5.2` を付けると、5.1.0 または 5.2.0 の公開版が依存する Spanner と Bigtable の SDK でテストを実行します（5.1 は Spanner 6.124.0 と Bigtable 2.85.0、5.2 は Spanner 6.127.0 と Bigtable 2.88.0）。変わるのはテストの実行時クラスパスだけで、ライブラリは宣言した SDK でコンパイルします。読み込んだ SDK が選んだ組と違うと `GoogleSdkSetTest` が失敗します。CI は `createOffloaded` のテストを両方の組で実行します。例: `./gradlew test -PgoogleSdkSet=5.1 --tests '*OffloadedEventStoreTest'`。
 - CI は、`conformance/manifest.json`・`api-surface/surface.json`・`user-docs/template.json`・`tools/user-docs/check.py` の SHA-256 も `sha256sum -c` で照合し、workflow ファイルを actionlint v1.7.12 で検査します。期待値は `ci.yml` にあります。
 - 適合の報告は、テストが `build/reports/conformance/` に書き出します。
+- `release-bundle` のジョブは、使い捨ての署名の鍵で Maven Central の bundle を `.github/central-bundle.sh`（Release ワークフローが使う予定のスクリプト）で組み、180 ファイルと 30 の署名を確かめます。`release-model` のジョブは、公開の経路の Quint のモデルを検査します（`bash .github/quint/run-quint.sh ci`。[.github/quint/README.md](.github/quint/README.md) を参照）。どちらも秘密の値を使わず、何も公開しません。
 - `createOffloaded` の長時間の負荷試験は、`EVENT_STORE_SOAK_SECONDS` を設定しない限り飛ばします。保存先ごとに、その秒数のあいだ複数の集約に 4 操作を流し、終わったら全集約を読み戻して、スレッドとヒープを確かめます。CI では実行しません。例: `EVENT_STORE_SOAK_SECONDS=900 ./gradlew test --tests '*OffloadedSoakTest'`。結果は `build/test-results/test/TEST-*OffloadedSoakTest.xml` の標準出力にある `SOAK` で始まる行です。
 
 ## 設計の経緯
@@ -48,7 +49,7 @@ python3 -m unittest discover -s .github/tests -v
 
 ## 変更とリリース
 
-- 変更は pull request で `main` に入れます。`CI Success` ジョブが、lint・test・release-tools の結果をまとめて判定します。
+- 変更は pull request で `main` に入れます。`CI Success` ジョブが、lint・test・google-sdk-sets・aislop・release-tools・release-bundle・release-model の結果をまとめて判定します。
 - 版は `version` ファイルに持ち、ビルドが読みます。
 - Bump-Version ワークフローは手動で起動します。入力は `level`・`force_bump`・`version`・`rehearsal` です。版を上げる段階は、コミットの件名の Conventional Commits の型で決まります。`!` か `BREAKING CHANGE` は major、`feat` と `revert` は minor、それ以外は patch です（`.github/semver-level.py`）。
 - Bump-Version は `main` へ push しません。新しい版を `release/vX.Y.Z` の枝の `version` にコミットし、`main` への pull request を開きます。GitHub Release は作らず、`version` を SNAPSHOT 版へ戻すこともしません。
