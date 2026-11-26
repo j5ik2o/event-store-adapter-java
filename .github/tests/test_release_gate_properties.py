@@ -357,6 +357,11 @@ class ReleaseGatePropertiesTest(unittest.TestCase):
         @example(GOOD, 'b' * 40, False)
         def prop(case, remote, annotated):
             candidate = case.candidate
+            files = [text if text is None or text.count('\n') > 1 else text.rstrip('\n')
+                     for text in (candidate.parent, candidate.current)]
+            if all(text is not None and accepted(text) for text in files) and is_release(files[1]) \
+                    and case.truth.get('v' + files[1]) == SHA:
+                self.assertEqual(outcome('tag', candidate), ('tag', None))
             base = outcome('tag', candidate)
             if base[0] != 'tag' or base[1] is None:
                 return

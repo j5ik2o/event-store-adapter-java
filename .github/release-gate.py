@@ -166,8 +166,13 @@ def check_candidate(mode, candidate, requested_tag=None):
     if mode == 'tag' and before == after:
         print(f'no release: version unchanged ({after})', file=sys.stderr)
         return None
-    tag = approved_release(candidate, before, after, newline == parent_newline)
+    tag = f'v{after}'
     remote = candidate.tags.get(tag)
+    if mode == 'tag' and remote == candidate.sha:
+        # 打ったあとに新しいタグが増えても、同じコミットのジョブの再実行は何もしないで終わる
+        print(f'no release: tag {tag} already points at {candidate.sha}', file=sys.stderr)
+        return None
+    approved_release(candidate, before, after, newline == parent_newline)
     if mode == 'publish':
         if requested_tag != tag:
             raise GateError(f'tag {requested_tag} does not match the version {after}')
@@ -176,10 +181,7 @@ def check_candidate(mode, candidate, requested_tag=None):
         return tag
     if remote is None:
         return tag
-    if remote != candidate.sha:
-        raise GateError(f'tag {tag} already exists on another commit {remote}')
-    print(f'no release: tag {tag} already points at {candidate.sha}', file=sys.stderr)
-    return None
+    raise GateError(f'tag {tag} already exists on another commit {remote}')
 
 
 def decode(data, name):

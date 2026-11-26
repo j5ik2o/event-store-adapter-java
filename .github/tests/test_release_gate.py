@@ -103,6 +103,7 @@ class ReleaseGateTest(unittest.TestCase):
 
     def test_existing_tag(self):
         self.assertIsNone(self.check(tags={'v5.2.0': 'c' * 40, 'v5.3.0': self.SHA}))
+        self.assertIsNone(self.check(tags={'v5.3.0': self.SHA, 'v5.4.0': 'f' * 40}))
         self.assert_rejected('already exists on another commit', tags={'v5.3.0': 'e' * 40})
 
     def test_required_version_must_be_published_first(self):
