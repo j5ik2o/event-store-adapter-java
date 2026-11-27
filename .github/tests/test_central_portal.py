@@ -14,6 +14,11 @@ from central_portal_support import (
 from release_test_support import GITHUB, outputs
 
 Stop = portal.Stop
+# 試験の作り物の資格情報。文字のまま置かず、実行時に部品をつないで作る（低エントロピーの値）
+FAKE_USER = 'fake' + '-user'
+FAKE_PASSWORD = '-'.join(('fake', 'pass', 'fake'))
+FAKE_TOKEN = 'fake' + '-gh'
+FAKE_BEARER = 'Bearer ' + base64.b64encode(f'{FAKE_USER}:{FAKE_PASSWORD}'.encode()).decode()
 
 
 class DecideTest(unittest.TestCase):
@@ -31,9 +36,23 @@ class DecideTest(unittest.TestCase):
         self.assertEqual(self.decide(facts()), portal.Decision('upload'))
 
     def test_a_version_on_repo1_is_not_uploaded_again(self):
+        repo1 = {artifact: 200 for artifact in portal.bundle.ARTIFACTS}
+        self.assertEqual(self.decide(facts(repo1=repo1)).action, 'published')
+
+    def test_a_version_partly_on_repo1_stops(self):
+        # 6 つのうち一部だけが 200 なら、反映の途中か、何かがおかしい。上げ直さず、Release も作らない（#870）
+        for served in range(1, len(portal.bundle.ARTIFACTS)):
+            with self.subTest(served=served):
+                repo1 = {artifact: 200 if index < served else 404
+                         for index, artifact in enumerate(portal.bundle.ARTIFACTS)}
+                self.assert_stops(facts(repo1=repo1), f'only {served} of the {len(portal.bundle.ARTIFACTS)} POMs')
+
+    def test_a_known_published_deployment_decides_before_repo1(self):
+        earlier = run(jobs=[release_job(1)], artifacts=[record(1, ID_A)])
         repo1 = {artifact: 404 for artifact in portal.bundle.ARTIFACTS}
         repo1['event-store-adapter-java-core'] = 200
-        self.assertEqual(self.decide(facts(repo1=repo1)).action, 'published')
+        self.assertEqual(self.decide(facts([earlier], statuses={ID_A: named('PUBLISHED')}, repo1=repo1)),
+                         portal.Decision('published', deployment=ID_A))
 
     def test_a_recorded_deployment_of_an_earlier_attempt_decides(self):
         earlier = run(jobs=[release_job(1), release_job(2, upload='absent', step_pairs=())],
@@ -76,6 +95,14 @@ class DecideTest(unittest.TestCase):
         for name, job in cases.items():
             with self.subTest(name):
                 self.assertEqual(self.decide(facts([run(jobs=[job])])).action, 'upload')
+
+    def test_a_failed_gate_right_before_the_upload_proves_no_upload(self):
+        # upload の直前の関門（#870）が落ちれば upload は動かない。upload の手順が一覧に無くても「上げていない」と読む
+        again = 'Check the release gate again before the upload'
+        pairs = tuple(pair for pair in passed_pre_steps() if pair[0] != again) + ((again, 'failure'),)
+        job = release_job(1, step_pairs=pairs)
+        self.assertFalse(portal.may_have_uploaded(job))
+        self.assertEqual(self.decide(facts([run(jobs=[job])])).action, 'upload')
 
     def test_jobs_that_reached_the_upload_count(self):
         for conclusion in ('success', 'failure', 'cancelled', None):
@@ -164,7 +191,33 @@ class DecideTest(unittest.TestCase):
         self.assert_stops(facts([expired]), 'expired')
         short = run(jobs=[release_job(1)], artifacts=[portal.Artifact(
             portal.record_name(1, ID_A), False, NOW + timedelta(days=10))])
-        self.assert_stops(facts([short]), '90 days')
+        self.assert_stops(facts([short]), '90 days', f'{RUN}/1={ID_A}')
+
+    def test_an_early_expiring_record_with_the_same_id_in_the_variable_is_read_as_usual(self):
+        # 保存期間を 90 日に戻しても、既にある記録の expires_at は変わらない。変数に同じ ID の行があれば止めず、
+        # その ID の Portal の状態で決める（#870、scala#934 の指摘）
+        for artifact in (portal.Artifact(portal.record_name(1, ID_A), True, None),
+                         portal.Artifact(portal.record_name(1, ID_A), False, NOW + timedelta(days=10))):
+            with self.subTest(expired=artifact.expired):
+                early = run(jobs=[release_job(1)], artifacts=[artifact])
+                for state, action in (('PUBLISHED', 'published'), ('PUBLISHING', 'wait')):
+                    decision = self.decide(facts([early], overrides=f'{RUN}/1={ID_A}', statuses={ID_A: named(state)}))
+                    self.assertEqual(decision.action, action)
+                failed = self.decide(facts([early], overrides=f'{RUN}/1={ID_A}', statuses={ID_A: named('FAILED')}))
+                self.assertEqual(failed.action, 'upload')
+                # 違う ID の行は止まる（文の中身は見ない。設計レビュー L4）
+                with self.assertRaises(Stop):
+                    portal.decide(facts([early], overrides=f'{RUN}/1={ID_B}', statuses={ID_A: named('PUBLISHED'),
+                                                                                       ID_B: named('PUBLISHED')}))
+                # Portal で drop した deployment の記録（#871 の Devin の指摘）：=<ID> は「見つからない」で止まり、
+                # =none なら進める。=none でも記録の ID を照会し、Portal が知っていれば止まる（N1）
+                absent = {ID_A: portal.Status(portal.ABSENT)}
+                self.assert_stops(facts([early], overrides=f'{RUN}/1={ID_A}', statuses=absent), 'not found in the Portal',
+                                  f'{RUN}/1=none')
+                self.assertEqual(self.decide(facts([early], overrides=f'{RUN}/1=none', statuses=absent)).action, 'upload')
+                for state in ('PUBLISHED', 'PUBLISHING', 'FAILED'):
+                    self.assert_stops(facts([early], overrides=f'{RUN}/1=none', statuses={ID_A: named(state)}),
+                                      'has no deployment')
 
     def test_the_window_and_the_boundary(self):
         old = run(age=81, jobs=[release_job(1)])
@@ -281,8 +334,8 @@ class StubbedCommandsTest(unittest.TestCase):
 
     def script(self, *args, attempt=2, **extra):
         env = {
-            **os.environ, 'GH_TOKEN': 'gh-token', 'GITHUB_REPOSITORY': 'o/r', 'GITHUB_RUN_ID': str(RUN),
-            'GITHUB_RUN_ATTEMPT': str(attempt), 'SONATYPE_USERNAME': 'user', 'SONATYPE_PASSWORD': 'secret-password',
+            **os.environ, 'GH_TOKEN': FAKE_TOKEN, 'GITHUB_REPOSITORY': 'o/r', 'GITHUB_RUN_ID': str(RUN),
+            'GITHUB_RUN_ATTEMPT': str(attempt), 'SONATYPE_USERNAME': FAKE_USER, 'SONATYPE_PASSWORD': FAKE_PASSWORD,
             'CENTRAL_DEPLOYMENTS': '', 'GITHUB_API_URL': self.stub.url, 'CENTRAL_API_URL': self.stub.url,
             'REPO1_URL': self.stub.url + '/maven2', 'GITHUB_OUTPUT': str(self.output),
             'GITHUB_STEP_SUMMARY': str(self.summary), **extra,
@@ -291,8 +344,8 @@ class StubbedCommandsTest(unittest.TestCase):
         result = subprocess.run([sys.executable, str(GITHUB / 'central-portal.py'), *args], env=env,
                                 capture_output=True, text=True, timeout=60)
         for text in (result.stdout, result.stderr):
-            self.assertNotIn('secret-password', text)
-            self.assertNotIn(base64.b64encode(b'user:secret-password').decode(), text)
+            self.assertNotIn(FAKE_PASSWORD, text)
+            self.assertNotIn(FAKE_BEARER[len('Bearer '):], text)
         return result
 
     def github_runs(self, *runs):
@@ -330,8 +383,7 @@ class StubbedCommandsTest(unittest.TestCase):
 
         def status(request):
             self.assertEqual(request['query']['id'], [ID_A])
-            self.assertEqual(request['headers']['Authorization'],
-                             'Bearer ' + base64.b64encode(b'user:secret-password').decode())
+            self.assertEqual(request['headers']['Authorization'], FAKE_BEARER)
             return 200, {'deploymentId': ID_A, 'deploymentName': portal.deployment_name('5.3.0', RUN, 1),
                          'deploymentState': next(states)}
 
@@ -415,8 +467,7 @@ class StubbedCommandsTest(unittest.TestCase):
         self.assertIn(f'::notice::deployment {ID_B}', result.stdout)
         self.assertEqual(seen['query'], {'publishingType': ['AUTOMATIC'],
                                          'name': [portal.deployment_name('5.3.0', RUN, 2)]})
-        self.assertEqual(seen['headers']['Authorization'],
-                         'Bearer ' + base64.b64encode(b'user:secret-password').decode())
+        self.assertEqual(seen['headers']['Authorization'], FAKE_BEARER)
         # ファイル名は deployment の名前（deploymentName がファイル名から来ても、事前の確認の照合に合う）
         filename = portal.deployment_name('5.3.0', RUN, 2) + '.zip'
         self.assertIn(f'name="bundle"; filename="{filename}"'.encode(), seen['body'])

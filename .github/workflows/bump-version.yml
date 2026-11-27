@@ -122,6 +122,9 @@ jobs:
           else
             NEXT_VERSION=$(echo "$PREV_TAG" | python3 "${GITHUB_WORKSPACE}"/.github/next-semver.py "$SEMVER_LEVEL")
           fi
+          # 今の `version` の版より大きいこと（マージ済みでまだタグの無い版上げがあると、最新のタグより大きくても下げる PR
+          # になる。#870）
+          python3 "${GITHUB_WORKSPACE}"/.github/release-gate.py check-next "$NEXT_VERSION"
           echo "NEXT_VERSION=$NEXT_VERSION"
           echo "next_version=$NEXT_VERSION" >> "$GITHUB_OUTPUT"
           echo "next_tag=v$NEXT_VERSION" >> "$GITHUB_OUTPUT"

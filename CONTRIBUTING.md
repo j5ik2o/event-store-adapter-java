@@ -49,9 +49,9 @@ python3 -m unittest discover -s .github/tests -v
 
 - Changes go to `main` through a pull request. The `CI Success` job summarizes the results of lint, test, google-sdk-sets, aislop, release-tools, release-bundle and release-model.
 - The version is kept in the `version` file, which the build reads.
-- The Bump-Version workflow is started manually, with the inputs `level`, `force_bump`, `version` and `rehearsal`. The bump level comes from the Conventional Commits type of the commit subjects: `!` or `BREAKING CHANGE` is major, `feat` and `revert` are minor, and anything else is patch (`.github/semver-level.py`).
+- The Bump-Version workflow is started manually, with the inputs `level`, `force_bump`, `version` and `rehearsal`. The bump level comes from the Conventional Commits type of the commit subjects: `!` or `BREAKING CHANGE` is major, `feat` and `revert` are minor, and anything else is patch (`.github/semver-level.py`). In every case the next version must be greater than the version in `version`; otherwise the job stops before it opens a pull request (a version pull request can be merged but not tagged yet).
 - Bump-Version does not push to `main`. It commits the new version to `version` on a branch `release/vX.Y.Z` and opens a pull request into `main`. It does not create a GitHub Release, and it does not set `version` back to a SNAPSHOT version.
-- When a commit that changes `version` lands on `main`, the tag job of Bump-Version checks it with the release gate (`.github/release-gate.py`). The commit must be the squash merge of a pull request from `release/vX.Y.Z` of this repository, it must change only the version in `version`, and the version must be greater than the previous version and every `vX.Y.Z` tag. A commit whose parent has no `version` file is not released.
+- When a commit that changes `version` lands on `main`, the tag job of Bump-Version checks it with the release gate (`.github/release-gate.py`). The commit must be the squash merge of a pull request from `release/vX.Y.Z` of this repository, it must change only the version in `version`, the pull request as a whole (from the merge base to its head) must change only the version in `version` as well, and the version must be greater than the previous version and every `vX.Y.Z` tag. A commit whose parent has no `version` file is not released.
 - Pushing a `vX.Y.Z` tag starts the Release workflow, which checks the tagged commit against the release gate again and publishes the version to Maven Central (see [Releasing](#releasing)). Snapshot builds are not published; use a released version.
 - Dependency updates are made by Renovate (`renovate.json`).
 
@@ -63,11 +63,13 @@ python3 -m unittest discover -s .github/tests -v
 4. The Release workflow runs the job `Publish to Maven Central`:
    1. It checks the tagged commit against the release gate.
    2. It checks that Gradle builds the version of the tag.
-   3. It checks Maven Central and the earlier release runs (`.github/central-portal.py precheck`). It waits while a deployment is in progress (up to 60 minutes). When the version is already published it skips the upload, and when an earlier attempt is unaccounted for it stops.
-   4. It builds the bundle (180 files) and uploads it to the Central Portal (`publishingType=AUTOMATIC`).
+   3. It checks Maven Central and the earlier release runs (`.github/central-portal.py precheck`). It waits while a deployment is in progress (up to 60 minutes). When a `PUBLISHED` deployment of the version is known, or repo1 serves all six POMs, it skips the upload; when repo1 serves only some of them, or an earlier attempt is unaccounted for, it stops.
+   4. It builds the bundle (180 files), checks the tagged commit against the release gate again (a newer tag pushed while the bundle was built stops the upload), and uploads the bundle to the Central Portal (`publishingType=AUTOMATIC`).
    5. It records the deployment ID as the artifact `central-deployment-<attempt>-<ID>` (kept for 90 days).
    6. It waits until the deployment is `PUBLISHED` (up to 60 minutes).
-5. When the deployment is `PUBLISHED`, `Create the GitHub release` creates the GitHub release and `Check Maven Central` waits until repo1 serves the six POMs (up to 60 minutes).
+5. When the deployment is `PUBLISHED`, `Create the GitHub release` creates the GitHub release and `Check Maven Central` waits until repo1 serves the six POMs (up to 60 minutes). The release notes start from the nearest earlier `vX.Y.Z` tag that has a GitHub release, so the changes of a skipped version are listed too. The release is created without the Latest mark; the next step, `Mark the greatest release as latest`, reads the list of releases again and marks the greatest `vX.Y.Z` release that is neither a draft nor a pre-release (including the one just created) as Latest. This holds when the list it reads already shows the greatest release; see the recovery table for a list that lags.
+
+The 60 minutes of the precheck, the wait and the repo1 check are one deadline per step (`--deadline`, 3600 seconds) that also counts the time of the queries and of `git ls-remote`; a query still running at the deadline, in the connection, the response headers or the body, is cut and counts as failed. A body shorter than its `Content-Length` also counts as failed. The upload has no overall deadline (a cut upload would leave an attempt that may or may not have uploaded).
 
 A rehearsal (`rehearsal: true`) opens a draft pull request titled `version up to vX.Y.Z (rehearsal, do not merge)`. Close it without merging and delete the branch.
 
@@ -99,24 +101,30 @@ When the precheck stops for a missing ID, its error message lists every line to 
 |---|---|---|
 | The tag is not on the squash merge of a version pull request, the commit changes code with the version, the version is lower, or the tag does not match the version | The release gate step fails. Nothing is built or uploaded | Delete the tag. Fix `version` with a pull request |
 | Gradle builds another version than the tag | `Check the version Gradle builds` fails | Fix `version` with a pull request and release the next version |
-| A query to GitHub, the Portal or repo1 fails (5xx, timeout) | The precheck stops | Re-run the failed jobs |
+| A query to GitHub, the Portal or repo1 fails (5xx, timeout, a body cut in the middle, the deadline), including the pull request lookups of the release gate | The release gate or the precheck stops | Re-run the failed jobs |
+| repo1 serves only some of the six POMs, and no `PUBLISHED` deployment of the version is known | The precheck stops: a deployment may be published and still spreading | Re-run the failed jobs in a few minutes. If it stays, check the deployments of the version in the Portal |
 | A deployment of another run is in progress | The precheck waits up to 60 minutes, then fails | Re-run the failed jobs |
 | An attempt may have uploaded but left no deployment ID (including step lists that are cut, runs without jobs, and attempts without a release job) | The precheck stops and lists the lines to add | Find each ID in the job summary or log of the attempt, or in the Portal by its name. Add `<run_id>/<attempt>=<ID>` or `=none` for every listed attempt, then re-run |
 | The upload does not return 201 and a deployment ID | The upload step fails. The next attempt stops as in the row above | As in the row above |
+| A newer `vX.Y.Z` tag was pushed while the bundle was built | `Check the release gate again before the upload` fails (`must be greater than the latest tag`). Nothing is uploaded | As in the row "A newer tag exists" below |
 | The bundle does not have the expected files | The bundle step fails. Nothing is uploaded | Fix it with a pull request and release the next version. A re-run uses the scripts of the tagged commit, so it does not pick up the fix |
 | The signing key is missing or wrong | Signing fails in the bundle step. Nothing is uploaded | Fix the secrets and re-run |
 | The deployment is `FAILED` | The wait step fails with the Portal errors. No GitHub release is created | Re-run the failed jobs (the precheck sees `FAILED` and uploads again). If the content is wrong, fix it in the next version |
 | A `FAILED` deployment was dropped in the Portal | The precheck stops: the ID is not found | After the drop, add `<run_id>/<attempt>=none` and re-run |
 | The deployment is still in progress after 60 minutes | The wait step fails | Re-run the failed jobs. The precheck waits for the same deployment and does not upload again |
 | repo1 does not serve the version after 60 minutes | `Check Maven Central` fails | Re-run only `Check Maven Central` |
-| Creating the GitHub release fails | `Create the GitHub release` fails | Re-run only `Create the GitHub release` |
+| Creating the GitHub release fails, or the list of releases cannot be read | `Create the GitHub release` (or `Mark the greatest release as latest`) fails; a failed read of the list is not taken as "no release" | Re-run only `Create the GitHub release` |
+| The Latest release is not the greatest version. The job of an older version read a list of releases that did not show the greatest release yet: the two jobs ran at the same time, or the newer release was created but the list had not caught up when the older job ran later | The older job marks the greatest release of its own list as Latest. The Latest mark is the greatest version only when the list the last job read already showed the greatest release | Once the list of releases shows the greatest release, mark it Latest again: re-run `Create the GitHub release` of the greatest version (its release already exists, so the re-run only marks the greatest release as Latest), or run `gh release edit vX.Y.Z --latest` for the greatest version |
 | A newer tag exists (the version was overtaken) | The release gate stops (`must be greater than the latest tag`); the version is not published | Leave it: the version is skipped. If the version was already `PUBLISHED` (its wait timed out, and the newer tag came before the re-run), see [A version published before a newer tag](#a-version-published-before-a-newer-tag) |
 | The waiting publish job was replaced by a later arrival in the `release-publish` group (another tag push, or a re-run of another version) | That run is cancelled before it starts; it publishes nothing | If its version is the latest `vX.Y.Z` tag, re-run all jobs of the cancelled run (its cancelled job is not counted as an upload). Otherwise a re-run stops at the release gate because a newer tag exists: if an earlier attempt already published the version (for example, only the GitHub release had failed), see [A version published before a newer tag](#a-version-published-before-a-newer-tag); if not, leave it (the version is skipped) |
 | The tag job (`Tag the merged version`) was replaced by a later arrival in the `release-tag` group | That run is cancelled; the version gets no tag | If its version is greater than the latest `vX.Y.Z` tag, re-run the cancelled run, also when other pull requests were merged after it (the release gate does not require the head of `main`). Otherwise leave it: the release gate refuses it |
 | A line of `CENTRAL_DEPLOYMENTS` is malformed, gives another ID than the artifact, or says `none` for a deployment the Portal still knows | The precheck stops | Correct or remove the line and re-run |
-| A Release run or a `central-` artifact was deleted, or a tag push started no Release run (more than three tags in one push, or an outage) | The precheck stops: a tag has no Release run | Check in the Portal that no deployment of that version is in progress, add `tag/vX.Y.Z=checked` and re-run. Do not move the tag |
+| A Release run was deleted, or a tag push started no Release run (more than three tags in one push, or an outage) | The precheck stops: a tag has no Release run (`tag vX.Y.Z has no Release run`) | Check in the Portal that no deployment of that version is in progress, add `tag/vX.Y.Z=checked` and re-run. Do not move the tag |
+| The Release run is still there, but the `central-deployment-<attempt>-<ID>` artifact of an attempt was deleted | The precheck stops: that attempt may have uploaded but has no deployment ID, and it lists the lines to add. `tag/vX.Y.Z=checked` does not help here: it only covers a tag without a run | Find the ID in the job summary or log of that attempt, or in the Portal by the name `event-store-adapter-java-<version>-run<run_id>-<attempt>`. Add `<run_id>/<attempt>=<ID>`, or `<run_id>/<attempt>=none` if the Portal has no such deployment, then re-run |
 | A job or step of `release.yml` was renamed | The precheck stops on the earlier runs | Do not rename them. If you have to, keep the old names in `.github/central-rules.py` |
-| The artifact retention was set below 90 days | The precheck stops | Set it back to 90 days |
+| The artifact retention was set below 90 days, or a record expired | The precheck stops (`expires before 90 days` or `has expired`) | Set the retention back to 90 days for new records. Records that already exist keep their early expiry date: add the line the error message gives, `<run_id>/<attempt>=<ID>` with the ID of that record, and re-run. The precheck then reads the state of that deployment in the Portal as usual. If that deployment was dropped in the Portal, add `<run_id>/<attempt>=none` instead: the precheck still queries the ID of the record and goes on only when the Portal does not know it |
+| A version pull request would lower the version: a version pull request was merged but not tagged yet (for example, while `PUSH_RELEASE_TAG` was `'false'`), so `version` is above the latest tag | Bump-Version stops before it pushes the branch (`must be greater than the version ... in version`) | Set `version` back to the previous SNAPSHOT version with a pull request, then run Bump-Version again (as in the paragraph on stopping releases above). Re-running the tag job of the merged commit does not tag it: a re-run uses the `bump-version.yml` of that commit, where `PUSH_RELEASE_TAG` is still `'false'` |
+| The version pull request as a whole changes more than the version in `version` (a commit in it changed another file and a later one did not undo it), or its head could not be read | The release gate fails (`as a whole must change only the version`); nothing is tagged or published | If the head could not be read (for example, it was force-pushed after the merge), re-run the job. Otherwise restore the version with a pull request and open a new version pull request |
 | More than 30 days passed, so the run cannot be re-run | | Treat the version as skipped and release the next one. Before that, add lines for every attempt that is still unaccounted for |
 | A run is older than 80 days | The precheck does not count it | |
 
@@ -125,7 +133,7 @@ When the precheck stops for a missing ID, its error message lists every line to 
 When a version is on Maven Central but a newer `vX.Y.Z` tag was pushed before its run finished, the release gate stops every re-run of the older version. This happens when the wait for its deployment timed out and the Portal published it later, or when an earlier attempt published it, a later step failed (for example, creating the GitHub release), and the re-run was replaced in the `release-publish` group. The GitHub release and the repo1 check are then missing. Recover them by hand:
 
 1. Check that repo1 serves the version: `https://repo1.maven.org/maven2/io/github/j5ik2o/<artifact>/<version>/<artifact>-<version>.pom` for each of the six artifacts in `.github/central-bundle.py` (`ARTIFACTS`).
-2. Write the release description from the previous release tag `<previous>`:
+2. Write the release description from `<previous>`, the nearest earlier `vX.Y.Z` tag that has a GitHub release:
 
    ```sh
    python3 .github/create-release-note-header.py https://github.com j5ik2o/event-store-adapter-java <previous> vX.Y.Z > release-body.md
@@ -133,6 +141,13 @@ When a version is on Maven Central but a newer `vX.Y.Z` tag was pushed before it
      | python3 .github/create-release-note-body.py https://github.com j5ik2o/event-store-adapter-java >> release-body.md
    ```
 
-3. Create the release: `gh release create vX.Y.Z --verify-tag --title "Release vX.Y.Z" -F release-body.md`.
+3. Create the release without the Latest mark, then mark the greatest `vX.Y.Z` release as Latest (the version recovered here is older than the newer tag, so it must not take the mark):
+
+   ```sh
+   gh release create vX.Y.Z --verify-tag --title "Release vX.Y.Z" -F release-body.md --latest=false
+   gh api --paginate repos/j5ik2o/event-store-adapter-java/releases --jq '.[] | select((.draft or .prerelease) | not) | .tag_name' \
+     | python3 .github/release-gate.py latest-tag \
+     | xargs -I{} gh release edit {} --repo j5ik2o/event-store-adapter-java --latest
+   ```
 
 The release gate is not relaxed for this case: it keeps checking, without any secret, that a version is greater than every other tag before the precheck runs.

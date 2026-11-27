@@ -913,12 +913,6 @@
           "engine": "ai-slop",
           "rule": "ai-slop/unused-css",
           "file": "docs/javadoc/resource-files/stylesheet.css",
-          "message": "CSS class '.notes' is defined but never referenced in the codebase"
-        },
-        {
-          "engine": "ai-slop",
-          "rule": "ai-slop/unused-css",
-          "file": "docs/javadoc/resource-files/stylesheet.css",
           "message": "CSS class '.name-value' is defined but never referenced in the codebase"
         },
         {

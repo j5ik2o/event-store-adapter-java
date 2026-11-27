@@ -118,6 +118,7 @@ module release_path {
     confirm: int -> { status: ConfirmStatus, attempts: int, statusAttempts: int, whileProcessing: bool, lastPoll: int },
     // attempts：PUBLISHED のあとの反映の確認の回数。statusAttempts：deployment の状態の確認の回数（別の上限）
     releases: Set[int],         // GitHub のリリース
+    jobOk: Set[int],            // 公開のジョブ（release ジョブ）が成功で終わった版（precheck が published、か待ちが PUBLISHED を出した。#934）
     clock: int,
     // R2b
     unknown: int -> bool,       // 版 → 始まったのに ID の記録が無い試み（true：Portal に届いていた）
@@ -253,6 +254,27 @@ module release_path {
       PRECHECK_LATEST_TAG implies v == latestTag(r), // 新しいタグに追い越されない
     }
 
+  // 再実行の precheck が、この版の deployment を PUBLISHED と読む（記録を通して、または repo1 が全部返す）。上げずに成功する。
+  // 関門（publish のモード）はこの前に通る：版上げの PR の squash、必要な版、ほかのどのタグより大きい（#934）
+  pure def resumable(r: Repo, v: int): bool =
+    val id = r.tags.get(v)
+    val c = r.commits.get(id)
+    val parent = r.commits.get(c.parent)
+    all {
+      c.squashOfReleasePR,
+      c.ver == v,
+      not(c.pre),
+      key(c.ver, c.pre) > key(parent.ver, parent.pre),
+      requiredPublished(r),
+      v == latestTag(r),
+      deployOf(r, v) == Published,
+      seenInFlightOrDone(r, v) or isVisible(r, v),
+      PRECHECK_SEES_OTHER_DEPLOYMENTS implies not(seenAnyProcessing(r)), // 待ち（処理中）は published より先に決まる
+      (RECORD_VIEW and UNKNOWN_STOPS) implies r.unknown.keys().size() == 0,
+      RECORD_VIEW implies r.stale.size() == 0,
+      RECORD_VIEW implies r.noneConflict.size() == 0,
+    }
+
   pure def becomePublished(r: Repo, v: int, delay: int): Repo =
     {
       ...r,
@@ -301,6 +323,7 @@ module release_path {
       duplicateAttempts: 0,
       confirm: Map(),
       releases: Set(INIT_TAG),   // kotlin・scala の v5.2.0 は、Central に無いのにリリースがある（今の時点で I7 の例外）
+      jobOk: Set(),
       clock: 0,
       unknown: Map(), everUnknown: Set(), recorded: Set(), stale: Set(), everStale: Set(), noneConflict: Set(), uploadsWhileUnknown: 0,
     },
@@ -432,7 +455,9 @@ module release_path {
         else {
           val rec = { ...r, recorded: r.recorded.union(Set(v)) }
           if (failAfterSubmit)
+            // ジョブが落ちたので、待ちの手順もあとのジョブ（リリース・repo1 の確認）も動かない。再実行の precheck が続ける（#934）
             s' = { ...rec, publishFailed: rec.publishFailed.union(Set(v)),
+                   confirm: rec.confirm.keys().exclude(Set(v)).mapBy(x => rec.confirm.get(x)),
                    jobFailedAfterSubmit: rec.jobFailedAfterSubmit.union(Set(v)) }
           else s' = rec
         }
@@ -444,6 +469,17 @@ module release_path {
   action rerunPublishJob(v: int): bool = all {
     s.publishFailed.contains(v),
     s' = arrivePublish({ ...s, publishFailed: s.publishFailed.exclude(Set(v)) }, v),
+  }
+
+  // 8a（#934 の CodeRabbit の指摘）. 公開のジョブ（再実行を含む）の precheck が、この版の deployment を PUBLISHED と読む：
+  //     上げずに成功で終わり（action=published）、リリースと repo1 の確認のジョブが動く
+  action resumePublishJob(v: int): bool = all {
+    not(TAG_IS_PUBLISH),
+    not(OLD_PUBLISH),
+    s.publishPending.contains(v),
+    resumable(s, v),
+    s' = { ...s, publishPending: s.publishPending.exclude(Set(v)), jobOk: s.jobOk.union(Set(v)),
+           confirm: s.confirm.put(v, { status: Waiting, attempts: 0, statusAttempts: 0, whileProcessing: false, lastPoll: -1 }) },
   }
 
   // 8b（#863）. 置き換えられて取り消された公開のジョブの run を、人が再実行する
@@ -463,9 +499,14 @@ module release_path {
 
   // 10. 公開先が deployment を処理し終える（A2）。FAILED なら公開先に何も無く、公開のジョブを再実行してよい
   action portalResolve(v: int, ok: bool): bool = all {
+    nondet d = 0.to(MAX_DELAY).oneOf()
+    portalResolveAt(v, ok, d),
+  }
+
+  // 遅れ d を決めて書く形（決まった手順のテストで、PUBLISHED のあと repo1 に見えるまでの間を作る。kotlin R4 の設計レビュー L1）
+  action portalResolveAt(v: int, ok: bool, d: int): bool = all {
     ASYNC_PORTAL,
     deployOf(s, v) == Processing,
-    nondet d = 0.to(MAX_DELAY).oneOf()
     if (ok) s' = becomePublished(s, v, d)
     else s' = { ...s, deploy: s.deploy.put(v, Failed), failedOnce: s.failedOnce.union(Set(v)),
                 publishFailed: if (LEGACY.contains(v)) s.publishFailed else s.publishFailed.union(Set(v)) },
@@ -482,24 +523,30 @@ module release_path {
       val seen = d == Published and s.visibleAt.get(v) <= now
       val polled =
         if (d == Failed) { ...st, status: Rejected }
-        else if (d == Processing)
-          // deployment の状態の確認（上限 CONFIRM_ATTEMPTS）
-          (if (st.statusAttempts + 1 >= CONFIRM_ATTEMPTS)
-             { ...st, status: TimedOut, statusAttempts: st.statusAttempts + 1, whileProcessing: true }
-           else { ...st, statusAttempts: st.statusAttempts + 1 })
+        else if (d == Processing) { ...st, statusAttempts: st.statusAttempts + 1 }
         else if (seen) { ...st, status: Confirmed, attempts: st.attempts + 1 }
         else if (st.attempts + 1 >= CONFIRM_ATTEMPTS)
           { ...st, status: TimedOut, attempts: st.attempts + 1, whileProcessing: false }
         else { ...st, attempts: st.attempts + 1 }
-      s' = { ...s, clock: now, confirm: s.confirm.put(v, { ...polled, lastPoll: now }) },
+      // 待ちの手順（deployment の状態の確認、上限 CONFIRM_ATTEMPTS）が処理中のまま時間切れになると、公開のジョブが失敗で
+      // 終わる。リリースと repo1 の確認のジョブは動かない。回復は公開のジョブの再実行で、precheck が同じ deployment を
+      // 待ち、PUBLISHED なら上げずに成功する（resumePublishJob）。確認だけの再実行は、この場合には無い（#934）
+      val waitTimedOut = d == Processing and st.statusAttempts + 1 >= CONFIRM_ATTEMPTS
+      // 待ちの手順が PUBLISHED を読むと、公開のジョブは成功で終わる
+      val jobOk = if (d == Published) s.jobOk.union(Set(v)) else s.jobOk
+      if (waitTimedOut)
+        s' = { ...s, clock: now, confirm: s.confirm.keys().exclude(Set(v)).mapBy(x => s.confirm.get(x)),
+               publishFailed: s.publishFailed.union(Set(v)) }
+      else s' = { ...s, clock: now, jobOk: jobOk, confirm: s.confirm.put(v, { ...polled, lastPoll: now }) },
     },
   }
 
-  // 12. 時間切れからの回復。正しい手順：確認だけを再実行する（公開はしない）
+  // 12. repo1 の反映の時間切れからの回復。正しい手順：確認のジョブだけを再実行する（公開はしない）
   action rerunConfirm(v: int): bool = all {
     not(RERUN_WHOLE_PUBLISH),
     s.confirm.keys().contains(v),
     s.confirm.get(v).status == TimedOut,
+    not(s.confirm.get(v).whileProcessing),
     s' = { ...s, confirm: s.confirm.put(v, { status: Waiting, attempts: 0, statusAttempts: 0, whileProcessing: false, lastPoll: -1 }) },
   }
 
@@ -519,6 +566,7 @@ module release_path {
   action githubRelease(v: int): bool = all {
     not(OLD_PUBLISH),                 // 古い構成には、公開のあとのリリースのジョブが無い
     deployOf(s, v) == Published,
+    s.jobOk.contains(v),              // 公開のジョブが成功で終わった（needs.release の出力が published か PUBLISHED。#934）
     not(s.releases.contains(v)),
     s' = { ...s, releases: s.releases.union(Set(v)) },
   }
@@ -527,11 +575,9 @@ module release_path {
   action supplyId(v: int): bool = all {
     s.unknown.keys().contains(v),
     s' = { ...s, unknown: unknownWithout(s.unknown, v),
-           recorded: if (s.unknown.get(v)) s.recorded.union(Set(v)) else s.recorded,
-           // ID が入ったので、Portal に届いていた試みは確認を始められる
-           confirm: if (s.unknown.get(v) and not(s.confirm.keys().contains(v)))
-                      s.confirm.put(v, { status: Waiting, attempts: 0, statusAttempts: 0, whileProcessing: false, lastPoll: -1 })
-                    else s.confirm },
+           // ID が入っても、確認とリリースは始まらない。公開のジョブを再実行し、precheck がその ID で待つか published と
+           // 読んでから（#934 の CodeRabbit の指摘）
+           recorded: if (s.unknown.get(v)) s.recorded.union(Set(v)) else s.recorded },
   }
 
   // 13c（R2b、B2）. 人が、記録された FAILED の deployment を Portal で drop する。その ID の照会は失敗し続ける
@@ -607,6 +653,7 @@ module release_path {
       pushTagByHand(v),
       publishJob(v, flag),
       rerunPublishJob(v),
+      resumePublishJob(v),
       rerunCancelledPublish(v),
       cancelPendingPublish(v),
       portalResolve(v, flag),
@@ -655,6 +702,12 @@ module release_path {
     LEGACY.forall(old =>
       s.deploy.keys().forall(w => (w > old and inFlightOrDone(s, w)) implies s.published.contains(old)))
 
+  // I6c（#934 の CodeRabbit の指摘）. 公開先に必要な版より新しい版が公開先に出る（処理中を含む）なら、必要な版は repo1 に
+  //     見えている（Portal の PUBLISHED だけでは足りない）。見えることは単調なので、アップロードの時点で見えていたことと同じ
+  val requiredVisibleBeforeNewer: bool =
+    REQUIRED_PUBLISHED.forall(req =>
+      s.deploy.keys().forall(w => (w > req and inFlightOrDone(s, w)) implies isVisible(s, req)))
+
   // I7（A2 で強めた）. GitHub のリリースは、deployment が PUBLISHED になった版にだけ。
   //     例外は移行の時点のタグだけ（kotlin・scala の v5.2.0 は今この例外に当たる）
   val releaseOnlyAfterPublished: bool =
@@ -685,6 +738,18 @@ module release_path {
         implies (s.tagPending.contains(id) or s.tagFailed.contains(id)
                  or (RERUN_CANCELLED and s.tagSkipped.contains(id))))
 
+  // I8c（#934）. PUBLISHED になった最新のタグの版に GitHub のリリースが無いなら、手順で作れる：公開のジョブが成功した
+  //     （リリースのジョブが動ける）、待ちの手順が動いている、公開のジョブが待っている、どこかの deployment が処理中、
+  //     失敗したジョブ・取り消された run の再実行で precheck が published と読む、または人が変数に行を足すと進む。
+  //     最新のタグでない版は「新しいタグの前に公開された版」の手の手順（CONTRIBUTING）で、ここでは見ない
+  val publishedReleaseRecoverable: bool =
+    s.published.exclude(LEGACY).exclude(Set(INIT_TAG)).forall(v =>
+      (not(TAG_IS_PUBLISH) and not(OLD_PUBLISH) and not(s.releases.contains(v)) and v == latestTag(s))
+        implies (s.jobOk.contains(v) or s.publishPending.contains(v) or anyProcessing(s)
+                 or (s.confirm.keys().contains(v) and s.confirm.get(v).status == Waiting)
+                 or ((s.publishFailed.contains(v) or (RERUN_CANCELLED and s.publishSkipped.contains(v))) and resumable(s, v))
+                 or s.unknown.keys().size() > 0 or s.stale.size() > 0 or s.noneConflict.size() > 0))
+
   // I9. 公開済み（PUBLISHED）の版の確認が時間切れになるのは、反映の遅れが待ちの上限を超えたときだけ（js#1161）。
   //     処理中のままの時間切れは、確認だけを再実行して待つ
   //     （#862 の CodeRabbit の指摘で強めた）反映の確認が時間切れなら、最後の確認の時刻（lastPoll）には、公開先はまだ返していない。
@@ -704,8 +769,8 @@ module release_path {
 
   val safety: bool = all {
     publishedOnlyFromReleasePR, publishedMonotonic, tagsMonotonic, noDuplicatePublish,
-    gateTagsOnReleaseCommits, legacyFromItsTag, legacyBeforeNewer, releaseOnlyAfterPublished,
-    stopsAreRecoverable, untaggedReleaseRecoverable, timeoutOnlyBeyondBudget, noReleaseForFailed, noUploadWhileUnknown,
+    gateTagsOnReleaseCommits, legacyFromItsTag, legacyBeforeNewer, requiredVisibleBeforeNewer, releaseOnlyAfterPublished,
+    stopsAreRecoverable, untaggedReleaseRecoverable, publishedReleaseRecoverable, timeoutOnlyBeyondBudget, noReleaseForFailed, noUploadWhileUnknown,
   }
 
   // 確認の上限が反映の遅れを覆うなら、PUBLISHED の版の確認は時間切れにならない（js#1161 の直しの条件）
@@ -773,14 +838,15 @@ module javaReleasesOnly {
   ).*
 }
 
-// kotlin：v5.2.0 のタグと GitHub のリリースはあるが、Central に無い。関門の設定「公開先に必要な版：5.2.0」
+// kotlin：v5.2.0 のタグと GitHub のリリースはあるが、Central に無い。関門の設定「公開先に必要な版：5.2.0」。
+// R4（event-store-adapter-kotlin）の形：事前の確認は deployment を記録を通してだけ見る（RECORD_VIEW、javaR2b と同じ）
 module kotlin {
   import release_path(
     VERSIONS = 1.to(4), INIT_VER = 2, INIT_PRE = true, INIT_TAG = 1, LEGACY = Set(1), REQUIRED_PUBLISHED = Set(1),
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = true, OTHER_PRS = true,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 6, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 6,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
+    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 7
   ).*
 }
@@ -792,20 +858,58 @@ module kotlinNoManual {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = true,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 6, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 6,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
+    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 7
   ).*
 }
 
-// scala：kotlin と同じく v5.2.0 が Central に無い。publish.yml は bundle のアップロード（受け付けのあとで FAILED になりうる）
+// kotlin（R4）で、ほかの PR と手のタグを外し、5.2.0 のあとに版を続けて出す経路を多く試す
+module kotlinReleasesOnly {
+  import release_path(
+    VERSIONS = 1.to(4), INIT_VER = 2, INIT_PRE = true, INIT_TAG = 1, LEGACY = Set(1), REQUIRED_PUBLISHED = Set(1),
+    TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
+    LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 2,
+    NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
+    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
+    RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 6
+  ).*
+}
+
+// scala：kotlin と同じく v5.2.0 のタグと GitHub のリリースはあるが、Central に無い。main の `version` は 5.2.0（R5 で足す。
+// プレリリースを経ない）。関門の設定「公開先に必要な版：5.2.0」。R5（event-store-adapter-scala）の形：publish.yml は bundle を上げ、
+// 事前の確認は deployment を記録を通してだけ見る（RECORD_VIEW、javaR2b・kotlin と同じ）
 module scala {
   import release_path(
     VERSIONS = 1.to(4), INIT_VER = 1, INIT_PRE = false, INIT_TAG = 1, LEGACY = Set(1), REQUIRED_PUBLISHED = Set(1),
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = true, OTHER_PRS = true,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 6, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 6,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
+    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 7
+  ).*
+}
+
+// scala（R5）で手のタグなし。I6b が破れないことを示す
+module scalaNoManual {
+  import release_path(
+    VERSIONS = 1.to(4), INIT_VER = 1, INIT_PRE = false, INIT_TAG = 1, LEGACY = Set(1), REQUIRED_PUBLISHED = Set(1),
+    TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = true,
+    LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 6, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 6,
+    NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
+    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
+    RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 7
+  ).*
+}
+
+// scala（R5）で、ほかの PR と手のタグを外し、5.2.0 のあとに版を続けて出す経路を多く試す
+module scalaReleasesOnly {
+  import release_path(
+    VERSIONS = 1.to(4), INIT_VER = 1, INIT_PRE = false, INIT_TAG = 1, LEGACY = Set(1), REQUIRED_PUBLISHED = Set(1),
+    TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
+    LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 2,
+    NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
+    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
+    RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 6
   ).*
 }
 
@@ -843,7 +947,19 @@ module kotlinNoRequired {
     TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
     LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 0,
     NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
-    RECORD_VIEW = false, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
+    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
+    RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 5
+  ).*
+}
+
+// scala（R5）で、関門の設定「公開先に必要な版」を持たない場合（I6b が破れる見込み。A1 の scala での再現）
+module scalaNoRequired {
+  import release_path(
+    VERSIONS = 1.to(4), INIT_VER = 1, INIT_PRE = false, INIT_TAG = 1, LEGACY = Set(1), REQUIRED_PUBLISHED = Set(),
+    TAG_IS_PUBLISH = false, ASYNC_PORTAL = true, PRECHECK_SEES_DEPLOYMENTS = true, MANUAL_TAGS = false, OTHER_PRS = false,
+    LOOKUP_ATTEMPTS = 5, MAX_ASSOC_DELAY = 0, CONFIRM_ATTEMPTS = 8, MAX_DELAY = 0,
+    NEW_PATH = true, TAG_PUSH_ENABLED = true, OLD_PUBLISH = false, OLD_BUMP = false, PRECHECK_SEES_OTHER_DEPLOYMENTS = true,
+    RECORD_VIEW = true, UNKNOWN_DETECTED = true, UNKNOWN_STOPS = true, NONE_SKIPS_QUERY = false, PRECHECK_LATEST_TAG = true, RERUN_CANCELLED = true,
     RERUN_WHOLE_PUBLISH = false, MAX_COMMITS = 5
   ).*
 }

@@ -155,7 +155,10 @@ def expected_action(scenario, current):
     if any(attempt.override not in (None, 'none') and attempt.record and attempt.override != attempt.record
            for plan, attempt in own):
         return 'stop', None
-    if any(plan.expiry != 'ok' and any(attempt.record for attempt in plan.attempts) for plan in live):
+    # 期限の短い・切れた記録は、変数に同じ ID の行か =none の行があるときだけ止めない（#870、#871）
+    if any(plan.expiry != 'ok' and any(attempt.record and attempt.override not in (attempt.record, 'none')
+                                       for attempt in plan.attempts)
+           for plan in live):
         return 'stop', None
     # 2. run の数、タグと run
     if scenario.total > portal.MAX_RUNS:
@@ -190,8 +193,13 @@ def expected_action(scenario, current):
     waiting = {target for _, target, state in seen if state in portal.PROCESSING}
     if waiting:
         return 'wait', waiting
-    if any(tag == f'v{scenario.version}' and state == 'PUBLISHED' for tag, _, state in seen) or 200 in scenario.repo1:
+    if any(tag == f'v{scenario.version}' and state == 'PUBLISHED' for tag, _, state in seen):
         return 'published', None
+    # repo1 は 6 つの POM がすべてそろったときだけ公開済み。一部だけなら止まる（#870）
+    if all(code == 200 for code in scenario.repo1):
+        return 'published', None
+    if 200 in scenario.repo1:
+        return 'stop', None
     if max(scenario.remote_tags, key=lambda tag: tuple(int(part) for part in tag[1:].split('.'))) != \
             f'v{scenario.version}':
         return 'stop', None

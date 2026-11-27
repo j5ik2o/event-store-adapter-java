@@ -13,9 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from central_portal_support import Stub, portal
-from release_test_support import GITHUB, RELEASE, REPOSITORY, VERSION_FILE, pull
+from release_test_support import FAKE_GH, GITHUB, RELEASE, REPOSITORY, VERSION_FILE, pull
 from release_workflow_canonical import release_steps
-from test_release_rehearsal import FAKE_GH
 from workflow_runner import Runner, UnknownExpression, default_environment
 
 RUN_ID = portal.FIRST_COUNTED_RUN_ID + 500
@@ -24,13 +23,16 @@ SECRETS = {name: f'dummy-{name.lower()}' for name in
            ('SONATYPE_USERNAME', 'SONATYPE_PASSWORD', 'SIGNING_KEY', 'SIGNING_PASSWORD')}
 FAKE_GRADLEW = '''#!/usr/bin/env python3
 # 偽の gradlew。呼ばれた引数を残し、properties には版を、publishToMavenLocal には 6 つの成果物の 10 ファイルを書く。
-import os, sys
+import os, subprocess, sys
 from pathlib import Path
 with open(os.environ['FAKE_GRADLE_CALLS'], 'a') as calls:
     calls.write(' '.join(sys.argv[1:]) + '\\n')
 if 'properties' in sys.argv:
     print('version: ' + os.environ['FAKE_GRADLE_VERSION'])
 elif 'publishToMavenLocal' in sys.argv:
+    if os.environ.get('FAKE_NEW_TAG'):
+        # bundle を作るあいだに、新しいタグがリモートに push される
+        subprocess.run(['git', '-C', os.environ['FAKE_REMOTE'], 'tag', os.environ['FAKE_NEW_TAG'], 'main'], check=True)
     repository = next(arg.split('=', 1)[1] for arg in sys.argv if arg.startswith('-Dmaven.repo.local='))
     version = os.environ['FAKE_GRADLE_VERSION']
     for artifact in os.environ['FAKE_ARTIFACTS'].split():
@@ -99,11 +101,13 @@ class ReleaseWorkflowRunTest(unittest.TestCase):
             self.git(self.work, 'add', 'feature.txt')
         self.git(self.work, 'commit', '-am', f'version up to v{release} (#1)')
         sha = self.git(self.work, 'rev-parse', 'HEAD')
+        # pull request の head：squash と同じ木と親で、別のコミット（refs/pull/1/head に置く）
+        head_sha = self.git(self.work, 'commit-tree', 'HEAD^{tree}', '-p', 'HEAD^', '-m', f'version up to v{release}')
         tag = tag or f'v{release}'
         self.git(self.work, 'tag', '-a', tag, '-m', tag)
         self.git(self.work, 'remote', 'add', 'origin', str(self.remote))
-        self.git(self.work, 'push', 'origin', 'main', '--tags')
-        self.pulls.write_text(json.dumps([pull(sha, ref=head)]))
+        self.git(self.work, 'push', 'origin', 'main', '--tags', f'{head_sha}:refs/pull/1/head')
+        self.pulls.write_text(json.dumps([pull(sha, ref=head, head_sha=head_sha, whole=None)]))
         workspace = self.directory / 'workspace'
         self.git(self.directory, 'clone', str(self.remote), str(workspace))
         self.git(workspace, 'checkout', '-q', tag)
@@ -236,6 +240,42 @@ class ReleaseWorkflowRunTest(unittest.TestCase):
             self.assertEqual(result.outcome(step_id), 'skipped', step_id)
         self.assertEqual(self.uploads, [])
         self.assertNotIn('publishToMavenLocal', self.gradle_calls.read_text())
+
+    def test_a_newer_tag_pushed_while_the_bundle_is_built_stops_the_upload(self):
+        # upload の直前の関門（#870）：precheck のあと、bundle を作るあいだに v5.4.0 が push された
+        workspace, tag = self.history()
+        result = self.run_release(workspace, tag, step_env={'bundle': {'FAKE_NEW_TAG': 'v5.4.0',
+                                                                       'FAKE_REMOTE': str(self.remote)}})
+        self.assertEqual(result.outcome('precheck'), 'success')
+        self.assertEqual(result.outcome('bundle'), 'success')
+        self.assertEqual(result.outcome('release_gate_again'), 'failure')
+        again = next(step for step in result.steps if step.id == 'release_gate_again')
+        self.assertIn('must be greater than the latest tag v5.4.0', again.stderr)
+        for step_id in ('upload', 'record', 'deployment'):
+            self.assertEqual(result.outcome(step_id), 'skipped', step_id)
+        self.assertEqual(self.uploads, [])
+        self.assertEqual(result.artifacts, [])
+        self.assertFalse(result.succeeded)
+
+    def test_the_gate_stops_a_pull_request_whose_whole_diff_is_more_than_the_version(self):
+        # rebase のマージ相当：merge_commit_sha の差分は version だけでも、PR の head が別のファイルも変えている（#870）
+        workspace, tag = self.history()
+        sha = self.git(self.work, 'rev-parse', tag + '^{commit}')
+        (self.work / 'feature.txt').write_text('x\n')
+        self.git(self.work, 'add', 'feature.txt')
+        self.git(self.work, 'commit', '-m', 'feat: hidden in the pull request')
+        head_sha = self.git(self.work, 'rev-parse', 'HEAD')
+        self.git(self.work, 'push', '-f', 'origin', f'{head_sha}:refs/pull/1/head')
+        self.pulls.write_text(json.dumps([pull(sha, head_sha=head_sha, whole=None)]))
+        result = self.run_release(workspace, tag)
+        self.assert_stopped_by_the_gate(result, 'as a whole must change only the version')
+
+    def test_the_gate_stops_when_the_head_of_the_pull_request_cannot_be_read(self):
+        workspace, tag = self.history()
+        sha = self.git(self.work, 'rev-parse', tag + '^{commit}')
+        self.pulls.write_text(json.dumps([pull(sha, head_sha='f' * 40, whole=None)]))
+        result = self.run_release(workspace, tag)
+        self.assert_stopped_by_the_gate(result, 'as a whole must change only the version')
 
     def test_the_id_is_recorded_when_the_upload_step_fails_after_writing_it(self):
         workspace, tag = self.history()

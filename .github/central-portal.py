@@ -2,16 +2,19 @@
 """Maven Central（Central Portal）への公開の、事前の確認・アップロード・待ち・repo1 の確認。
 
 設計：R2b の設計の追記（v3）の §1.1〜§1.6。判定は central-rules.py の decide。このファイルは照会と書き込みをする。
+HTTP の照会と締め切り（Deadline、with_deadline）は central-http.py（#870）。
 
-precheck --version X.Y.Z [--remote origin] [--attempts N --interval S]
+precheck --version X.Y.Z [--remote origin] [--attempts N --interval S --deadline SECONDS]
     release.yml の run・jobs・artifact、変数 CENTRAL_DEPLOYMENTS、Portal の状態、repo1 を読んで決める。
     出力（$GITHUB_OUTPUT）：action=upload|published、deployment=<ID または空>。止まるときは終了コード 1。
 upload --version X.Y.Z --bundle <zip> --record <ファイル>
     bundle を publishingType=AUTOMATIC で上げる（ファイル名は <deployment の名前>.zip）。受け取った ID を最初に --record の
     ファイルへ、次に $GITHUB_OUTPUT の deployment に書く（release.yml の ID の記録の手順が、そのファイルを artifact にする）。
-wait --id <ID> [--attempts N --interval S]
+wait --id <ID> [--attempts N --interval S --deadline SECONDS]
     deployment が PUBLISHED になるまで待つ。FAILED は errors を出して失敗。時間切れも失敗。
-confirm --version X.Y.Z [--attempts N --interval S]
+    precheck・wait・confirm は --deadline 秒（既定 3600）の締め切りを単調時計で持ち、照会・待ち・git ls-remote の時間も
+    数える（#870）。upload には全体の締め切りをかけない（送信の途中で切ると、上げたか分からない試みが増える）。
+confirm --version X.Y.Z [--attempts N --interval S --deadline SECONDS]
     repo1 が6つの成果物の POM を返すまで待つ。
 check-version --tag vX.Y.Z  （標準入力に `gradlew -q properties --property version` の出力）
 
@@ -25,10 +28,7 @@ import json
 import os
 import subprocess
 import sys
-import time
-import urllib.error
 import urllib.parse
-import urllib.request
 import uuid
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -46,21 +46,11 @@ def _load(name, filename):
 
 
 rules = _load('central_rules', 'central-rules.py')
+net = _load('central_http', 'central-http.py')
 gate, bundle, Stop = rules.gate, rules.bundle, rules.Stop
+http, with_deadline = net.http, net.with_deadline
 
 # ---------------------------------------------------------------- 照会
-
-def http(method, url, headers=None, body=None, timeout=60):
-    """(状態の番号, 本文) を返す。接続の失敗と時間切れは (None, b'')。"""
-    request = urllib.request.Request(url, data=body, method=method, headers=headers or {})
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.status, response.read()
-    except urllib.error.HTTPError as error:
-        return error.code, error.read()
-    except (urllib.error.URLError, TimeoutError, OSError):
-        return None, b''
-
 
 def central_auth():
     user, password = os.environ.get('SONATYPE_USERNAME', ''), os.environ.get('SONATYPE_PASSWORD', '')
@@ -122,9 +112,16 @@ def timestamp(text):
 
 
 def remote_tags(remote):
-    """リモートのタグを読む（`git ls-remote --tags`）。読むたびに取り直す（待つあいだに新しいタグができうる）。"""
+    """リモートのタグを読む（`git ls-remote --tags`）。読むたびに取り直す（待つあいだに新しいタグができうる）。
+    コマンドの締め切りの中で動かし、残り時間が無ければ動かさない（#870）。"""
+    timeout = 120
+    if net.DEADLINE is not None:
+        left = net.DEADLINE.remaining()
+        if left <= 0:
+            raise Stop(f'the deadline passed before the tags of {remote} could be listed; re-run the job')
+        timeout = min(timeout, left)
     try:
-        result = subprocess.run(['git', 'ls-remote', '--tags', remote], capture_output=True, text=True, timeout=120)
+        result = subprocess.run(['git', 'ls-remote', '--tags', remote], capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired as error:
         raise Stop(f'listing the tags of {remote} timed out; re-run the job') from error
     if result.returncode != 0:
@@ -192,7 +189,8 @@ def summary(text):
 
 # ---------------------------------------------------------------- コマンド
 
-def precheck(args, sleep=time.sleep, clock=lambda: datetime.now(timezone.utc)):
+@with_deadline
+def precheck(args, sleep, deadline, clock=lambda: datetime.now(timezone.utc)):
     """GitHub の事実は最初と、待ちが明けたときだけ読む。待つあいだは Portal と repo1 だけを読み直す。"""
     github = GitHub()
     auth = {}
@@ -207,13 +205,14 @@ def precheck(args, sleep=time.sleep, clock=lambda: datetime.now(timezone.utc)):
 
     facts = gather(args.version, args.remote, github, clock())
     decision = evaluate(facts)
+    attempt = 0
     for attempt in range(1, args.attempts + 1):
         if decision.action != 'wait':
             write_output(action=decision.action, deployment=decision.deployment)
             print(f'precheck: {decision.action} {decision.deployment}'.rstrip())
             return 0
         print(f'deployments in progress: {", ".join(decision.waiting)} ({attempt}/{args.attempts}); waiting')
-        if attempt == args.attempts:
+        if attempt == args.attempts or deadline.remaining() <= 0:
             break
         sleep(args.interval)
         decision = evaluate(facts)
@@ -221,7 +220,7 @@ def precheck(args, sleep=time.sleep, clock=lambda: datetime.now(timezone.utc)):
             # 待ちが明けたら、GitHub の事実とリモートのタグを読み直して 1 から決め直す（設計 §1.4 の 5）
             facts = gather(args.version, args.remote, github, clock())
             decision = evaluate(facts)
-    raise Stop(f'deployments are still in progress after {args.attempts} checks; re-run the job later')
+    raise Stop(f'deployments are still in progress after {attempt} checks; re-run the job later')
 
 
 def multipart(path, filename):
@@ -255,8 +254,10 @@ def upload(args):
     return 0
 
 
-def wait(args, sleep=time.sleep):
+@with_deadline
+def wait(args, sleep, deadline):
     auth = central_auth()
+    attempt = 0
     for attempt in range(1, args.attempts + 1):
         status = query_status(args.id, auth)
         if status.state == 'PUBLISHED':
@@ -266,13 +267,16 @@ def wait(args, sleep=time.sleep):
         if status.state == 'FAILED':
             raise Stop(f'deployment {args.id} FAILED: {status.errors or "no errors given"}')
         print(f'deployment {args.id}: {status.state} ({attempt}/{args.attempts})')
-        if attempt < args.attempts:
-            sleep(args.interval)
-    raise Stop(f'deployment {args.id} is not PUBLISHED after {args.attempts} checks; re-run the failed jobs '
+        if attempt == args.attempts or deadline.remaining() <= 0:
+            break
+        sleep(args.interval)
+    raise Stop(f'deployment {args.id} is not PUBLISHED after {attempt} checks; re-run the failed jobs '
                '(the precheck waits for the same deployment and does not upload again)')
 
 
-def confirm(args, sleep=time.sleep):
+@with_deadline
+def confirm(args, sleep, deadline):
+    attempt = 0
     for attempt in range(1, args.attempts + 1):
         codes = {artifact: repo1_code(artifact, args.version) for artifact in bundle.ARTIFACTS}
         if all(code == 200 for code in codes.values()):
@@ -280,9 +284,10 @@ def confirm(args, sleep=time.sleep):
             return 0
         missing = ', '.join(f'{artifact} ({code})' for artifact, code in codes.items() if code != 200)
         print(f'repo1 does not have yet: {missing} ({attempt}/{args.attempts})')
-        if attempt < args.attempts:
-            sleep(args.interval)
-    raise Stop(f'repo1 does not have {args.version} after {args.attempts} checks; re-run only this job')
+        if attempt == args.attempts or deadline.remaining() <= 0:
+            break
+        sleep(args.interval)
+    raise Stop(f'repo1 does not have {args.version} after {attempt} checks; re-run only this job')
 
 
 def check_version(args):
@@ -311,6 +316,8 @@ def main(argv):
     for command, attempts, interval in ((pre, 120, 30), (waiter, 120, 30), (conf, 60, 60)):
         command.add_argument('--attempts', type=int, default=attempts)
         command.add_argument('--interval', type=float, default=interval)
+        # 照会と ls-remote の時間も含めた上限（秒）。CONTRIBUTING の「最大 60 分」
+        command.add_argument('--deadline', type=float, default=3600)
     version = commands.add_parser('check-version')
     version.set_defaults(run=check_version)
     version.add_argument('--tag', required=True)
