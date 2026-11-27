@@ -51,9 +51,9 @@ python3 -m unittest discover -s .github/tests -v
 
 - 変更は pull request で `main` に入れます。`CI Success` ジョブが、lint・test・google-sdk-sets・aislop・release-tools・release-bundle・release-model の結果をまとめて判定します。
 - 版は `version` ファイルに持ち、ビルドが読みます。
-- Bump-Version ワークフローは手動で起動します。入力は `level`・`force_bump`・`version`・`rehearsal` です。版を上げる段階は、コミットの件名の Conventional Commits の型で決まります。`!` か `BREAKING CHANGE` は major、`feat` と `revert` は minor、それ以外は patch です（`.github/semver-level.py`）。
+- Bump-Version ワークフローは手動で起動します。入力は `level`・`force_bump`・`version`・`rehearsal` です。版を上げる段階は、コミットの件名の Conventional Commits の型で決まります。`!` か `BREAKING CHANGE` は major、`feat` と `revert` は minor、それ以外は patch です（`.github/semver-level.py`）。どの場合も、次の版は `version` の版より大きくなければなりません。大きくなければ、pull request を開く前に止まります（版上げの pull request がマージ済みで、まだタグが無いことがあるため）。
 - Bump-Version は `main` へ push しません。新しい版を `release/vX.Y.Z` の枝の `version` にコミットし、`main` への pull request を開きます。GitHub Release は作らず、`version` を SNAPSHOT 版へ戻すこともしません。
-- `version` を変えたコミットが `main` に入ると、Bump-Version のタグのジョブが、関門（`.github/release-gate.py`）でそのコミットを確かめます。コミットは、このリポジトリの `release/vX.Y.Z` からの pull request を squash でマージしたもので、`version` の版だけを変えていなければなりません。版は、前の版とすべての `vX.Y.Z` のタグより大きくなければなりません。親のコミットに `version` が無いときは、リリースしません。
+- `version` を変えたコミットが `main` に入ると、Bump-Version のタグのジョブが、関門（`.github/release-gate.py`）でそのコミットを確かめます。コミットは、このリポジトリの `release/vX.Y.Z` からの pull request を squash でマージしたもので、`version` の版だけを変えていなければなりません。pull request の全体（マージの基点から head まで）も、`version` の版だけを変えていなければなりません。版は、前の版とすべての `vX.Y.Z` のタグより大きくなければなりません。親のコミットに `version` が無いときは、リリースしません。
 - `vX.Y.Z` のタグを push すると Release ワークフローが起動します。Release ワークフローは、タグのコミットをもう一度関門で確かめてから、その版を Maven Central へ公開します（[リリースの出し方](#リリースの出し方)）。Snapshot（試験版）は公開しません。正式版を使ってください。
 - 依存の更新は Renovate が行います（`renovate.json`）。
 
@@ -65,11 +65,13 @@ python3 -m unittest discover -s .github/tests -v
 4. Release ワークフローが、ジョブ `Publish to Maven Central` を次の順に流します。
    1. タグのコミットを関門で確かめます。
    2. Gradle がタグの版をビルドすることを確かめます。
-   3. Maven Central と前の Release の run を確かめます（`.github/central-portal.py precheck`）。処理中の deployment があれば待ちます（最大 60 分）。版が公開済みならアップロードせずに先へ進み、行方の分からない試みがあれば止まります。
-   4. bundle（180 ファイル）を作り、Central Portal へ上げます（`publishingType=AUTOMATIC`）。
+   3. Maven Central と前の Release の run を確かめます（`.github/central-portal.py precheck`）。処理中の deployment があれば待ちます（最大 60 分）。その版の `PUBLISHED` の deployment が分かっているか、repo1 が6つの POM をすべて返すなら、アップロードせずに先へ進みます。repo1 が一部だけを返すとき、行方の分からない試みがあるときは止まります。
+   4. bundle（180 ファイル）を作り、タグのコミットをもう一度関門で確かめ（bundle を作るあいだに新しいタグが push されていたら上げない）、Central Portal へ上げます（`publishingType=AUTOMATIC`）。
    5. deployment の ID を artifact `central-deployment-<試みの番号>-<ID>` に残します（90 日）。
    6. deployment が `PUBLISHED` になるまで待ちます（最大 60 分）。
-5. `PUBLISHED` になったら、`Create the GitHub release` が GitHub のリリースを作り、`Check Maven Central` が、repo1 が6つの POM を返すまで待ちます（最大 60 分）。
+5. `PUBLISHED` になったら、`Create the GitHub release` が GitHub のリリースを作り、`Check Maven Central` が、repo1 が6つの POM を返すまで待ちます（最大 60 分）。リリースノートの基点は、前にある `vX.Y.Z` のタグのうち、GitHub のリリースがある最も新しいものです（飛んだ版の変更も載ります）。リリースは Latest の印を付けずに作り、次の手順 `Mark the greatest release as latest` が、リリースの一覧を読み直して、最大の `vX.Y.Z` のリリース（今作ったものを含む）を Latest にします。
+
+事前の確認・待ち・repo1 の確認の 60 分は、手順ごとの1つの締め切り（`--deadline`、3600 秒）で、照会と `git ls-remote` の時間も数えます。締め切りのときに途中の照会は打ち切り、照会の失敗として扱います。接続と応答の見出しは、通信の1回ごとに残りの時間までです。本文は締め切りで切ります。アップロードには全体の締め切りをかけません（途中で切ると、上げたか分からない試みが残るため）。
 
 予行（`rehearsal: true`）は、`version up to vX.Y.Z (rehearsal, do not merge)` という題の draft の pull request を開きます。マージせずに閉じて、枝を消してください。
 
@@ -101,24 +103,30 @@ ID が無くて事前の確認が止まったときは、そのエラーの文�
 |---|---|---|
 | タグが版上げの pull request の squash に付いていない、版と一緒にコードを変えた、版を下げた、タグと版が合わない | 関門の手順が失敗する。ビルドもアップロードもしない | タグを消す。`version` を pull request で直す |
 | Gradle がタグと違う版をビルドする | `Check the version Gradle builds` が失敗する | `version` を pull request で直し、次の版で出す |
-| GitHub・Portal・repo1 への照会が失敗した（5xx、時間切れ） | 事前の確認が止まる | 失敗したジョブを再実行する |
+| GitHub・Portal・repo1 への照会が失敗した（5xx、時間切れ、本文の途中の切断、締め切り）。関門の pull request の照会を含む | 関門か事前の確認が止まる | 失敗したジョブを再実行する |
+| repo1 が6つの POM の一部だけを返し、その版の `PUBLISHED` の deployment が分からない | 事前の確認が止まる（公開されて反映の途中かもしれない） | 数分おいて、失敗したジョブを再実行する。続くときは、その版の deployment を Portal で確かめる |
 | ほかの run の deployment が処理中 | 事前の確認が最大 60 分待ち、時間切れで失敗する | 失敗したジョブを再実行する |
 | アップロードしたかもしれないのに、deployment の ID が無い試みがある（手順の一覧が切れた試み、ジョブの無い run、release ジョブの無い試みを含む） | 事前の確認が止まり、足す行を出す | 試みの job summary やログ、または Portal で名前から ID を探す。出された試みすべてに `<run_id>/<試みの番号>=<ID>` か `=none` を足して再実行する |
 | アップロードが 201 と deployment の ID を返さない | アップロードの手順が失敗する。次の試みは上の行のとおり止まる | 上の行と同じ |
+| bundle を作るあいだに、より新しい `vX.Y.Z` のタグが push された | `Check the release gate again before the upload` が失敗する（`must be greater than the latest tag`）。アップロードしない | 下の「より新しいタグがある」の行と同じ |
 | bundle のファイルが足りない・多い | bundle の手順が失敗する。アップロードしない | pull request で直し、次の版で出す。再実行はタグのコミットのスクリプトで動くので、直しは効かない |
 | 署名の鍵が無い・違う | bundle の手順の署名で失敗する。アップロードしない | 秘密の値を直して再実行する |
 | deployment が `FAILED` | 待ちの手順が Portal の errors を出して失敗する。GitHub のリリースは作らない | 失敗したジョブを再実行する（事前の確認が `FAILED` を見て、上げ直す）。中身の誤りなら次の版で直す |
 | `FAILED` の deployment を Portal で drop した | 事前の確認が止まる（ID が見つからない） | drop したあとに `<run_id>/<試みの番号>=none` を足して再実行する |
 | 60 分たっても deployment が処理中 | 待ちの手順が失敗する | 失敗したジョブを再実行する。事前の確認は同じ deployment を待ち、上げ直さない |
 | 60 分たっても repo1 が版を返さない | `Check Maven Central` が失敗する | `Check Maven Central` だけを再実行する |
-| GitHub のリリースを作れなかった | `Create the GitHub release` が失敗する | `Create the GitHub release` だけを再実行する |
+| GitHub のリリースを作れなかった、またはリリースの一覧を読めなかった | `Create the GitHub release`（か `Mark the greatest release as latest`）が失敗する。一覧の読み取りの失敗を「リリースなし」と見ない | `Create the GitHub release` だけを再実行する |
+| Latest のリリースが最大の版でない。違う版の `Create the GitHub release` のジョブが同時に動き、古い版のジョブが、新しい版のリリースができる前に一覧を読んだ | 古い版のジョブが、自分の読んだ一覧の最大の版を Latest にする | 最大の版の `Create the GitHub release` を再実行する（リリースは既にあるので、最大の版を Latest にするだけ）。または最大の版に `gh release edit vX.Y.Z --latest` を流す |
 | より新しいタグがある（版が追い越された） | 関門が止まる（`must be greater than the latest tag`）。その版は公開しない | そのまま（飛んだ版）。その版が既に `PUBLISHED` だったとき（待ちが時間切れになり、再実行の前に新しいタグができた）は、[新しいタグの前に公開された版](#新しいタグの前に公開された版)の手順で回復する |
 | 待っていた公開のジョブが、`release-publish` の group にあとから着いたジョブ（ほかのタグの push、ほかの版の再実行）に置き換えられた | その run は始まる前に取り消される。その run は何も公開しない | その版が最新の `vX.Y.Z` のタグなら、取り消された run のジョブをすべて再実行する（取り消されたジョブは、アップロードに数えない）。そうでなければ、再実行しても新しいタグがあるので関門で止まる。前の試みで版が既に公開されていたとき（たとえば GitHub のリリースの作成だけが失敗していた）は、[新しいタグの前に公開された版](#新しいタグの前に公開された版)の手順で回復する。公開されていなければそのまま（飛んだ版） |
 | タグのジョブ（`Tag the merged version`）が、`release-tag` の group にあとから着いたジョブに置き換えられた | その run は取り消される。その版にタグが付かない | その版が最新の `vX.Y.Z` のタグより大きければ、取り消された run を再実行する。あとにほかの pull request がマージされていても同じ（関門は `main` の先頭であることを求めない）。そうでなければそのまま（関門が拒否する） |
 | `CENTRAL_DEPLOYMENTS` の行の形が違う、artifact と違う ID を書いた、Portal が知っている deployment に `none` を書いた | 事前の確認が止まる | 行を直すか消して、再実行する |
-| Release の run や `central-` の artifact を消した。タグの push で Release の run が起きなかった（一度に4つ以上のタグの push、障害） | 事前の確認が止まる（Release の run の無いタグがある） | その版の deployment が処理中でないことを Portal で確かめ、`tag/vX.Y.Z=checked` を足して再実行する。タグは動かさない |
+| Release の run を消した。タグの push で Release の run が起きなかった（一度に4つ以上のタグの push、障害） | 事前の確認が止まる（Release の run の無いタグがある。`tag vX.Y.Z has no Release run`） | その版の deployment が処理中でないことを Portal で確かめ、`tag/vX.Y.Z=checked` を足して再実行する。タグは動かさない |
+| Release の run は残っているが、ある試みの `central-deployment-<試みの番号>-<ID>` の artifact を消した | 事前の確認が止まる（その試みは上げたかもしれないのに ID が無い。足す行を出す）。`tag/vX.Y.Z=checked` は効かない（run の無いタグにだけ効く） | その試みの job summary やログ、または Portal で `event-store-adapter-java-<版>-run<run_id>-<試みの番号>` という名前から ID を探す。`<run_id>/<試みの番号>=<ID>` を足す（Portal にその deployment が無ければ `=none`）。そのあと再実行する |
 | `release.yml` のジョブや手順の名前を変えた | 前の run で、事前の確認が止まる | 変えない。どうしても変えるときは、古い名前も `.github/central-rules.py` に残す |
-| artifact の保存期間を 90 日より短くした | 事前の確認が止まる | 90 日に戻す |
+| artifact の保存期間を 90 日より短くした、または記録の期限が切れた | 事前の確認が止まる（`expires before 90 days` か `has expired`） | 新しい記録のために、保存期間を 90 日に戻す。既にある記録の期限は早いまま変わらないので、エラーの文が出す行（その記録の ID の `<run_id>/<試みの番号>=<ID>`）を足して再実行する。事前の確認は、その deployment の状態を今までどおり Portal で読む |
+| 版上げの pull request が版を下げる：版上げの pull request がマージ済みで、まだタグが無い（たとえば `PUSH_RELEASE_TAG` が `'false'` の間）ため、`version` が最新のタグより大きい | Bump-Version が枝を push する前に止まる（`must be greater than the version ... in version`） | マージ済みの版にタグを付ける（`PUSH_RELEASE_TAG` が `'true'` の状態で、そのタグのジョブを再実行する）か、pull request で `version` を前の SNAPSHOT 版に戻してから、Bump-Version をやり直す |
+| 版上げの pull request の全体が、`version` の版のほかも変えている（途中のコミットがほかのファイルを変え、あとのコミットで戻していない）、または head を読めなかった | 関門が失敗する（`as a whole must change only the version`）。タグも公開もしない | head を読めなかったとき（マージのあとに force-push されたなど）は、ジョブを再実行する。そうでなければ、pull request で版を戻し、新しい版上げの pull request を開く |
 | 30 日を過ぎて、run を再実行できない | | その版は飛んだ版として扱い、次の版を出す。その前に、行方の分からない試みすべてに行を足す |
 | 80 日より前の run | 事前の確認は数えない | |
 
@@ -127,7 +135,7 @@ ID が無くて事前の確認が止まったときは、そのエラーの文�
 版は Maven Central に出ているのに、その run が終わる前に新しい `vX.Y.Z` のタグが push された場合、古い版の再実行は、どれも関門で止まります。起きるのは、deployment の待ちが時間切れになり、そのあと Portal が公開したとき、または前の試みが公開したあとで後の手順（たとえば GitHub のリリースの作成）が失敗し、再実行が `release-publish` の group で置き換えられたときです。このとき、GitHub のリリースと repo1 の確認が欠けます。手で回復します。
 
 1. repo1 が版を返すことを確かめます。`.github/central-bundle.py` の6つの成果物（`ARTIFACTS`）それぞれについて、`https://repo1.maven.org/maven2/io/github/j5ik2o/<成果物>/<版>/<成果物>-<版>.pom` を見ます。
-2. 前のリリースのタグ `<previous>` からリリースノートを書きます。
+2. `<previous>`（前にある `vX.Y.Z` のタグのうち、GitHub のリリースがある最も新しいもの）からリリースノートを書きます。
 
    ```sh
    python3 .github/create-release-note-header.py https://github.com j5ik2o/event-store-adapter-java <previous> vX.Y.Z > release-body.md
@@ -135,6 +143,13 @@ ID が無くて事前の確認が止まったときは、そのエラーの文�
      | python3 .github/create-release-note-body.py https://github.com j5ik2o/event-store-adapter-java >> release-body.md
    ```
 
-3. リリースを作ります：`gh release create vX.Y.Z --verify-tag --title "Release vX.Y.Z" -F release-body.md`。
+3. Latest の印を付けずにリリースを作り、そのあと最大の `vX.Y.Z` のリリースを Latest にします（ここで回復する版は新しいタグより古いので、印を取らせない）。
+
+   ```sh
+   gh release create vX.Y.Z --verify-tag --title "Release vX.Y.Z" -F release-body.md --latest=false
+   gh api --paginate repos/j5ik2o/event-store-adapter-java/releases --jq '.[] | select(.draft | not) | .tag_name' \
+     | python3 .github/release-gate.py latest-tag \
+     | xargs -I{} gh release edit {} --repo j5ik2o/event-store-adapter-java --latest
+   ```
 
 この場合のために関門を緩めることはしません。関門は、事前の確認より前に、秘密の値を持たずに、版がほかのどのタグより大きいことを確かめ続けます。
