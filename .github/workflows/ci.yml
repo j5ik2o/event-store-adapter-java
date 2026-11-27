@@ -9,7 +9,8 @@ on:
     branches:
       - main
   schedule:
-    - cron: '0 * * * *'
+    # 毎日1回（毎時の実行が Maven Central の 429 を招く。j5ik2o/event-store-adapter-kotlin#922）
+    - cron: '17 3 * * *'
 jobs:
   lint:
     runs-on: ubuntu-latest
