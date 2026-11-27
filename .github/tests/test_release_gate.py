@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from release_test_support import GATE_SCRIPT, REPOSITORY, VERSION_FILE, load_gate, pull
+from release_test_support import GATE_SCRIPT, REPOSITORY, VERSION_FILE, load_gate, pull, whole_diff
 
 gate = load_gate()
 
@@ -93,6 +93,45 @@ class ReleaseGateTest(unittest.TestCase):
                 self.assertIsNone(self.check(parent='5.3.0\n', current=version + '\n', pulls=[]))
         self.assert_rejected('is not a release version', mode='publish', current='5.4.0-rc.1\n',
                              tag='v5.4.0-rc.1')
+
+    def test_the_whole_pull_request_must_change_only_the_version(self):
+        # rebase のマージでは、最後のコミットの差分だけでは前のコミットの変更が見えない（#870、rs#375 の指摘）
+        message = 'as a whole must change only the version'
+        for whole in (None, 'x', {}, whole_diff('5.3.0\n', files=(VERSION_FILE, 'feature.txt')),
+                      whole_diff('5.3.0\n', files=()), whole_diff('5.3.1\n'), whole_diff('5.3.0'),
+                      whole_diff('5.3.0\n', before='5.3.0\n'), whole_diff('5.3.0\n', before=None),
+                      whole_diff(None), whole_diff('5.3.0\r\n', before='5.2.1-SNAPSHOT\r\n')):
+            with self.subTest(whole=whole):
+                self.assert_rejected(message, pulls=[pull(self.SHA, whole=whole)])
+                self.assert_rejected(message, mode='publish', tags={'v5.3.0': self.SHA}, tag='v5.3.0',
+                                     pulls=[pull(self.SHA, whole=whole)])
+        # 途中のコミットで別のファイルを足して消しても、全体の差分に残らなければ通る。前の版は main の先と違ってよい
+        for whole in (whole_diff('5.3.0\n'), whole_diff('5.3.0', before='5.2.0'), whole_diff('5.3.0\n', before='9.9.9\n')):
+            with self.subTest(whole=whole):
+                self.assertEqual(self.check(pulls=[pull(self.SHA, whole=whole)]), 'v5.3.0')
+
+    def test_check_next(self):
+        # 版上げの PR の版は、`version` の版より大きい（マージ済みでタグの無い版上げがあると、タグより大きくても下げうる）
+        self.assertEqual(gate.check_next('5.2.1-SNAPSHOT\n', '5.2.1'), '5.2.1')
+        self.assertEqual(gate.check_next('5.2.1-SNAPSHOT\n', '5.3.0'), '5.3.0')
+        self.assertEqual(gate.check_next('5.3.0', '5.3.1'), '5.3.1')
+        for text, version in (('5.3.0\n', '5.3.0'), ('5.3.0\n', '5.2.1'), ('5.2.1-SNAPSHOT\n', '5.2.0'),
+                              ('5.2.1-SNAPSHOT\n', '5.3.0-rc.1'), ('5.2.1\r\n', '5.3.0'), ('', '5.3.0'),
+                              ('5.2.1\n', 'v5.3.0')):
+            with self.subTest(text=text, version=version), self.assertRaises(gate.GateError):
+                gate.check_next(text, version)
+
+    def test_cli_check_next(self):
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / 'version').write_bytes(b'5.3.0\n')
+            result = self.cli('check-next', '5.3.1', cwd=directory)
+            self.assertEqual((result.returncode, result.stdout), (0, '5.3.1\n'), result.stderr)
+            result = self.cli('check-next', '5.2.9', cwd=directory)
+            self.assertEqual((result.returncode, result.stdout), (1, ''))
+            self.assertIn('::error::5.2.9 must be greater than the version 5.3.0 in version', result.stderr)
+            result = self.cli('check-next', '5.3.1', '--file', str(Path(directory) / 'missing'))
+            self.assertEqual(result.returncode, 1)
+            self.assertIn('::error::', result.stderr)
 
     def test_commit_off_main_fails(self):
         self.assert_rejected('is not reachable from main', on_main=False)

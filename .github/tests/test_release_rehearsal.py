@@ -6,24 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from release_test_support import BUMP, GITHUB, REPOSITORY, VERSION_FILE, outputs, pull, run_body
+from release_test_support import BUMP, FAKE_GH, GITHUB, REPOSITORY, VERSION_FILE, outputs, pull, run_body
 from test_release_workflow_shape import GATE_STEP
-
-FAKE_GH = '''#!/bin/sh
-# 偽の gh。api は FAKE_GH_FAIL 回だけ失敗し、続く FAKE_GH_EMPTY 回は [] を返し、その後に $FAKE_PULLS を返す。
-calls=$(cat "$FAKE_GH_CALLS" 2>/dev/null || echo 0)
-calls=$((calls + 1))
-echo "$calls" > "$FAKE_GH_CALLS"
-if [ "$calls" -le "${FAKE_GH_FAIL:-0}" ]; then
-  echo "HTTP 502" >&2
-  exit 1
-fi
-if [ "$calls" -le $(( ${FAKE_GH_FAIL:-0} + ${FAKE_GH_EMPTY:-0} )) ]; then
-  echo '[]'
-  exit 0
-fi
-cat "$FAKE_PULLS"
-'''
 
 
 class ReleaseRehearsalTest(unittest.TestCase):
@@ -106,12 +90,15 @@ class ReleaseRehearsalTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def squash_merge(self, ref='release/v5.3.0'):
+        """枝を squash して main に push し、枝の先を refs/pull/1/head にも置く（GitHub と同じ）。"""
         merged = self.clone()
+        head = self.git(merged, 'rev-parse', 'origin/' + ref)
+        self.git(merged, 'push', 'origin', f'{head}:refs/pull/1/head')
         self.git(merged, 'merge', '--squash', 'origin/' + ref)
         self.git(merged, 'commit', '-m', 'version up to v5.3.0 (#1)')
         self.git(merged, 'push', 'origin', 'main')
         sha = self.git(merged, 'rev-parse', 'HEAD')
-        self.pulls.write_text(json.dumps([pull(sha, ref=ref)]))
+        self.pulls.write_text(json.dumps([pull(sha, ref=ref, head_sha=head, whole=None)]))
         return sha
 
     def trigger(self, sha, **env):
@@ -154,6 +141,26 @@ class ReleaseRehearsalTest(unittest.TestCase):
                 self.assertIn('(https://github.com/o/r/compare/v5.2.0...release/v5.3.0)', body)
                 self.assertIn('add a feature', body)
                 self.assertEqual('**Rehearsal. Do not merge.**' in body, rehearsal == 'true')
+
+    def test_the_next_version_must_be_greater_than_the_version_file(self):
+        # 版上げの PR が版を下げない（#870）：マージ済みでタグの無い版上げ（version が 5.3.0）があると、最新のタグ v5.2.0
+        # から決めた次の版も、指定した版も、5.3.0 以下なら止まる
+        for content, level, requested, ok in (('5.2.1-SNAPSHOT\n', 'patch', '', '5.2.1'),
+                                              ('5.2.1-SNAPSHOT\n', 'minor', '', '5.3.0'),
+                                              ('5.3.0\n', 'minor', '', None), ('5.3.0\n', 'patch', '', None),
+                                              ('5.3.0\n', 'minor', '5.2.9', None), ('5.3.0\n', 'minor', '5.3.1', '5.3.1'),
+                                              ('5.3.0\n', 'major', '', '6.0.0')):
+            with self.subTest(content=content, level=level, requested=requested):
+                (self.work / VERSION_FILE).write_text(content)
+                result, out = self.step('versions', self.work, PREV_TAG='v5.2.0', SEMVER_LEVEL=level,
+                                        REQUESTED_VERSION=requested)
+                if ok:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(out, {'next_version': ok, 'next_tag': f'v{ok}'})
+                else:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('must be greater than the version 5.3.0 in version', result.stderr)
+                    self.assertEqual(out, {})
 
     def test_previous_tag_is_the_latest_stable_tag(self):
         self.git(self.work, 'tag', 'v9.0.0-rc.1')

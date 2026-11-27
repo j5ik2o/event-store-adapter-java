@@ -43,6 +43,8 @@ PRE_UPLOAD_STEPS = frozenset({
     'Check the version Gradle builds',
     'Check Maven Central before publishing',
     'Build the bundle',
+    # upload の直前の関門（#870）。落ちれば upload は動かない（always() が無い）
+    'Check the release gate again before the upload',
 })
 # v5.2.0 の run（42807727008）の次。これより後の release.yml の run は、手順の名前の有無に関わらず数える
 FIRST_COUNTED_RUN_ID = 42807727009
@@ -232,12 +234,17 @@ def attempt_records(facts):
             attempt, deployment = parsed
             if attempt in artifacts and artifacts[attempt] != deployment:
                 raise Stop(f'run {run.id} attempt {attempt} has two deployment records')
-            if artifact.expired:
-                raise Stop(f'the record {artifact.name} of run {run.id} has expired; check the artifact retention '
-                           f'(keep it at 90 days)')
-            if artifact.expires_at is None or artifact.expires_at < run.created_at + WINDOW:
-                raise Stop(f'the record {artifact.name} of run {run.id} expires before {WINDOW.days} days; '
-                           'keep the artifact retention at 90 days')
+            # 期限の短い記録は、変数に同じ ID の行があれば止めない（変数は消えないので、記録が消えても ID を失わない）。
+            # 保存期間を 90 日に戻しても、既にある記録の expires_at は変わらないため（#870、scala#934 の指摘）。
+            # Portal の状態は、その ID で今までどおり照会する（処理中なら待ち、公開済みなら上げない）
+            kept = overrides.attempts.get((run.id, attempt)) == deployment
+            if artifact.expired and not kept:
+                raise Stop(f'the record {artifact.name} of run {run.id} has expired; add {run.id}/{attempt}={deployment} '
+                           'to CENTRAL_DEPLOYMENTS, and keep the artifact retention at 90 days')
+            if (artifact.expires_at is None or artifact.expires_at < run.created_at + WINDOW) and not kept:
+                raise Stop(f'the record {artifact.name} of run {run.id} expires before {WINDOW.days} days; add '
+                           f'{run.id}/{attempt}={deployment} to CENTRAL_DEPLOYMENTS, and keep the artifact retention at '
+                           '90 days for new records')
             artifacts[attempt] = deployment
         jobs = executions(run.jobs)
         # release ジョブが一覧に無い試み（run 全体の startup_failure、一覧の欠け）は、アップロードしたかもしれないと見る。
@@ -346,8 +353,14 @@ def decide(facts):
                        if version == facts.version and status.state == 'PUBLISHED')
     if published:
         return Decision('published', deployment=published[0])
-    if any(facts.repo1.get(artifact) == 200 for artifact in bundle.ARTIFACTS):
+    # repo1 が 6 つの POM をすべて返すなら、Portal で PUBLISHED になった版（記録が消えても、ここで見つける）。
+    # 一部だけなら、反映の途中か、何かがおかしい。上げ直さず、Release も作らずに止める（#870、scala#934 の指摘）
+    served = [artifact for artifact in bundle.ARTIFACTS if facts.repo1.get(artifact) == 200]
+    if len(served) == len(bundle.ARTIFACTS):
         return Decision('published')
+    if served:
+        raise Stop(f'repo1 serves only {len(served)} of the {len(bundle.ARTIFACTS)} POMs of {facts.version}; a deployment '
+                   'may be published and still spreading. Re-run the job in a few minutes; if it stays, check the Portal')
     # 7. 最新のタグ
     tag = f'v{facts.version}'
     if gate.latest_tag(list(facts.remote_tags)) != tag:

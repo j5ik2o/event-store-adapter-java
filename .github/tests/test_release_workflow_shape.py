@@ -18,8 +18,8 @@ SECRET_STEPS = {'precheck': SONATYPE, 'bundle': SIGNING, 'upload': SONATYPE, 'de
 UPLOAD_IF = "steps.precheck.outputs.action == 'upload'"
 RECORD_IF = "always() && steps.upload.outputs.deployment != ''"
 PUBLISHED_IF = "needs.release.outputs.action == 'published' || needs.release.outputs.state == 'PUBLISHED'"
-STEP_IDS = [None, None, 'release_gate', None, None, None, 'build_version', 'precheck', 'bundle', 'upload', 'record',
-            'deployment']
+STEP_IDS = [None, None, 'release_gate', None, None, None, 'build_version', 'precheck', 'bundle', 'release_gate_again',
+            'upload', 'record', 'deployment']
 
 # 関門の手順の本文（名前の行を除く）。正本の関門の手順は、これと一字一句同じ（test_release_rehearsal.py も使う）。
 GATE_STEP = """        id: release_gate
@@ -52,6 +52,19 @@ def tag_push_allowed(bump, release):
 def replace_once(text, old, new):
     assert text.count(old) == 1, old
     return text.replace(old, new)
+
+
+def again_step():
+    """upload の直前の関門（#870）の本文：関門の手順と同じで、id・if・入力のディレクトリだけが違う。"""
+    return replace_once(replace_once(GATE_STEP, '        id: release_gate\n',
+                                     f'        id: release_gate_again\n        if: {UPLOAD_IF}\n'),
+                        'GATE="${RUNNER_TEMP}/release-gate"', 'GATE="${RUNNER_TEMP}/release-gate-again"')
+
+
+def replace_in_step(text, step_id, old, new):
+    """手順 step_id の中だけで old を1回 new に替える。"""
+    body = step(text, step_id)
+    return text.replace(body, replace_once(body, old, new))
 
 
 def move_step(text, step_id, before_id):
@@ -90,17 +103,35 @@ class CanonicalJudgeTest(unittest.TestCase):
             # R2a の壊し方（関門の手順）
             'commented': CANONICAL.replace('          python3 "${GITHUB_WORKSPACE}"/.github/release-gate.py',
                                            '          # python3 "${GITHUB_WORKSPACE}"/.github/release-gate.py'),
-            'if false': replace_once(CANONICAL, '          ' + gate_body, '          if false; then\n          ' + gate_body),
-            '&& false': replace_once(CANONICAL, '          ' + gate_body, '          false && \\\n          ' + gate_body),
-            'exit 0 in the gate': replace_once(CANONICAL, '          ' + gate_body, '          exit 0\n          ' + gate_body),
-            '|| true in the gate': replace_once(CANONICAL, '"${GATE}/remote-tags"\n', '"${GATE}/remote-tags" || true\n'),
-            'another tag': replace_once(CANONICAL, 'RELEASE_TAG: ${{ github.ref_name }}\n        run: |\n          GATE=',
-                                        'RELEASE_TAG: v5.2.0\n        run: |\n          GATE='),
+            'if false': replace_in_step(CANONICAL, 'release_gate', '          ' + gate_body,
+                                        '          if false; then\n          ' + gate_body),
+            '&& false': replace_in_step(CANONICAL, 'release_gate', '          ' + gate_body,
+                                        '          false && \\\n          ' + gate_body),
+            'exit 0 in the gate': replace_in_step(CANONICAL, 'release_gate', '          ' + gate_body,
+                                                  '          exit 0\n          ' + gate_body),
+            '|| true in the gate': replace_in_step(CANONICAL, 'release_gate', '"${GATE}/remote-tags"',
+                                                   '"${GATE}/remote-tags" || true'),
+            'another tag': replace_in_step(CANONICAL, 'release_gate', 'RELEASE_TAG: ${{ github.ref_name }}\n',
+                                           'RELEASE_TAG: v5.2.0\n'),
+            # upload の直前の関門（#870）
+            'no gate again': CANONICAL.replace(step(CANONICAL, 'release_gate_again'), ''),
+            'gate again || true': replace_in_step(CANONICAL, 'release_gate_again', '"${GATE}/remote-tags"',
+                                                  '"${GATE}/remote-tags" || true'),
+            'gate again if false': replace_in_step(CANONICAL, 'release_gate_again', f'if: {UPLOAD_IF}\n', 'if: false\n'),
+            'gate again reuses the inputs': replace_in_step(CANONICAL, 'release_gate_again', '/release-gate-again"',
+                                                            '/release-gate"'),
+            'gate again after the upload': move_step(CANONICAL, 'upload', 'release_gate_again'),
+            'another tag for the gate again': replace_in_step(CANONICAL, 'release_gate_again',
+                                                              'RELEASE_TAG: ${{ github.ref_name }}\n', 'RELEASE_TAG: v5.2.0\n'),
+            # Latest（#870）
+            'latest on create': replace_once(CANONICAL, ' --latest=false\n', '\n'),
+            'no latest step': CANONICAL.replace(step(CANONICAL, 'latest_release'), ''),
+            'release list error ignored': replace_once(CANONICAL, "--jq '.[].tag_name')\n", "--jq '.[].tag_name' || true)\n"),
             'gate if': replace_once(CANONICAL, '        id: release_gate\n', '        id: release_gate\n        if: false\n'),
             'continue-on-error': replace_once(CANONICAL, '        id: release_gate\n',
                                               '        id: release_gate\n        continue-on-error: true\n'),
             'gate shell': replace_once(CANONICAL, '        id: release_gate\n', '        id: release_gate\n        shell: sh {0}\n'),
-            'other id': replace_once(CANONICAL, 'id: release_gate', 'id: other'),
+            'other id': replace_once(CANONICAL, 'id: release_gate\n', 'id: other\n'),
             # 部分レビュー F1 の a〜e
             'a: precheck before the gate': move_step(CANONICAL, 'precheck', 'release_gate'),
             'b: upload without if': replace_once(CANONICAL, upload_if, '        id: upload\n'),
@@ -156,7 +187,8 @@ class CanonicalShapeTest(unittest.TestCase):
 
     def test_step_order_and_conditions(self):
         self.assertEqual([item['id'] for item in self.steps], STEP_IDS)
-        expected_if = {'bundle': UPLOAD_IF, 'upload': UPLOAD_IF, 'deployment': UPLOAD_IF, 'record': RECORD_IF}
+        expected_if = {'bundle': UPLOAD_IF, 'release_gate_again': UPLOAD_IF, 'upload': UPLOAD_IF, 'deployment': UPLOAD_IF,
+                       'record': RECORD_IF}
         for item in self.steps:
             with self.subTest(item['name']):
                 self.assertEqual(item['if'], expected_if.get(item['id']))
@@ -168,6 +200,19 @@ class CanonicalShapeTest(unittest.TestCase):
     def test_the_gate_step_is_the_fixed_one(self):
         gate = step(CANONICAL, 'release_gate')
         self.assertEqual(gate[gate.index('\n', 1) + 1:].rstrip('\n'), GATE_STEP)
+        again = step(CANONICAL, 'release_gate_again')
+        self.assertEqual(again[again.index('\n', 1) + 1:].rstrip('\n'), again_step())
+        self.assertIn('\n      - name: Check the release gate again before the upload\n', again)
+
+    def test_the_github_release_is_created_without_latest_and_the_greatest_is_marked_afterwards(self):
+        github_release = job(CANONICAL, 'github-release')
+        self.assertEqual([parse['id'] for parse in release_steps(CANONICAL, 'github-release')],
+                         [None, 'github_release', 'latest_release'])
+        self.assertEqual(github_release.count('gh release create '), 1)
+        self.assertIn('--latest=false\n', run_body(github_release, 'github_release'))
+        self.assertNotIn('gh release view', github_release)
+        self.assertIn('gh release edit "$LATEST_TAG" --repo "$GITHUB_REPOSITORY" --latest', step(CANONICAL, 'latest_release'))
+        self.assertNotIn('concurrency:', github_release)
 
     def test_secrets_are_only_in_the_env_of_their_steps(self):
         for item in self.steps:

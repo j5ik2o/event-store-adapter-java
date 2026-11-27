@@ -5,7 +5,9 @@ event-store-adapter-js の .github/release-gate.py を写し、版のファイ�
 
 latest-tag                   標準入力のタグ名から、最大の正式版のタグ (vX.Y.Z) を書く（無ければ何も書かない）。
 set-version <X.Y.Z>          `version` の版を書き換える。版の後ろの改行の有無は元のまま残す。
+check-next <X.Y.Z>           次の版が `version` の版より大きいかを確かめる（版上げの PR が版を下げないように。#870）。
 check --mode tag|publish ... コミットが、版上げの PR を squash したものかを確かめる。
+            PR の全体の差分（release-gate-inputs.sh が git で求めた whole_diff）も、`version` の版だけを替えること。
   tag     : 親に版のファイルが無い、版が変わっていない、正式版 (X.Y.Z) でない、
             タグが既に同じコミットにある、のときは何も書かない。通るならタグ名を書く。
   publish : --tag のタグが関門を通るなら、タグ名を書く。
@@ -116,6 +118,25 @@ def merged_from(pull, candidate, branch):
     )
 
 
+def whole_pull_is_the_version(pull, after):
+    """pull request の全体の差分（release-gate-inputs.sh が git で求めた、マージの基点から head まで）が、
+    `version` の版を after に替えることだけか。
+
+    rebase のマージでは、最後のコミットも親が1つで merge_commit_sha に一致し、前のコミットの変更は候補のコミットの
+    差分に現れない。途中で版を下げてほかのファイルを変え、最後に戻す pull request を見分けるため、全体の差分そのものを、
+    候補のコミットと同じ規則（版の1行だけ、改行はそのまま）で確かめる（#870、event-store-adapter-rs#375 の指摘）。"""
+    diff = pull.get('whole_diff')
+    if not isinstance(diff, dict) or diff.get('files') != [VERSION_FILE]:
+        return False
+    before_text, after_text = diff.get('before'), diff.get('after')
+    if not isinstance(before_text, str) or not isinstance(after_text, str):
+        return False
+    try:
+        return split_version_file(before_text)[0] != after and set_version(before_text, after) == after_text
+    except GateError:
+        return False
+
+
 def approved_release(candidate, before, after, same_newline):
     version = parse(after)
     if version is None:
@@ -139,10 +160,15 @@ def approved_release(candidate, before, after, same_newline):
         raise GateError(
             f'no pull request is associated with {candidate.sha} yet; '
             'if it is the merge of a version pull request, re-run the job')
-    if len([pull for pull in candidate.pulls if merged_from(pull, candidate, branch)]) != 1:
+    merged = [pull for pull in candidate.pulls if merged_from(pull, candidate, branch)]
+    if len(merged) != 1:
         raise GateError(
             f'{candidate.sha} is not the squash merge of a pull request from {candidate.repository}:{branch} into main; '
             'restore the version with a pull request')
+    if not whole_pull_is_the_version(merged[0], after):
+        raise GateError(
+            f'the pull request #{merged[0].get("number")} as a whole must change only the version in {VERSION_FILE} '
+            f'to {after} (or its head could not be read; re-run the job); restore the version with a pull request')
     tag = f'v{after}'
     newest = latest_tag([name for name in candidate.tags if name != tag])
     if newest and version <= parse(newest[1:]):
@@ -219,6 +245,17 @@ def check(args):
     return check_candidate(args.mode, candidate, args.tag)
 
 
+def check_next(text, version):
+    """次の版 version が、版のファイルの中身 text の版より大きいか。大きくなければ GateError。"""
+    if parse(version) is None:
+        raise GateError(f'{version!r} is not a release version (X.Y.Z)')
+    current = split_version_file(text)[0]
+    if parse(version) <= parse(current, release_only=False):
+        raise GateError(f'{version} must be greater than the version {current} in {VERSION_FILE} '
+                        '(a version pull request may be merged but not tagged yet)')
+    return version
+
+
 def write_version(path, version):
     with open(path, 'rb') as file:
         text = set_version(decode(file.read(), path), version)
@@ -233,6 +270,9 @@ def main(argv):
     setter = commands.add_parser('set-version')
     setter.add_argument('version')
     setter.add_argument('--file', default=VERSION_FILE)
+    following = commands.add_parser('check-next')
+    following.add_argument('version')
+    following.add_argument('--file', default=VERSION_FILE)
     gate = commands.add_parser('check')
     gate.add_argument('--mode', choices=('tag', 'publish'), required=True)
     gate.add_argument('--tag')
@@ -253,10 +293,14 @@ def main(argv):
         if args.command == 'set-version':
             write_version(args.file, args.version)
             return 0
+        if args.command == 'check-next':
+            with open(args.file, 'rb') as file:
+                print(check_next(decode(file.read(), args.file), args.version))
+            return 0
         if (args.required_version is None) != (args.required_published is None):
             raise GateError('--required-version and --required-published go together')
         tag = check(args)
-    except GateError as error:
+    except (GateError, OSError) as error:
         print(f'::error::{error}', file=sys.stderr)
         return 1
     if tag:
