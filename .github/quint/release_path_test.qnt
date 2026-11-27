@@ -58,6 +58,22 @@ module javaPathsTest {
       .then(githubRelease(2))
       .expect(s.releases.contains(2) and s.duplicateAttempts == 0 and safety)
 
+  // 事前の確認が、処理中の deployment を同じ実行の中で待つ（#871 の Devin の指摘）。モデルのジョブは1つの動作で動き切るので、
+  // 待つあいだのジョブは publishPending のまま。Portal が PUBLISHED にしてから resumePublishJob が動けば、同じ実行が上げずに
+  // 成功する（待ちが明けた形）。Portal より先に publishJob が動く経路が、待ちの時間切れ（publishFailed）
+  run waitInTheSameRunTest =
+    mergedRelease(0)
+      .then(tagJob(2))
+      .then(publishJob(2, true))
+      .then(rerunPublishJob(2))
+      .expect(s.publishPending.contains(2) and deployOf(s, 2) == Processing)
+      .expect(not(resumable(s, 2)))   // 処理中のあいだは published と読まない
+      .then(portalResolve(2, true))
+      .expect(s.publishPending.contains(2))
+      .then(resumePublishJob(2))
+      .then(githubRelease(2))
+      .expect(s.releases.contains(2) and s.jobOk.contains(2) and s.duplicateAttempts == 0 and safety)
+
   // timeoutThenConfirmTest の途中で、rerunConfirm が動かないこと
   run timeoutThenConfirmRefused1Test =
     mergedRelease(0)
@@ -408,6 +424,18 @@ module javaR2bPathsTest {
       .then(confirmPoll(2))
       .then(githubRelease(2))
       .expect(s.releases.contains(2) and s.duplicateAttempts == 0 and s.uploadsWhileUnknown == 0 and safety)
+
+  // 記録を通して見る形（RECORD_VIEW）でも、事前の確認は処理中の deployment を同じ実行の中で待ってから、上げずに成功する
+  run waitInTheSameRunTest =
+    tagged2
+      .then(publishJobAt(2, true, 0, 0))
+      .then(rerunPublishJob(2))
+      .expect(s.publishPending.contains(2) and deployOf(s, 2) == Processing and s.recorded.contains(2))
+      .expect(not(resumable(s, 2)))   // 処理中のあいだは published と読まない
+      .then(portalResolve(2, true))
+      .then(resumePublishJob(2))
+      .then(githubRelease(2))
+      .expect(s.releases.contains(2) and s.jobOk.contains(2) and s.duplicateAttempts == 0 and safety)
 
   // crashBeforeIdTest の途中で、confirmPoll が動かないこと
   run crashBeforeIdRefused1Test =

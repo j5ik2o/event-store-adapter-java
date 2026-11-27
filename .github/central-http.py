@@ -4,6 +4,7 @@
 http は (状態の番号, 本文) を返し、接続の失敗・時間切れ・本文の途中の切断・締め切りを (None, b'') にする。
 DEADLINE があるあいだ（precheck・wait・confirm を with_deadline で動かすあいだ）は、照会をその残りで打ち切る。
 本文が少しずつ届く場合の打ち切り方（read_body・Watchdog）は event-store-adapter-rs#375（81edc85）の写し。
+見出しまでの締め切り（http が照会を別のスレッドで動かし、締め切りまでしか待たない）は #871 で足した。
 """
 import http.client as http_client  # 関数 http と名前がぶつからないように
 import socket
@@ -93,24 +94,21 @@ def read_body(response, deadline, timeout):
             chunks.append(chunk)
         if deadline.remaining() <= 0:
             raise TimeoutError('the deadline passed while reading the body')
-        return b''.join(chunks)
+        body = b''.join(chunks)
+        # read1 は、Content-Length より短く閉じた本文でも例外を投げずに b'' を返す（read() は IncompleteRead を投げる）。
+        # 残りがあれば途中で切れた応答で、受け取った部分を使わない（#871 の Devin の指摘）。chunked は read1 が投げる
+        left_bytes = getattr(response, 'length', None)
+        if isinstance(left_bytes, int) and left_bytes > 0:
+            raise http_client.IncompleteRead(body, left_bytes)
+        return body
     finally:
         if watchdog is not None:
             watchdog.cancel()
             watchdog.raise_failure()
 
 
-def http(method, url, headers=None, body=None, timeout=60):
-    """(状態の番号, 本文) を返す。接続の失敗、時間切れ、本文の途中の切断（IncompleteRead など）は (None, b'')。
-
-    DEADLINE があれば、その残りで照会を打ち切り、残りが無ければ照会しない。締め切りのあとに読み終えた応答は使わない。
-    接続と見出しの受信は、1回の通信ごとに締め切りの残りまで（本文は read_body が締め切りで切る）。"""
-    deadline = DEADLINE
-    if deadline is not None:
-        left = deadline.remaining()
-        if left <= 0:
-            return None, b''
-        timeout = min(timeout, left)
+def query(method, url, headers, body, timeout, deadline):
+    """1回の照会。(状態の番号, 本文)。接続の失敗、時間切れ、本文の途中の切断は (None, b'')。"""
     request = urllib.request.Request(url, data=body, method=method, headers=headers or {})
     try:
         try:
@@ -121,6 +119,40 @@ def http(method, url, headers=None, body=None, timeout=60):
                 return error.code, read_body(getattr(error, 'fp', None) or error, deadline, timeout)
     except (urllib.error.URLError, http_client.HTTPException, TimeoutError, OSError, ValueError):
         return None, b''
+
+
+def http(method, url, headers=None, body=None, timeout=60):
+    """(状態の番号, 本文) を返す。接続の失敗、時間切れ、本文の途中の切断（IncompleteRead など）は (None, b'')。
+
+    DEADLINE があれば、その残りで照会を打ち切り、残りが無ければ照会しない。締め切りのあとに読み終えた応答は使わない。
+    urlopen は見出し（headers）を読み終えるまで戻らず、1回の通信ごとの timeout では、少しずつ届く見出しを止められない
+    （#871 の CodeRabbit の指摘）。そこで照会を別のスレッドで動かし、締め切りまでしか待たない（接続・TLS・見出し・本文の
+    すべて）。待つのをやめた照会は捨てる（読むだけの照会なので、あとで終わっても何も変えない）。本文は read_body が
+    締め切りで socket を閉じるので、そのスレッドも締め切りのあとに長く残らない。DEADLINE が無い照会（upload）は、
+    今のスレッドで1回の通信ごとの timeout だけで動かす。"""
+    deadline = DEADLINE
+    if deadline is None:
+        return query(method, url, headers, body, timeout, None)
+    left = deadline.remaining()
+    if left <= 0:
+        return None, b''
+    outcome = []
+
+    def run():
+        try:
+            outcome.append(('result', query(method, url, headers, body, min(timeout, left), deadline)))
+        except BaseException as error:   # 想定の外の誤りは、呼んだ側で投げ直す（握りつぶさない）
+            outcome.append(('error', error))
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(left)
+    if not outcome:
+        return None, b''
+    kind, value = outcome[0]
+    if kind == 'error':
+        raise value
+    return value
 
 
 def with_deadline(command):

@@ -124,6 +124,38 @@ class GithubReleaseTest(unittest.TestCase):
         self.release('v5.4.0', FAKE_RELEASES_LAG='1')
         self.assertEqual(self.marked(), ['v5.4.0'])
 
+    def test_the_notes_do_not_start_from_a_draft_or_a_prerelease(self):
+        # 下書き・プレリリースのリリースは、公開を確かめた版ではない（#871 の CodeRabbit の指摘）
+        self.releases.write_text('v5.2.0\nv5.3.0\tdraft\n')
+        result = self.release('v5.4.0')
+        self.assertIn('release notes from v5.2.0', result.stdout)
+        self.assertIn('in 5.3.0', (self.directory / 'release-notes.md').read_text())
+
+    def test_a_draft_of_the_current_tag_counts_as_existing(self):
+        self.releases.write_text('v5.2.0\nv5.4.0\tdraft\n')
+        result = self.release('v5.4.0')
+        self.assertIn('the GitHub release v5.4.0 already exists', result.stdout)
+        self.assertEqual(self.created(), [])
+        self.assertEqual(self.marked(), ['v5.2.0'])
+
+    def test_drafts_and_prereleases_are_not_marked_latest(self):
+        # GitHub は下書きとプレリリースを Latest にしない（#871 の Devin の指摘）。今のタグも、一覧で下書きか
+        # プレリリースと分かれば候補に入れない
+        self.releases.write_text('v5.2.0\nv5.4.0\nv5.5.0\tdraft\n')
+        self.release('v5.4.0')
+        self.assertEqual(self.marked(), ['v5.4.0'])
+        self.log.unlink()
+        self.releases.write_text('v5.2.0\nv5.4.0\tprerelease\nv5.5.0\tdraft\n')
+        self.release('v5.5.0')
+        self.assertEqual(self.marked(), ['v5.2.0'])
+
+    def test_nothing_is_marked_when_no_release_can_be_latest(self):
+        self.releases.write_text('v5.5.0\tdraft\n')
+        result = self.step('latest_release', 'v5.5.0')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('no published vX.Y.Z release can be marked latest', result.stdout)
+        self.assertEqual(self.marked(), [])
+
     def test_any_order_of_runs_ends_with_the_greatest_release_latest(self):
         for order in (('v5.2.0', 'v5.4.0', 'v5.5.0'), ('v5.5.0', 'v5.2.0', 'v5.4.0'), ('v5.4.0', 'v5.5.0', 'v5.4.0')):
             with self.subTest(order=order):

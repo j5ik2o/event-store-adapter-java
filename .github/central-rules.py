@@ -234,17 +234,19 @@ def attempt_records(facts):
             attempt, deployment = parsed
             if attempt in artifacts and artifacts[attempt] != deployment:
                 raise Stop(f'run {run.id} attempt {attempt} has two deployment records')
-            # 期限の短い記録は、変数に同じ ID の行があれば止めない（変数は消えないので、記録が消えても ID を失わない）。
+            # 期限の短い記録は、変数に同じ ID の行か =none の行があれば止めない（変数は消えないので、記録が消えても行は残る）。
             # 保存期間を 90 日に戻しても、既にある記録の expires_at は変わらないため（#870、scala#934 の指摘）。
-            # Portal の状態は、その ID で今までどおり照会する（処理中なら待ち、公開済みなら上げない）
-            kept = overrides.attempts.get((run.id, attempt)) == deployment
+            # Portal の状態は、その ID で今までどおり照会する（処理中なら待ち、公開済みなら上げない）。=none でも記録の ID を
+            # 照会し、Portal が知っていれば止まる（N1）。Portal で drop した deployment の記録は =none で進める（#871 の Devin の指摘）
+            kept = overrides.attempts.get((run.id, attempt)) in (deployment, NONE)
             if artifact.expired and not kept:
                 raise Stop(f'the record {artifact.name} of run {run.id} has expired; add {run.id}/{attempt}={deployment} '
-                           'to CENTRAL_DEPLOYMENTS, and keep the artifact retention at 90 days')
+                           f'(or {run.id}/{attempt}=none if the deployment was dropped in the Portal) to CENTRAL_DEPLOYMENTS, '
+                           'and keep the artifact retention at 90 days')
             if (artifact.expires_at is None or artifact.expires_at < run.created_at + WINDOW) and not kept:
                 raise Stop(f'the record {artifact.name} of run {run.id} expires before {WINDOW.days} days; add '
-                           f'{run.id}/{attempt}={deployment} to CENTRAL_DEPLOYMENTS, and keep the artifact retention at '
-                           '90 days for new records')
+                           f'{run.id}/{attempt}={deployment} (or {run.id}/{attempt}=none if the deployment was dropped in '
+                           'the Portal) to CENTRAL_DEPLOYMENTS, and keep the artifact retention at 90 days for new records')
             artifacts[attempt] = deployment
         jobs = executions(run.jobs)
         # release ジョブが一覧に無い試み（run 全体の startup_failure、一覧の欠け）は、アップロードしたかもしれないと見る。

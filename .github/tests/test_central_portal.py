@@ -205,11 +205,19 @@ class DecideTest(unittest.TestCase):
                     self.assertEqual(decision.action, action)
                 failed = self.decide(facts([early], overrides=f'{RUN}/1={ID_A}', statuses={ID_A: named('FAILED')}))
                 self.assertEqual(failed.action, 'upload')
-                # 違う ID の行、=none の行は止まる（文の中身は見ない。設計レビュー L4）
-                for line in (f'{RUN}/1={ID_B}', f'{RUN}/1=none'):
-                    with self.assertRaises(Stop):
-                        portal.decide(facts([early], overrides=line, statuses={ID_A: named('PUBLISHED'),
-                                                                               ID_B: named('PUBLISHED')}))
+                # 違う ID の行は止まる（文の中身は見ない。設計レビュー L4）
+                with self.assertRaises(Stop):
+                    portal.decide(facts([early], overrides=f'{RUN}/1={ID_B}', statuses={ID_A: named('PUBLISHED'),
+                                                                                       ID_B: named('PUBLISHED')}))
+                # Portal で drop した deployment の記録（#871 の Devin の指摘）：=<ID> は「見つからない」で止まり、
+                # =none なら進める。=none でも記録の ID を照会し、Portal が知っていれば止まる（N1）
+                absent = {ID_A: portal.Status(portal.ABSENT)}
+                self.assert_stops(facts([early], overrides=f'{RUN}/1={ID_A}', statuses=absent), 'not found in the Portal',
+                                  f'{RUN}/1=none')
+                self.assertEqual(self.decide(facts([early], overrides=f'{RUN}/1=none', statuses=absent)).action, 'upload')
+                for state in ('PUBLISHED', 'PUBLISHING', 'FAILED'):
+                    self.assert_stops(facts([early], overrides=f'{RUN}/1=none', statuses={ID_A: named(state)}),
+                                      'has no deployment')
 
     def test_the_window_and_the_boundary(self):
         old = run(age=81, jobs=[release_job(1)])

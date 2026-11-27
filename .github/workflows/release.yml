@@ -159,9 +159,11 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
           SERVER_URL: ${{ github.server_url }}
         run: |
-          # リリースの一覧は1回で読む。読めなければ止める（照会の失敗を「リリースなし」と見ない。#870）
-          RELEASED=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" --jq '.[].tag_name')
-          if grep -qxF "$RELEASE_TAG" <<< "$RELEASED"; then
+          # リリースの一覧は1回で読む。読めなければ止める（照会の失敗を「リリースなし」と見ない。#870）。
+          # 下書きとプレリリースは、あるものとして数えるが、公開を確かめた版（ノートの基点）には数えない（#871）
+          RELEASES=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" --jq '.[] | [.tag_name, (if .draft or .prerelease then "true" else "false" end)] | @tsv')
+          RELEASED=$(awk -F'\t' '$2 == "false" { print $1 }' <<< "$RELEASES")
+          if awk -F'\t' -v tag="$RELEASE_TAG" '$1 == tag { found = 1 } END { exit !found }' <<< "$RELEASES"; then
             echo "the GitHub release ${RELEASE_TAG} already exists"
           else
             # 基点は、前にある正式版のタグのうち GitHub のリリースがあるもの（公開を確かめた版）。公開されずに飛んだ
@@ -193,13 +195,24 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          # 一覧を読み直し、下書きでない最大の正式版（vX.Y.Z）のリリースを Latest にする。候補に今のタグも入れる（作った
-          # 直後の一覧に、まだ出ないことがある）。どの版の実行がどの順で動いても、最後に動いた実行が最大の版を Latest に
-          # 戻す（#870、event-store-adapter-rs#375 の形）。読んでから直すまでの窓と回復は CONTRIBUTING に書く
-          RELEASED=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" --jq '.[] | select(.draft | not) | .tag_name')
-          LATEST_TAG=$(printf '%s\n%s\n' "$RELEASED" "$RELEASE_TAG" | python3 "${GITHUB_WORKSPACE}"/.github/release-gate.py latest-tag)
-          echo "the greatest release is ${LATEST_TAG}; mark it latest"
-          gh release edit "$LATEST_TAG" --repo "$GITHUB_REPOSITORY" --latest
+          # 一覧を読み直し、下書きでもプレリリースでもない最大の正式版（vX.Y.Z）のリリースを Latest にする（GitHub は
+          # 下書きとプレリリースを Latest にしない）。今のタグも候補に入れる（作った直後の一覧に、まだ出ないことがある）が、
+          # 一覧で下書きかプレリリースと分かれば入れない（#871 の Devin の指摘）。どの版の実行がどの順で動いても、最後に
+          # 動いた実行が最大の版を Latest に戻す。ただし、その実行が読んだ一覧に最大の版のリリースが反映されているときだけ
+          # （反映が遅れると、あとから動いた古い版の実行が古い版を Latest にしうる）。窓と回復は CONTRIBUTING に書く
+          # （#870、event-store-adapter-rs#375 の形）
+          RELEASES=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" --jq '.[] | [.tag_name, (if .draft or .prerelease then "true" else "false" end)] | @tsv')
+          CANDIDATES=$(awk -F'\t' '$2 == "false" { print $1 }' <<< "$RELEASES")
+          if ! awk -F'\t' -v tag="$RELEASE_TAG" '$1 == tag && $2 == "true" { found = 1 } END { exit !found }' <<< "$RELEASES"; then
+            CANDIDATES=$(printf '%s\n%s\n' "$CANDIDATES" "$RELEASE_TAG")
+          fi
+          LATEST_TAG=$(printf '%s\n' "$CANDIDATES" | python3 "${GITHUB_WORKSPACE}"/.github/release-gate.py latest-tag)
+          if [[ -z "$LATEST_TAG" ]]; then
+            echo "::notice::no published vX.Y.Z release can be marked latest"
+          else
+            echo "the greatest release is ${LATEST_TAG}; mark it latest"
+            gh release edit "$LATEST_TAG" --repo "$GITHUB_REPOSITORY" --latest
+          fi
   confirm:
     name: Check Maven Central
     needs: release

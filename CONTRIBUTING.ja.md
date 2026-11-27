@@ -69,9 +69,9 @@ python3 -m unittest discover -s .github/tests -v
    4. bundle（180 ファイル）を作り、タグのコミットをもう一度関門で確かめ（bundle を作るあいだに新しいタグが push されていたら上げない）、Central Portal へ上げます（`publishingType=AUTOMATIC`）。
    5. deployment の ID を artifact `central-deployment-<試みの番号>-<ID>` に残します（90 日）。
    6. deployment が `PUBLISHED` になるまで待ちます（最大 60 分）。
-5. `PUBLISHED` になったら、`Create the GitHub release` が GitHub のリリースを作り、`Check Maven Central` が、repo1 が6つの POM を返すまで待ちます（最大 60 分）。リリースノートの基点は、前にある `vX.Y.Z` のタグのうち、GitHub のリリースがある最も新しいものです（飛んだ版の変更も載ります）。リリースは Latest の印を付けずに作り、次の手順 `Mark the greatest release as latest` が、リリースの一覧を読み直して、最大の `vX.Y.Z` のリリース（今作ったものを含む）を Latest にします。
+5. `PUBLISHED` になったら、`Create the GitHub release` が GitHub のリリースを作り、`Check Maven Central` が、repo1 が6つの POM を返すまで待ちます（最大 60 分）。リリースノートの基点は、前にある `vX.Y.Z` のタグのうち、GitHub のリリースがある最も新しいものです（飛んだ版の変更も載ります）。リリースは Latest の印を付けずに作り、次の手順 `Mark the greatest release as latest` が、リリースの一覧を読み直して、下書きでもプレリリースでもない最大の `vX.Y.Z` のリリース（今作ったものを含む）を Latest にします。これが成り立つのは、読んだ一覧に最大の版が反映されているときです。一覧の反映が遅れたときは、回復の表を見てください。
 
-事前の確認・待ち・repo1 の確認の 60 分は、手順ごとの1つの締め切り（`--deadline`、3600 秒）で、照会と `git ls-remote` の時間も数えます。締め切りのときに途中の照会は打ち切り、照会の失敗として扱います。接続と応答の見出しは、通信の1回ごとに残りの時間までです。本文は締め切りで切ります。アップロードには全体の締め切りをかけません（途中で切ると、上げたか分からない試みが残るため）。
+事前の確認・待ち・repo1 の確認の 60 分は、手順ごとの1つの締め切り（`--deadline`、3600 秒）で、照会と `git ls-remote` の時間も数えます。締め切りのときに途中の照会は、接続・応答の見出し・本文のどこにあっても打ち切り、照会の失敗として扱います。`Content-Length` より短い本文も、照会の失敗です。アップロードには全体の締め切りをかけません（途中で切ると、上げたか分からない試みが残るため）。
 
 予行（`rehearsal: true`）は、`version up to vX.Y.Z (rehearsal, do not merge)` という題の draft の pull request を開きます。マージせずに閉じて、枝を消してください。
 
@@ -116,7 +116,7 @@ ID が無くて事前の確認が止まったときは、そのエラーの文�
 | 60 分たっても deployment が処理中 | 待ちの手順が失敗する | 失敗したジョブを再実行する。事前の確認は同じ deployment を待ち、上げ直さない |
 | 60 分たっても repo1 が版を返さない | `Check Maven Central` が失敗する | `Check Maven Central` だけを再実行する |
 | GitHub のリリースを作れなかった、またはリリースの一覧を読めなかった | `Create the GitHub release`（か `Mark the greatest release as latest`）が失敗する。一覧の読み取りの失敗を「リリースなし」と見ない | `Create the GitHub release` だけを再実行する |
-| Latest のリリースが最大の版でない。違う版の `Create the GitHub release` のジョブが同時に動き、古い版のジョブが、新しい版のリリースができる前に一覧を読んだ | 古い版のジョブが、自分の読んだ一覧の最大の版を Latest にする | 最大の版の `Create the GitHub release` を再実行する（リリースは既にあるので、最大の版を Latest にするだけ）。または最大の版に `gh release edit vX.Y.Z --latest` を流す |
+| Latest のリリースが最大の版でない。古い版のジョブが読んだリリースの一覧に、最大の版のリリースがまだ反映されていなかった（2つのジョブが同時に動いた、または新しい版のリリースはできていたが、あとから動いた古い版のジョブのときに一覧への反映が遅れていた） | 古い版のジョブが、自分の読んだ一覧の最大の版を Latest にする。Latest が最大の版になるのは、最後に動いたジョブが読んだ一覧に最大の版が反映されているときだけ | リリースの一覧に最大の版が反映されたあとで、最大の版を Latest にし直す。最大の版の `Create the GitHub release` を再実行する（リリースは既にあるので、最大の版を Latest にするだけ）か、最大の版に `gh release edit vX.Y.Z --latest` を流す |
 | より新しいタグがある（版が追い越された） | 関門が止まる（`must be greater than the latest tag`）。その版は公開しない | そのまま（飛んだ版）。その版が既に `PUBLISHED` だったとき（待ちが時間切れになり、再実行の前に新しいタグができた）は、[新しいタグの前に公開された版](#新しいタグの前に公開された版)の手順で回復する |
 | 待っていた公開のジョブが、`release-publish` の group にあとから着いたジョブ（ほかのタグの push、ほかの版の再実行）に置き換えられた | その run は始まる前に取り消される。その run は何も公開しない | その版が最新の `vX.Y.Z` のタグなら、取り消された run のジョブをすべて再実行する（取り消されたジョブは、アップロードに数えない）。そうでなければ、再実行しても新しいタグがあるので関門で止まる。前の試みで版が既に公開されていたとき（たとえば GitHub のリリースの作成だけが失敗していた）は、[新しいタグの前に公開された版](#新しいタグの前に公開された版)の手順で回復する。公開されていなければそのまま（飛んだ版） |
 | タグのジョブ（`Tag the merged version`）が、`release-tag` の group にあとから着いたジョブに置き換えられた | その run は取り消される。その版にタグが付かない | その版が最新の `vX.Y.Z` のタグより大きければ、取り消された run を再実行する。あとにほかの pull request がマージされていても同じ（関門は `main` の先頭であることを求めない）。そうでなければそのまま（関門が拒否する） |
@@ -124,8 +124,8 @@ ID が無くて事前の確認が止まったときは、そのエラーの文�
 | Release の run を消した。タグの push で Release の run が起きなかった（一度に4つ以上のタグの push、障害） | 事前の確認が止まる（Release の run の無いタグがある。`tag vX.Y.Z has no Release run`） | その版の deployment が処理中でないことを Portal で確かめ、`tag/vX.Y.Z=checked` を足して再実行する。タグは動かさない |
 | Release の run は残っているが、ある試みの `central-deployment-<試みの番号>-<ID>` の artifact を消した | 事前の確認が止まる（その試みは上げたかもしれないのに ID が無い。足す行を出す）。`tag/vX.Y.Z=checked` は効かない（run の無いタグにだけ効く） | その試みの job summary やログ、または Portal で `event-store-adapter-java-<版>-run<run_id>-<試みの番号>` という名前から ID を探す。`<run_id>/<試みの番号>=<ID>` を足す（Portal にその deployment が無ければ `=none`）。そのあと再実行する |
 | `release.yml` のジョブや手順の名前を変えた | 前の run で、事前の確認が止まる | 変えない。どうしても変えるときは、古い名前も `.github/central-rules.py` に残す |
-| artifact の保存期間を 90 日より短くした、または記録の期限が切れた | 事前の確認が止まる（`expires before 90 days` か `has expired`） | 新しい記録のために、保存期間を 90 日に戻す。既にある記録の期限は早いまま変わらないので、エラーの文が出す行（その記録の ID の `<run_id>/<試みの番号>=<ID>`）を足して再実行する。事前の確認は、その deployment の状態を今までどおり Portal で読む |
-| 版上げの pull request が版を下げる：版上げの pull request がマージ済みで、まだタグが無い（たとえば `PUSH_RELEASE_TAG` が `'false'` の間）ため、`version` が最新のタグより大きい | Bump-Version が枝を push する前に止まる（`must be greater than the version ... in version`） | マージ済みの版にタグを付ける（`PUSH_RELEASE_TAG` が `'true'` の状態で、そのタグのジョブを再実行する）か、pull request で `version` を前の SNAPSHOT 版に戻してから、Bump-Version をやり直す |
+| artifact の保存期間を 90 日より短くした、または記録の期限が切れた | 事前の確認が止まる（`expires before 90 days` か `has expired`） | 新しい記録のために、保存期間を 90 日に戻す。既にある記録の期限は早いまま変わらないので、エラーの文が出す行（その記録の ID の `<run_id>/<試みの番号>=<ID>`）を足して再実行する。事前の確認は、その deployment の状態を今までどおり Portal で読む。その deployment を Portal で drop したときは、代わりに `<run_id>/<試みの番号>=none` を足す。事前の確認は記録の ID を照会し、Portal が知らないときだけ先へ進む |
+| 版上げの pull request が版を下げる：版上げの pull request がマージ済みで、まだタグが無い（たとえば `PUSH_RELEASE_TAG` が `'false'` の間）ため、`version` が最新のタグより大きい | Bump-Version が枝を push する前に止まる（`must be greater than the version ... in version`） | pull request で `version` を前の SNAPSHOT 版に戻してから、Bump-Version をやり直す（上の「リリースを止めるとき」の段落と同じ）。マージ済みのコミットのタグのジョブを再実行しても、タグは付かない（再実行はそのコミットの `bump-version.yml` で動き、`PUSH_RELEASE_TAG` は `'false'` のまま） |
 | 版上げの pull request の全体が、`version` の版のほかも変えている（途中のコミットがほかのファイルを変え、あとのコミットで戻していない）、または head を読めなかった | 関門が失敗する（`as a whole must change only the version`）。タグも公開もしない | head を読めなかったとき（マージのあとに force-push されたなど）は、ジョブを再実行する。そうでなければ、pull request で版を戻し、新しい版上げの pull request を開く |
 | 30 日を過ぎて、run を再実行できない | | その版は飛んだ版として扱い、次の版を出す。その前に、行方の分からない試みすべてに行を足す |
 | 80 日より前の run | 事前の確認は数えない | |
@@ -147,7 +147,7 @@ ID が無くて事前の確認が止まったときは、そのエラーの文�
 
    ```sh
    gh release create vX.Y.Z --verify-tag --title "Release vX.Y.Z" -F release-body.md --latest=false
-   gh api --paginate repos/j5ik2o/event-store-adapter-java/releases --jq '.[] | select(.draft | not) | .tag_name' \
+   gh api --paginate repos/j5ik2o/event-store-adapter-java/releases --jq '.[] | select((.draft or .prerelease) | not) | .tag_name' \
      | python3 .github/release-gate.py latest-tag \
      | xargs -I{} gh release edit {} --repo j5ik2o/event-store-adapter-java --latest
    ```

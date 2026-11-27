@@ -255,6 +255,137 @@ class TrickleTest(unittest.TestCase):
             self.assertEqual(commands.http('GET', server.url), (200, b'x' * 20))
 
 
+class SlowHeaderServer:
+    """見出し（headers）を少しずつ送り続ける本物の HTTP サーバー（#871 の CodeRabbit の指摘）。urlopen は見出しを
+    読み終えるまで戻らないので、本文の締め切りだけでは止まらない。"""
+
+    def __init__(self, every=0.05, total=8.0):
+        stop = self.stop = threading.Event()
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_GET(self):
+                try:
+                    self.wfile.write(b'HTTP/1.1 200 OK\r\n')
+                    self.wfile.flush()
+                    for index in range(int(total / every)):
+                        if stop.wait(every):
+                            return
+                        self.wfile.write(f'X-Slow-{index}: x\r\n'.encode())
+                        self.wfile.flush()
+                except OSError:
+                    pass
+
+            do_POST = do_HEAD = do_GET
+
+        self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        self.server.daemon_threads = True
+        self.url = f'http://127.0.0.1:{self.server.server_address[1]}/x'
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.stop.set()
+        self.server.shutdown()
+        self.server.server_close()
+
+
+class SlowHeaderTest(unittest.TestCase):
+    def setUp(self):
+        no_proxy = mock.patch.dict(os.environ, {'no_proxy': LOOPBACK, 'NO_PROXY': LOOPBACK})
+        no_proxy.start()
+        self.addCleanup(no_proxy.stop)
+
+    def test_trickling_headers_are_cut_at_the_deadline(self):
+        for method in ('GET', 'HEAD', 'POST'):
+            with self.subTest(method):
+                server = SlowHeaderServer()
+                self.addCleanup(server.close)
+                started = time.monotonic()
+                with mock.patch.object(commands.net, 'DEADLINE', commands.net.Deadline(1.0)):
+                    result = commands.http(method, server.url)
+                self.assertEqual(result, (None, b''))
+                self.assertLess(time.monotonic() - started, 2.5)
+
+    def test_an_unexpected_error_of_the_query_is_not_swallowed(self):
+        with mock.patch.object(commands.net, 'DEADLINE', commands.net.Deadline(10)), \
+                mock.patch.object(commands.net.urllib.request, 'urlopen', side_effect=KeyError('bug')), \
+                self.assertRaises(KeyError):
+            commands.http('GET', 'http://127.0.0.1:9/x')
+
+
+class ShortBodyServer:
+    """本文を宣言より短く送って接続を閉じる、本物の HTTP サーバー（#871 の Devin の指摘）。mode は
+    'length'（Content-Length: 39 で、31 バイトの正しい JSON だけを送って閉じる）、'error'（404 で同じ）、
+    'chunked'（終わりの 0 の chunk を送らずに閉じる）。"""
+
+    BODY = b'{"deploymentState":"PUBLISHED"}'
+
+    def __init__(self, mode):
+        body = self.BODY
+
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = 'HTTP/1.1'
+
+            def log_message(self, *args):
+                pass
+
+            def do_GET(self):
+                self.send_response(404 if mode == 'error' else 200)
+                if mode == 'chunked':
+                    self.send_header('Transfer-Encoding', 'chunked')
+                    self.end_headers()
+                    self.wfile.write(f'{len(body):x}\r\n'.encode() + body + b'\r\n')
+                else:
+                    self.send_header('Content-Length', str(len(body) + 8))
+                    self.end_headers()
+                    self.wfile.write(body)
+                self.wfile.flush()
+                self.close_connection = True
+                self.connection.shutdown(socket.SHUT_RDWR)
+
+            do_POST = do_GET
+
+        self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        self.server.daemon_threads = True
+        self.url = f'http://127.0.0.1:{self.server.server_address[1]}/x'
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+class ShortBodyTest(unittest.TestCase):
+    """read1 は、宣言より短く閉じた本文でも例外を投げずに b'' を返す。途中で切れた本文を照会の失敗にする
+    （受け取った部分が正しい JSON でも、それで PUBLISHED と決めない）。締め切りのある照会も、無い照会も。"""
+
+    def setUp(self):
+        no_proxy = mock.patch.dict(os.environ, {'no_proxy': LOOPBACK, 'NO_PROXY': LOOPBACK})
+        no_proxy.start()
+        self.addCleanup(no_proxy.stop)
+
+    def test_a_body_shorter_than_its_length_is_a_failed_query(self):
+        for mode in ('length', 'error', 'chunked'):
+            for deadline in (None, 3600):
+                with self.subTest(mode=mode, deadline=deadline):
+                    server = ShortBodyServer(mode)
+                    self.addCleanup(server.close)
+                    with mock.patch.object(commands.net, 'DEADLINE',
+                                           None if deadline is None else commands.net.Deadline(deadline)):
+                        self.assertEqual(commands.http('POST', server.url), (None, b''))
+
+    def test_the_wait_does_not_take_a_cut_status_as_published(self):
+        server = ShortBodyServer('length')
+        self.addCleanup(server.close)
+        args = type('Args', (), {'id': 'x', 'attempts': 2, 'interval': 0})()
+        with mock.patch.object(commands, 'central_url', return_value=server.url), \
+                mock.patch.object(commands, 'central_auth', return_value={}), \
+                contextlib.redirect_stdout(io.StringIO()), self.assertRaises(portal.Stop):
+            commands.wait(args, sleep=lambda _: None)
+
+
 class WatchdogTest(unittest.TestCase):
     def test_a_socket_that_cannot_be_shut_down_fails_the_query(self):
         """締め切りに socket を閉じられなかったら、握りつぶさずにその照会を時間切れにする。"""

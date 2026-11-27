@@ -89,7 +89,9 @@ FAKE_GH = r'''#!/usr/bin/env python3
 api .../commits/<sha>/pulls : FAKE_GH_FAIL 回だけ失敗し、続く FAKE_GH_EMPTY 回は [] を返し、その後に $FAKE_PULLS を返す
                              （この呼び出しの回数を $FAKE_GH_CALLS に書く）。
 api .../pulls/<番号>          : $FAKE_PULLS の同じ番号の項目。
-api ... .../releases          : $FAKE_RELEASES（1行に1つのタグ。無ければ空）。FAKE_RELEASES_FAIL があれば失敗。
+api ... .../releases          : $FAKE_RELEASES（1行に1つのタグ。タグのあとにタブで draft か prerelease を書ける。無ければ空）。
+                             --jq が @tsv なら「タグ<TAB>下書きかプレリリースか」を、ほかはタグだけを書く。
+                             FAKE_RELEASES_FAIL があれば失敗。
 release create <タグ>          : $FAKE_RELEASES に足す（FAKE_RELEASES_LAG があれば、まだ一覧に出さない）。
 release edit・pr create・workflow run：$FAKE_GH_LOG に残すだけ。"""
 import json, os, re, sys
@@ -116,7 +118,11 @@ elif path.endswith('/releases'):
     if os.environ.get('FAKE_RELEASES_FAIL'):
         sys.exit('HTTP 502')
     releases = os.environ.get('FAKE_RELEASES', '')
-    print(open(releases).read() if releases and os.path.exists(releases) else '', end='')
+    rows = [line.split('\t') for line in (open(releases).read().splitlines() if releases and os.path.exists(releases) else [])
+            if line]
+    tsv = any('@tsv' in arg for arg in args)
+    for row in rows:
+        print(f'{row[0]}\t{"true" if len(row) > 1 else "false"}' if tsv else row[0])
 elif args[:2] == ['release', 'create']:
     if not os.environ.get('FAKE_RELEASES_LAG'):
         with open(os.environ['FAKE_RELEASES'], 'a') as file:

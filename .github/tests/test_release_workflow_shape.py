@@ -126,7 +126,8 @@ class CanonicalJudgeTest(unittest.TestCase):
             # Latest（#870）
             'latest on create': replace_once(CANONICAL, ' --latest=false\n', '\n'),
             'no latest step': CANONICAL.replace(step(CANONICAL, 'latest_release'), ''),
-            'release list error ignored': replace_once(CANONICAL, "--jq '.[].tag_name')\n", "--jq '.[].tag_name' || true)\n"),
+            'release list error ignored': replace_in_step(CANONICAL, 'github_release', "| @tsv')\n", "| @tsv' || true)\n"),
+            'latest list error ignored': replace_in_step(CANONICAL, 'latest_release', "| @tsv')\n", "| @tsv' || true)\n"),
             'gate if': replace_once(CANONICAL, '        id: release_gate\n', '        id: release_gate\n        if: false\n'),
             'continue-on-error': replace_once(CANONICAL, '        id: release_gate\n',
                                               '        id: release_gate\n        continue-on-error: true\n'),
